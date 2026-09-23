@@ -1,0 +1,14 @@
+# Two forms, and a blank issue as well: someone whose problem fits neither
+# form should not be turned away by the form. Questions go to Discord.
+blank_issues_enabled: true
+contact_links:
+  - name: A question, help with setting it up, or moving a supporter code
+    url: https://discord.gg/WBrnSpwrR
+    about: >
+      The Discord server is the place for "how do I", "is this normal", and
+      freeing a supporter code's device for a new phone.
+  - name: The accessibility switch is greyed out
+    url: https://github.com/digiPr1me/digiautotap#installing
+    about: >
+      Android 13 and later guard that switch for apps not from a store. The
+      README has the three steps past it.

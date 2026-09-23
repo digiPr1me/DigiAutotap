@@ -1,0 +1,68 @@
+name: Something does not work
+description: A task taps the wrong thing, stops, or does nothing at all
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for taking the time. One thing makes a report easy to act
+        on: **the debug package**. In the app, tap *Share debug package* right
+        after the problem happened, save the ZIP, and drag it into the box
+        below. It holds the log, the settings and the pictures the app kept
+        of what it saw -- nothing else from the phone.
+
+  - type: dropdown
+    id: task
+    attributes:
+      label: Which task?
+      options:
+        - Bond token
+        - World Search
+        - Summon
+        - Meat Field
+        - Dungeons
+        - Quest Loop
+        - Gekkomon Run
+        - The app itself (setup, the dot, the notification)
+        - Supporter code
+    validations:
+      required: true
+
+  - type: textarea
+    id: what_happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you got instead.
+      placeholder: |
+        I switched on Dungeons and opened the dungeon list. It played the
+        first dungeon, then went back to the list and did nothing more.
+    validations:
+      required: true
+
+  - type: textarea
+    id: package
+    attributes:
+      label: The debug package
+      description: >
+        Drag the ZIP from "Share debug package" in here. Without it a report
+        usually cannot be answered.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: DigiAutotap version
+      description: Shown under More, at the bottom.
+      placeholder: "0.2"
+    validations:
+      required: true
+
+  - type: input
+    id: phone
+    attributes:
+      label: Phone and Android version
+      placeholder: "Poco F3, Android 14 (HyperOS)"
+    validations:
+      required: true

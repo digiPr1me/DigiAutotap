@@ -1,0 +1,46 @@
+name: An idea for DigiAutotap
+description: Something it should do, or should do differently
+title: "[Idea] "
+labels: ["idea"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Ideas are welcome. The useful shape is **what you were trying to get
+        done**, rather than which button should be added -- the second is
+        easier to write, the first is what makes a good answer possible.
+        Want to talk it over first? The Discord server is the place.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part does it concern?
+      options:
+        - Bond token
+        - World Search
+        - Summon
+        - Meat Field
+        - Dungeons
+        - Quest Loop
+        - Gekkomon Run
+        - The app itself
+        - A part of the game DigiAutotap does not play yet
+    validations:
+      required: true
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: What should it do?
+    validations:
+      required: true
+
+  - type: textarea
+    id: why
+    attributes:
+      label: What are you doing by hand today?
+      description: >
+        The part that helps most: knowing the manual routine usually shows
+        whether the idea as written is the shortest way there.
+    validations:
+      required: false

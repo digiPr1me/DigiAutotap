@@ -1,0 +1,25 @@
+DigiAutotap
+Copyright (c) 2026 Chimera. All rights reserved.
+
+You may download DigiAutotap from the Releases page of this repository and
+use it free of charge. Some of its features are unlocked with a supporter
+code.
+
+You may not redistribute the app, whether unchanged or modified, and you may
+not publish a modified version of it -- including one with the supporter
+check removed or altered. Link to this repository instead.
+
+The app is provided "as is", without warranty of any kind, express or
+implied. In no event shall the author be liable for any claim, damages or
+other liability arising from the app or its use.
+
+DigiAutotap is an unofficial fan project. It is not affiliated with,
+endorsed by or connected to Bandai Namco, Bandai, Toei Animation or the
+publisher of Digimon UP in any way. Product names, trademarks and the game's
+images belong to their respective owners. The game publisher's terms of
+service prohibit the use of bots; the decision to use this app, and the
+consequences of doing so, are the user's.
+
+The font Chakra Petch inside the app is copyright 2018 The Chakra Petch
+Project Authors and is used under the SIL Open Font License 1.1, which is not
+affected by the above.
