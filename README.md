@@ -63,7 +63,7 @@ to step 2.
 
 **Updates** do not install themselves. When a new version is out, download it
 and install it over the old one; your settings stay. "Check for updates" under
-*Settings* (the cog at the top left of the app) opens this page.
+*Settings* (the cog at the top right of the app) opens this page.
 
 ### Checking the download
 
