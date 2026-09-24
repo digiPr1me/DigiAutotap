@@ -313,6 +313,26 @@ class RunnerSkill(
         return null
     }
 
+    /**
+     * [tapUntil] for a target a reader finds rather than a constant: every
+     * tap is aimed off a fresh frame [read] answered on, and a frame it
+     * does not answer on is not tapped at all. That is also what keeps a
+     * second tap out of a window the first one opened: the Events icon is
+     * read on the plain main screen only, and a window that opened but was
+     * not recognised is no main screen.
+     */
+    private fun tapRead(was: String, read: (Mat) -> Explore.Target?, rounds: Int = NAV_ROUNDS,
+                        check: (Mat) -> Boolean): Mat? {
+        for (i in 0 until NAV_TAPS_MAX) {
+            if (!pauseGate()) return null
+            val target = onFrame(read) ?: return null
+            tap(target, was)
+            val img = waitFor(rounds, check = check)
+            if (img != null) return img
+        }
+        return null
+    }
+
     // ------------------------------------------------------------------------
     /** Main screen -> Events -> the event page. True once it shows. */
     fun goToEvent(): Boolean {
@@ -331,7 +351,19 @@ class RunnerSkill(
         } finally {
             img.release()
         }
-        val events = tapUntil(Runner.EVENTS_ICON, "Events icon") { Runner.eventsDialog(it) != null }
+        // The icon, on two looks running: a boss's name banner covers it for
+        // the seconds it is up (Runner, the way in), and where it is not read
+        // nothing is tapped.
+        val icon = waitFor { Runner.eventsIcon(it) != null }
+        if (icon == null) {
+            if (on()) {
+                log("the Events icon is not on the main screen")
+                onFrame { dump(it, "no_events_icon") }
+            }
+            return false
+        }
+        icon.release()
+        val events = tapRead("Events icon", { Runner.eventsIcon(it) }) { Runner.eventsDialog(it) != null }
         if (events == null) {
             if (on()) {
                 log("the Events window did not open")
@@ -344,7 +376,9 @@ class RunnerSkill(
     }
 
     private fun openCard(): Boolean {
-        val page = tapUntil(Runner.EVENT_CARD, "Gekkomon Run card") { Runner.eventPage(it) != null }
+        val page = tapRead("Gekkomon Run card", { img -> Runner.eventsDialog(img)?.let { Runner.eventCard(it) } }) {
+            Runner.eventPage(it) != null
+        }
         if (page == null) {
             if (on()) {
                 log("the event page did not open")
@@ -362,7 +396,7 @@ class RunnerSkill(
      * "died", "capped", "enough", "stopped" or "lost".
      */
     fun playRun(): String {
-        val started = tapUntil(Runner.PLAY_GAME, "Play Game", rounds = 4) { Runner.eventPage(it) == null }
+        val started = tapRead("Play Game", { Runner.eventPage(it) }, rounds = 4) { Runner.eventPage(it) == null }
         if (started == null) {
             if (on()) {
                 log("Play Game did not start a run")
@@ -770,7 +804,7 @@ class RunnerSkill(
      * main switch: it runs on the way out whatever else happened, as every
      * skill's way home does.
      */
-    fun leave(): Boolean {
+    override fun leave(): Boolean {
         for (i in 0 until 6) {
             val img = try { grab() } catch (e: CaptureError) { return false }
             try {

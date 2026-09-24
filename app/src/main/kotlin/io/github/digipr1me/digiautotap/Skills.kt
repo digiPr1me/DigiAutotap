@@ -77,7 +77,10 @@ object Skills {
                      "screen, it opens the board by itself and goes back afterwards.",
                  noSettings = "Nothing to set: when switched on, World Search plays the board " +
                      "and collects everything on it -- tickets, claws, paws and fireballs -- " +
-                     "until the paws run out."),
+                     "until the paws run out. Claws and dashes recharge slowly, so it walks " +
+                     "around a pyramid whenever it can and breaks one only when there is no " +
+                     "way around; it dashes when it is walled in or walking would clearly " +
+                     "cost more, and never past a power-up that would scroll off."),
         // "on General", not "when Special Summon is open": the page has four
         // tabs and only the first is this task's. Buddy, SP Support and
         // Overdrive hold draws paid for in bought gems, nothing on them is

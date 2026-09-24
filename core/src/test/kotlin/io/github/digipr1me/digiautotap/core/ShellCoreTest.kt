@@ -17,13 +17,50 @@ class ShellCoreTest {
 
     @Test
     fun `the game package is found by its hints, in their order`() {
-        assertEquals(listOf("digimon", "bandai", "bnei", "namco"), Game.PACKAGE_HINTS)
+        assertEquals(listOf("dgup", "digimon", "bandai", "bnei", "namco"), Game.PACKAGE_HINTS)
         val installed = listOf("com.android.settings", "com.bandainamcoent.dgup_ww",
                                "io.github.digipr1me.digiautotap")
         assertEquals("com.bandainamcoent.dgup_ww", Game.pick(installed))
         // Hint order, not list order: "digimon" outranks "namco".
         assertEquals("x.digimon.y", Game.pick(listOf("com.namco.other", "x.digimon.y")))
         assertNull(Game.pick(listOf("com.android.launcher3")))
+        // A regional build nobody has seen: "dgup" is the guess for one.
+        assertEquals("com.bandainamcoent.dgup_jp",
+                     Game.pick(listOf("jp.co.bandai.vbl", "com.bandainamcoent.dgup_jp")))
+    }
+
+    /** The player's case of 2026-09-24: other Bandai apps were taken for the game. */
+    @Test
+    fun `the game is known by name before any hint`() {
+        val game = Game.KNOWN
+        // A "digimon" app beside the game used to win on the first hint.
+        assertEquals(game, Game.pick(listOf("x.digimon.y", game)))
+        // A "bandai" app listed before the game used to win on list order.
+        assertEquals(game, Game.pick(listOf("jp.co.bandai.vbl", game)))
+        assertEquals(Game.By.KNOWN, Game.explain(listOf("jp.co.bandai.vbl", game))?.by)
+        // The player's choice wins over the name when it is installed ...
+        val chosen = Game.explain(listOf("jp.co.bandai.vbl", game), "jp.co.bandai.vbl")
+        assertEquals(Game.Pick("jp.co.bandai.vbl", Game.By.CHOSEN), chosen)
+        // ... and falls back to it when it is not.
+        assertEquals(game, Game.pick(listOf("com.android.settings", game), "jp.co.bandai.vbl"))
+        assertEquals(game, Game.pick(listOf(game), ""))
+        assertEquals(Game.Pick("x.digimon.y", Game.By.HINT, "digimon"),
+                     Game.explain(listOf("x.digimon.y"), "jp.co.bandai.vbl"))
+    }
+
+    @Test
+    fun `the candidates are every hinted app, the game and the choice first`() {
+        val game = Game.KNOWN
+        val installed = listOf("com.android.settings", "jp.co.bandai.vbl", game,
+                               "x.digimon.y", "org.example.mine")
+        assertEquals(listOf(game, "jp.co.bandai.vbl", "x.digimon.y"), Game.candidates(installed))
+        // A choice no hint matches is still in the list, first.
+        assertEquals(listOf("org.example.mine", game, "jp.co.bandai.vbl", "x.digimon.y"),
+                     Game.candidates(installed, "org.example.mine"))
+        // One that is not installed is not.
+        assertEquals(listOf(game, "jp.co.bandai.vbl", "x.digimon.y"),
+                     Game.candidates(installed, "gone.app"))
+        assertEquals(emptyList(), Game.candidates(listOf("com.android.settings")))
     }
 
     // What used to stand here, `the app asks for no network`, went on
@@ -106,7 +143,7 @@ class ShellCoreTest {
         Shell.alive = { alive }
         Shell.seen = { screen to note }
         Shell.clock = { now }
-        Shell.parked = null
+        Shell.parked = { null }
         Shell.takeOverAt = 0L
         MainSwitch.set(true)
         try {
@@ -126,7 +163,7 @@ class ShellCoreTest {
 
             // A park outranks the clock, the switch outranks the park, and a
             // service that is gone outranks all of it.
-            Shell.parked = "A prompt is open that I did not raise."
+            Shell.parked = { "A prompt is open that I did not raise." }
             assertEquals(HelperState.PARKED, Shell.state())
             assertEquals("A prompt is open that I did not raise.", Shell.sentence(Shell.state()))
             MainSwitch.set(false)
@@ -134,7 +171,7 @@ class ShellCoreTest {
             alive = false
             assertEquals(HelperState.STOPPED, Shell.state())
         } finally {
-            Shell.parked = null
+            Shell.parked = { null }
             Shell.takeOverAt = 0L
             Shell.alive = { false }
             Shell.seen = { null to "" }

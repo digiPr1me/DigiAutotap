@@ -108,6 +108,13 @@ object SkillSettings {
     const val AD_PASS_KEY = "ad_pass"
     const val AD_PASS_DEFAULT = false
 
+    /**
+     * Which installed app is the game, as the player picked it under
+     * Settings; no key (or an empty one) is "find it" ([Game.pick]). Only
+     * the app reads it, and it stands here because the keys are one table.
+     */
+    const val GAME_KEY = "game_package"
+
     /** Said on the Dungeons and Summon pages, where the two boxes used to be. */
     const val AD_PASS_NOTE = "The free ads are watched with your Ad Skip Pass -- its switch " +
         "is on the main page."

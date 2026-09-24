@@ -49,7 +49,27 @@ class RunnerSkillTest {
         val events = PaintRunner.eventsDialog()
         assertNotNull(Runner.eventsDialog(events), "the Events window")
         assertNull(Runner.eventPage(events), "not the event page: no X, no Play Game")
+        val card = Runner.eventCard(Runner.eventsDialog(events)!!)
+        val c = PaintRunner.EVENT_CARD
+        assertTrue(card.fx in c[0]..c[2] && card.fy in c[1]..c[3], "the card is tapped on the card: $card")
+        assertNull(Runner.eventsIcon(events), "no Events icon under the window")
         events.release()
+
+        val pageAgain = PaintRunner.eventPage()
+        val play = Runner.eventPage(pageAgain)!!
+        val b = PaintRunner.PLAY_BAND
+        assertTrue(play.fx in b[0]..b[2] && play.fy in b[1]..b[3], "Play Game is tapped on its row: $play")
+        pageAgain.release()
+
+        val main = PaintRunner.mainScreen()
+        val icon = Runner.eventsIcon(main)
+        val t = PaintRunner.EVENTS_TILE
+        assertNotNull(icon, "the painted Events tile")
+        assertTrue(icon.fx in t[0]..t[2] && icon.fy in t[1]..t[3], "the icon is tapped on its tile: $icon")
+        main.release()
+        val bare = PaintRunner.mainScreen(events = false)
+        assertNull(Runner.eventsIcon(bare), "a main screen with no tile")
+        bare.release()
 
         val result = PaintRunner.resultDialog()
         assertNotNull(Runner.resultDialog(result), "the result window")
@@ -267,7 +287,9 @@ class RunnerSkillTest {
                 private val fevers: List<Pair<Double, Double>> = emptyList(),
                 var claims: Int = 0,
                 /** A window over the event page that eats Play Game. */
-                var playGameDead: Boolean = false) : Capture {
+                var playGameDead: Boolean = false,
+                /** The main screen has its Events tile. */
+                var eventsIcon: Boolean = true) : Capture {
         var t = 100.0
         var screen = "page"
         var runStart = 0.0
@@ -305,7 +327,7 @@ class RunnerSkillTest {
         }
 
         private fun paint(at: Double): Mat = when (screen) {
-            "main" -> PaintRunner.mainScreen()
+            "main" -> PaintRunner.mainScreen(eventsIcon)
             "events" -> PaintRunner.eventsDialog()
             "page" -> PaintRunner.eventPage()
             "run" -> runFrame(at)
@@ -345,16 +367,22 @@ class RunnerSkillTest {
         private fun near(fx: Double, fy: Double, target: Explore.Target) =
             abs(fx - target.fx) < 0.03 && abs(fy - target.fy) < 0.03
 
+        /** Inside a painted place (fx0, fy0, fx1, fy1): where the game would take the tap. */
+        private fun inside(fx: Double, fy: Double, r: DoubleArray) = fx in r[0]..r[2] && fy in r[1]..r[3]
+
         override fun tap(x: Int, y: Int) {
             val r = Dungeon.gameRectWh(PaintRunner.W, PaintRunner.H)
             val fx = (x - r.x0) / r.gw.toDouble()
             val fy = (y - r.y0) / r.gh.toDouble()
             val exitX = Explore.Target(Summon.EXIT_BUTTON_FX, Summon.EXIT_BUTTON_FY)
             when (screen) {
-                "main" -> if (near(fx, fy, Runner.EVENTS_ICON)) { taps += "Events icon"; screen = "events" }
-                "events" -> if (near(fx, fy, Runner.EVENT_CARD)) { taps += "card"; screen = "page" }
+                "main" -> if (eventsIcon && inside(fx, fy, PaintRunner.EVENTS_TILE)) {
+                    taps += "Events icon"; screen = "events"
+                } else taps += "main %.3f/%.3f".format(fx, fy)
+                "events" -> if (inside(fx, fy, PaintRunner.EVENT_CARD)) { taps += "card"; screen = "page" }
+                    else taps += "events %.3f/%.3f".format(fx, fy)
                 "page" -> when {
-                    near(fx, fy, Runner.PLAY_GAME) -> {
+                    inside(fx, fy, PaintRunner.PLAY_BAND) -> {
                         taps += "Play Game"
                         if (!playGameDead) {
                             screen = "run"; runStart = t; deadAt = null; runs += 1
@@ -517,6 +545,31 @@ class RunnerSkillTest {
         assertTrue(!rig2.skill.goToEvent())
         assertEquals(emptyList<String>(), strange.taps, "an unknown screen is refused without a tap")
         assertTrue(rig2.kept.contains("not_main_screen"))
+    }
+
+    /**
+     * The way in hangs off a reader, and a main screen the reader does not
+     * answer on -- no Events tile that day, or a boss's name banner across
+     * it -- is not tapped where the tile used to be (NOTES.md, "A constant
+     * is a place on one display"). Kept, so that the frame says why.
+     */
+    @Test
+    fun `a main screen without the Events icon is refused without a tap`() {
+        val world = World(eventsIcon = false).apply { screen = "main" }
+        val rig = Rig(world)
+        assertTrue(!rig.skill.goToEvent())
+        assertEquals(emptyList<String>(), world.taps, "tapped a main screen with no Events tile")
+        assertEquals("main", world.screen)
+        assertTrue(rig.kept.contains("no_events_icon"), rig.kept.toString())
+        assertTrue(rig.log.any { it == "the Events icon is not on the main screen" }, rig.log.toString())
+
+        // And run() goes on from there as a skill that could not get in:
+        // parked, home, nothing tapped on the way.
+        val world2 = World(eventsIcon = false).apply { screen = "main" }
+        val rig2 = Rig(world2)
+        val outcome = rig2.skill.run()
+        assertEquals(Result.PARKED, outcome.result)
+        assertEquals(emptyList<String>(), world2.taps)
     }
 
     /** Called by nothing since 2026-09-23, and kept working for the day it is wanted back. */

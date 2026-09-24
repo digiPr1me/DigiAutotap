@@ -19,6 +19,7 @@ import io.github.digipr1me.digiautotap.core.Dot
 import io.github.digipr1me.digiautotap.core.Game
 import io.github.digipr1me.digiautotap.core.HelperLog
 import io.github.digipr1me.digiautotap.core.MainSwitch
+import io.github.digipr1me.digiautotap.core.SkillSettings
 import org.opencv.android.Utils
 import org.opencv.core.Mat
 import org.opencv.imgproc.Imgproc
@@ -34,8 +35,9 @@ import java.util.concurrent.atomic.AtomicInteger
  * a notification never stands over a service that is gone (section 4, "the
  * service dies quietly").
  *
- * The configuration names no package. Which one is the game is found here,
- * by ldplayer.py's rule, and the find goes into the log.
+ * The configuration names no package. Which one is the game is found here
+ * ([regame]): the player's choice under Settings, then the game's own name,
+ * then ldplayer.py's hints -- and the find goes into the log.
  */
 class DigiAutotapService : AccessibilityService(), Capture {
 
@@ -51,14 +53,12 @@ class DigiAutotapService : AccessibilityService(), Capture {
 
     override fun onServiceConnected() {
         instance = this
-        gamePackage = findGame(this)
         // No window event comes until the window changes, so a service that
         // connects over a running game would say "not in front" until the
         // player switched apps. The active window's package says it now.
         front = activeWindow()
         frontSince = SystemClock.elapsedRealtime()
-        HelperLog.line("service connected; game package: ${gamePackage ?: "none found"}; " +
-            "in front: ${front ?: "unknown"}")
+        regame("service connected")
         startCore(this, "service connected")
     }
 
@@ -76,12 +76,43 @@ class DigiAutotapService : AccessibilityService(), Capture {
         if (pkg == front) return
         front = pkg
         frontSince = SystemClock.elapsedRealtime()
+        // Only while [regame] found nothing: a chosen or known game that is
+        // installed is never replaced by whatever hinted app comes forward
+        // (NOTES.md, "Which app is the game"). What is left is a build the
+        // launcher list does not show.
         val game = gamePackage ?: Game.pick(listOf(pkg))?.also {
             gamePackage = it
             HelperLog.line("game package found in front: $it")
         }
         HelperLog.line("in front: $pkg" + if (pkg == game) " (the game)" else "")
         Status.update { it.copy(inFront = pkg) }
+    }
+
+    /**
+     * Which app is the game, asked again: at connecting, and after every
+     * choice in Settings, or a choice would only hold from the next connect.
+     * The director asks [gamePackage] every round and needs nothing else.
+     *
+     * The line names every candidate, so that a debug package answers
+     * "which other app was it" by itself -- the one of 2026-09-24 could not.
+     */
+    @Synchronized
+    fun regame(why: String) {
+        val names = launcherNames(this)
+        val chosen = chosenGame(this)
+        val pick = Game.explain(names, chosen)
+        gamePackage = pick?.name
+        val how = when (pick?.by) {
+            Game.By.CHOSEN -> " (chosen)"
+            Game.By.KNOWN -> " (known)"
+            Game.By.HINT -> " (by hint '${pick.hint}')"
+            null -> ""
+        }
+        val fallback = if (chosen != null && pick?.by != Game.By.CHOSEN)
+            "chosen $chosen is not installed -- falling back; " else ""
+        val candidates = Game.candidates(names, chosen).ifEmpty { listOf("none") }
+        HelperLog.line("$why; ${fallback}game package: ${pick?.name ?: "none found"}$how; " +
+            "candidates: ${candidates.joinToString(", ")}; in front: ${front ?: "unknown"}")
     }
 
     override fun onInterrupt() {}
@@ -380,12 +411,18 @@ class DigiAutotapService : AccessibilityService(), Capture {
          * QUERY_ALL_PACKAGES. Here and not on the instance, because the
          * page's way into the game asks it with no service running.
          */
-        fun findGame(c: Context): String? {
+        fun findGame(c: Context): String? = Game.pick(launcherNames(c), chosenGame(c))
+
+        /** What the launcher can start, this app left out: [findGame]'s list and the sheet's. */
+        fun launcherNames(c: Context): List<String> {
             val launcher = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-            val names = c.packageManager.queryIntentActivities(launcher, 0)
+            return c.packageManager.queryIntentActivities(launcher, 0)
                 .map { it.activityInfo.packageName }.distinct().filter { it != c.packageName }
-            return Game.pick(names)
         }
+
+        /** The player's choice under Settings (SkillSettings.GAME_KEY), or null for "find it". */
+        fun chosenGame(c: Context): String? =
+            SettingsStore(c).str(SkillSettings.GAME_KEY, "").ifEmpty { null }
 
         /**
          * Is it switched on in the system settings? Asked fresh every time

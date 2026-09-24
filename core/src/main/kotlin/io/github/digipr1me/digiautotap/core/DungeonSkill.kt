@@ -173,6 +173,8 @@ open class DungeonSkill(
      * Reward sheet, which does need its tap, is named now and tapped at once.
      */
     internal var unknownHold = UNKNOWN_HOLD
+    /** See [PARTY_WAIT]. */
+    internal var partyWait = PARTY_WAIT
     internal var swipes = 1
     internal var patience = patience
     /** After Attempt the game needs a moment before the dialog goes away. Measured about 3 s at Apocalymon Wall. */
@@ -214,7 +216,16 @@ open class DungeonSkill(
     internal var parkedBecause: String? = null
         private set
     /** Panels in a row whose counter could not be read with no sheet to say otherwise. */
+    /**
+     * Unreadable counters in a row on the card being played. Per card, not
+     * per pass: the pass-wide count (2026-09-23) was meant for a reader
+     * that broke, and what it cost was every card after the unreadable one
+     * -- Network Defense Ops and Metal Sea never opened after two lost runs
+     * on Bakemon and Digifactory (NOTES.md, "A swipe is proved, not assumed").
+     */
     private var unreadableInARow = 0
+    /** [book] gave up on this card's counter; the card ends, the pass goes on. */
+    private var counterGaveUp = false
     /** Whether the Reward sheet was seen since the last tap on Attempt or Clear Previous Difficulty. */
     internal var rewardSeen = false
 
@@ -358,7 +369,7 @@ open class DungeonSkill(
      */
     internal open fun play(): Outcome {
         val counts = plan() ?: return Outcome.parked(
-            "no list cards recognised -- am I in the list?")
+            parkedBecause ?: "no list cards recognised -- am I in the list?")
         val (playFromTop, playFromBottom) = counts
 
         var topList = (0 until playFromTop).filter { isSelected(it, TOP) }
@@ -369,12 +380,10 @@ open class DungeonSkill(
         if (surveyFirst) {
             log("\nPre-check: which dungeons still have tickets")
             if (topList.isNotEmpty()) {
-                scrollTop()
-                topList = survey(topList, TOP)
+                topList = scrollTop()?.let { survey(topList, TOP, it) } ?: emptyList()
             }
             if (bottomList.isNotEmpty()) {
-                scrollBottom()
-                bottomList = survey(bottomList, BOTTOM)
+                bottomList = scrollBottom()?.let { survey(bottomList, BOTTOM, it) } ?: emptyList()
             }
             log("Playable, top %s, bottom %s".format(
                 if (topList.isEmpty()) "none" else topList.map { it + 1 }.toString(),
@@ -386,21 +395,34 @@ open class DungeonSkill(
             }
         }
 
-        if (topList.isNotEmpty()) scrollTop()
+        // A card's index is only a card under the scroll the plan measured
+        // it at, so a half whose scroll could not be proved is not played:
+        // the card tapped would be the neighbour's.
+        if (topList.isNotEmpty() && scrollTop() == null) {
+            log("the list would not scroll to the top, leaving the top half")
+            topList = emptyList()
+        }
         for (index in topList) {
             if (!stillOn()) break
             log("\n" + labelOf(index, TOP))
             playEntry(index, TOP, TOP to index)
-            if (parkedBecause != null) return done()
-            scrollTop()
+            if (scrollTop() == null) {
+                log("the list would not scroll back to the top, leaving the rest of the top half")
+                break
+            }
         }
-        if (bottomList.isNotEmpty()) scrollBottom()
+        if (bottomList.isNotEmpty() && scrollBottom() == null) {
+            log("the list would not scroll to the bottom, leaving the bottom half")
+            bottomList = emptyList()
+        }
         for (index in bottomList) {
             if (!stillOn()) break
             log("\n" + labelOf(index, BOTTOM))
             playEntry(index, BOTTOM, BOTTOM to index)
-            if (parkedBecause != null) return done()
-            scrollBottom()
+            if (scrollBottom() == null) {
+                log("the list would not scroll back to the bottom, leaving the rest of the bottom half")
+                break
+            }
         }
         return done()
     }
@@ -419,8 +441,21 @@ open class DungeonSkill(
      * must be played from the top. null where no card was recognised at all.
      */
     internal open fun plan(): Pair<Int, Int>? {
-        scrollBottom()
-        val nBottom = listCards(grab()).size
+        val img = scrollBottom()
+        if (img == null) {
+            // Counted at the top, the four cards of the top view become the
+            // four bottom ones: Bakemon is played twice, Digifactory under
+            // Network Defense Ops' name, Network Defense Ops under Metal
+            // Sea's budget -- and not at all when that stands at 0. Loud and
+            // wrong beats quiet and one off, and the frame [scroll] kept is
+            // the measurement if a display really shows four cards at the
+            // bottom (NOTES.md, "A swipe is proved, not assumed").
+            parkedBecause = "the dungeon list did not reach the bottom after $SCROLL_TRIES " +
+                "swipes, so no card can be counted"
+            log(parkedBecause!!)
+            return null
+        }
+        val nBottom = listCards(img).size
         if (nBottom == 0) {
             log("no list cards recognised, am I in the list?")
             return null
@@ -457,10 +492,9 @@ open class DungeonSkill(
      * yet watched. A card whose counters cannot be read is still played --
      * unreadable is not the same as empty.
      */
-    internal open fun survey(positions: List<Int>, label: String): List<Int> {
+    internal open fun survey(positions: List<Int>, label: String, img: Mat): List<Int> {
         val playable = ArrayList<Int>()
-        // Not grab(): this runs right after a scroll.
-        val img = settledFrame()
+        // [img] is the settled frame the scroll proved, not a fresh grab.
         for (index in positions) {
             if (!stillOn()) break
             if (!isSelected(index, label)) {
@@ -531,6 +565,8 @@ open class DungeonSkill(
 
     private fun playOne(index: Int, label: String, key: Pair<String, Int>?) {
         val k = key ?: (label to index)
+        unreadableInARow = 0
+        counterGaveUp = false
         var img = grab()
         var info = recognise(img)
         if (info.state != Dungeon.LIST) {
@@ -538,8 +574,11 @@ open class DungeonSkill(
             bump("unknown", 1)
             saveUnknown(img, "no_list")
             if (!returnToList()) return
-            scrollTo(label)
-            img = grab()
+            img = scrollTo(label) ?: run {
+                log("  the list would not scroll to the card's half, skipping it")
+                bump("skipped", 1)
+                return
+            }
             info = recognise(img)
         }
 
@@ -580,12 +619,14 @@ open class DungeonSkill(
         var expectTicket = false
         var adsHadNoEffect = false
         var reopened = false
+        var unknownSince: Double? = null
         while (steps < loops) {
             if (!stillOn()) break
             steps += 1
             val here = dialogSettled(2)
             val state = here.state
             if (state in DIALOGS) panelSeen = true
+            if (state != Dungeon.UNKNOWN) unknownSince = null
 
             if (state == Dungeon.EXIT) {
                 val kind = here.exitKind ?: "beenden"
@@ -628,8 +669,12 @@ open class DungeonSkill(
                 // its card. Every bottom-half card could end that way, and
                 // the top half was right by accident.
                 reopened = true
-                scrollTo(label)
-                val visible = listCards(grab())
+                val scrolled = scrollTo(label) ?: run {
+                    log("  back in the list, which would not scroll to the card's half, done")
+                    noteSpent(index, label, ticketsSpent)
+                    return
+                }
+                val visible = listCards(scrolled)
                 if (index >= visible.size) {
                     log("  back in the list, done")
                     noteSpent(index, label, ticketsSpent)
@@ -652,8 +697,20 @@ open class DungeonSkill(
             }
 
             if (state == Dungeon.UNKNOWN) {
-                // Reward, result, or an intermediate screen. Tap high up,
-                // that accepts rewards and does not trigger a party prompt.
+                // Reward, result, or an intermediate screen. Not at once:
+                // a screen between two known ones is left alone for
+                // [unknownHold], as [waitDialogBack] leaves it -- a tap
+                // outside the panel is the one thing that closes it, and on
+                // the party panel that tap raises "Disband the party?",
+                // which the loop answers with OK. A held look is not a step.
+                val since = unknownSince ?: now().also { unknownSince = it }
+                if (now() - since < unknownHold) {
+                    steps -= 1
+                    sleep(tick)
+                    continue
+                }
+                // Tap high up, that accepts rewards and does not trigger a
+                // party prompt.
                 tap(0.5, NEUTRAL_TAP_Y, "neutral")
                 sleep(pauseShort)
                 continue
@@ -688,7 +745,17 @@ open class DungeonSkill(
                 val party = here.party!!
                 tap(party.fx, party.fy, "Find a Party")
                 partySearches += 1
-                sleep(pauseLong * 3)
+                // The search gets [partyWait], and the searching panel is
+                // not tapped: the PC's two looks 4.5 s apart were never
+                // measured against how long the game searches.
+                val t0 = now()
+                val found = waitForParty(partyWait)
+                if (found == null) {
+                    log("  no party after %.0f s".format(now() - t0))
+                } else {
+                    log("  the party panel changed after %.0f s: %s, %d of 3 slots filled"
+                        .format(now() - t0, found.state, found.partyVoll ?: 0))
+                }
                 continue
             }
 
@@ -734,7 +801,7 @@ open class DungeonSkill(
                             if (book(before, after, ATTEMPT) == Booked.TICKET) {
                                 ticketsSpent += 1
                             }
-                            if (parkedBecause != null) break
+                            if (counterGaveUp) break
                             continue
                         }
                         val duration = now() - t0
@@ -771,7 +838,7 @@ open class DungeonSkill(
                         if (book(before, after, ATTEMPT) == Booked.TICKET) {
                             ticketsSpent += 1
                         }
-                        if (parkedBecause != null) break
+                        if (counterGaveUp) break
                         continue
                     }
                     // The dialog stayed open. Either rejected, or the click fell
@@ -809,7 +876,7 @@ open class DungeonSkill(
                     bump("cleared", 1)
                     continue
                 }
-                if (parkedBecause != null) break
+                if (counterGaveUp) break
                 if (booked == Booked.NONE && !clearRetried) {
                     // No sheet and the counter where it was: the tap fell
                     // into an animation. Once more, and once only.
@@ -890,7 +957,8 @@ open class DungeonSkill(
      *   same      seen        nothing, and the frame is kept: the witnesses disagree
      *   unread    seen        a ticket, and the log says the counter was not read
      *   unread    not seen    a lost run; the frame is kept, and a second in a
-     *                         row parks the pass -- nothing it does can be counted
+     *                         row on the same card ends that card -- what it
+     *                         spends cannot be counted, and the next card can
      */
     internal fun book(before: Int?, after: Int?, what: String): Booked {
         val seen = rewardSeen
@@ -938,9 +1006,10 @@ open class DungeonSkill(
         saveUnknown(grab(), "counter_unreadable")
         if (what == ATTEMPT) bump("lost", 1)
         if (unreadableInARow >= 2) {
-            parkedBecause = "the dungeon panel's ticket counter could not be read twice in a " +
-                "row, so no ticket it spends can be counted"
-            log("  $parkedBecause")
+            // Per card: two runs a card is the ceiling on tickets nobody
+            // counts, and no card pays for the one before it.
+            counterGaveUp = true
+            log("  the counter on this card could not be read twice in a row, leaving it")
         }
         return Booked.UNREADABLE
     }
@@ -979,17 +1048,16 @@ open class DungeonSkill(
      */
     internal open fun listCounter(index: Int, label: String): Int? {
         if (recognise(grab()).state != Dungeon.LIST) return null
-        scrollTo(label)
-        fun look(): Int? {
-            val img = grab()
+        val scrolled = scrollTo(label) ?: return null
+        fun look(img: Mat): Int? {
             val cards = listCardsWithSize(img)
             if (index >= cards.size) return null
             val (fy, fh) = cards[index]
             return cardBudget(img, fy, fh).tickets
         }
-        val first = look() ?: return null
+        val first = look(scrolled) ?: return null
         sleep(pauseShort)
-        val second = look() ?: return null
+        val second = look(grab()) ?: return null
         return if (first == second) first else null
     }
 
@@ -1138,6 +1206,27 @@ open class DungeonSkill(
                 tap(0.5, NEUTRAL_TAP_Y, "neutral, accept the reward")
             }
             taps += 1
+            sleep(tick)
+        }
+        return null
+    }
+
+    /**
+     * Wait for the party search to end: the panel with two or more slots
+     * filled, or any screen that is neither the searching panel nor
+     * unknown. Nothing is tapped meanwhile -- what the panel looks like
+     * while the game searches is unmeasured, and a tap outside it is the
+     * one thing that closes it (NOTES.md, "A swipe is proved, not assumed"). Null when the
+     * wait ran out, or the main switch went off.
+     */
+    internal open fun waitForParty(timeout: Double): Dungeon.Recognition? {
+        val end = now() + timeout
+        while (now() < end) {
+            if (!on()) return null
+            val info = recognise(grab())
+            val searching = info.state == Dungeon.UNKNOWN ||
+                (info.state == Dungeon.DIALOG_PARTY && (info.partyVoll ?: 0) < 2)
+            if (!searching) return info
             sleep(tick)
         }
         return null
@@ -1312,6 +1401,25 @@ open class DungeonSkill(
      * What it checks after pressing is [autoButton], not "the globe is gone":
      * independent evidence that the main screen is in front and clear.
      */
+    /**
+     * The chain's second hand (Skill.leave): [goHome], `run`'s own way out,
+     * aimed with the frame in front -- a pass that never began has no
+     * origin of its own to aim with.
+     */
+    override fun leave(): Boolean {
+        val img = try {
+            grab()
+        } catch (e: CaptureError) {
+            log("no frame to leave the dungeon list from: ${e.message}")
+            return false
+        }
+        val r = Dungeon.gameRect(img)
+        img.release()
+        origin = r.x0 to r.y0
+        device = r.gw to r.gh
+        return goHome()
+    }
+
     internal open fun goHome(rounds: Int = HOME_ROUNDS): Boolean {
         var pressed = 0
         var wentBack = false
@@ -1362,25 +1470,58 @@ open class DungeonSkill(
         log("  unclear screen kept: $tag")
     }
 
-    private fun scroll(swipes: Int, up: Boolean) {
-        // One swipe is enough, measured. Then wait half a second, otherwise
-        // reading happens during the trailing motion and the cards sit at the
-        // wrong positions.
+    /**
+     * Swipe to one end of the list, and prove it. A swipe is proved, not
+     * assumed: one sent into the list's opening animation is swallowed --
+     * the same case as a press swallowed on the way home -- and a plan
+     * counted on the wrong half plays every bottom card one off
+     * (NOTES.md, "A swipe is proved, not assumed"). So after the swipe the frame is let
+     * settle, [Dungeon.listAtTop] is asked, and a swipe that did not take is
+     * repeated, [SCROLL_TRIES] at most. The frame returned is the settled one
+     * the answer was read on; null when the list was there and would not
+     * reach that end, with the last frame kept. A frame with no list on it
+     * is returned as it is, and at once: a swipe on something other than
+     * the list is not a swipe that did not take, and the caller reads what
+     * it can off the frame ([plan] says "no list cards recognised").
+     */
+    private fun scroll(swipes: Int, up: Boolean): Mat? {
         val (ox, oy) = origin
         val (dw, dh) = device
         val x = Py.int(ox + 0.5 * dw)
         val yNear = Py.int(oy + 0.30 * dh)
         val yFar = Py.int(oy + 0.88 * dh)
-        for (n in 0 until swipes) {
-            if (up) swipe(x, yNear, x, yFar) else swipe(x, yFar, x, yNear)
-            sleep(0.5)
+        val where = if (up) "top" else "bottom"
+        var img: Mat? = null
+        for (attempt in 1..SCROLL_TRIES) {
+            // One swipe is enough, measured. Then half a second, otherwise
+            // reading happens during the trailing motion and the cards sit
+            // at the wrong positions.
+            for (n in 0 until swipes) {
+                if (up) swipe(x, yNear, x, yFar) else swipe(x, yFar, x, yNear)
+                sleep(0.5)
+            }
+            img = settledFrame()
+            val cards = listCardsWithSize(img)
+            val atTop = Dungeon.listAtTop(cards) ?: return img
+            val arrived = if (up) atTop else Dungeon.listAtBottom(cards) == true
+            if (arrived) return img
+            if (attempt < SCROLL_TRIES) {
+                log("  the swipe to the $where did not take (%d cards, list at the top: %s), once more"
+                    .format(cards.size, atTop))
+            } else {
+                log("  the swipe to the $where did not take $SCROLL_TRIES times (%d cards, list at the top: %s)"
+                    .format(cards.size, atTop))
+                saveUnknown(img, "list_not_at_$where")
+            }
         }
-        sleep(0.5)
+        return null
     }
 
-    internal open fun scrollTop(swipes: Int = this.swipes) = scroll(swipes, true)
+    /** The settled frame at the top of the list, or null when the list would not go there. See [scroll]. */
+    internal open fun scrollTop(swipes: Int = this.swipes): Mat? = scroll(swipes, true)
 
-    internal open fun scrollBottom(swipes: Int = this.swipes) = scroll(swipes, false)
+    /** The settled frame at the bottom of the list, or null. See [scroll]. */
+    internal open fun scrollBottom(swipes: Int = this.swipes): Mat? = scroll(swipes, false)
 
     /**
      * To the half of the list a card is counted in. A card's index is only
@@ -1388,7 +1529,7 @@ open class DungeonSkill(
      * hands back on its own -- after a battle, after a panel closed itself
      * -- is at the top, whatever the pass had scrolled to.
      */
-    private fun scrollTo(label: String) = if (label == BOTTOM) scrollBottom() else scrollTop()
+    private fun scrollTo(label: String): Mat? = if (label == BOTTOM) scrollBottom() else scrollTop()
 
     private fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, ms: Long = 300) {
         try {
@@ -1550,6 +1691,18 @@ open class DungeonSkill(
 
         /** See [unknownHold]. */
         const val UNKNOWN_HOLD = 3.0
+
+        /**
+         * How long one "Find a Party" is given before the second, and the
+         * second before "no party found". The PC looked twice, 4.5 s apart,
+         * and never measured the game's search; 45 s is the plan's proposal
+         * (NOTES.md, "A swipe is proved, not assumed"), to be set from the first live search
+         * with a time in the log.
+         */
+        const val PARTY_WAIT = 45.0
+
+        /** Swipes [scroll] sends before it gives up proving its end of the list. */
+        const val SCROLL_TRIES = 3
 
         /** The last halt of [maxLoops]: no card takes more looks than this. */
         const val LOOP_CAP = 200

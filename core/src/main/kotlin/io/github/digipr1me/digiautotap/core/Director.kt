@@ -312,6 +312,26 @@ object Director {
     const val SETTLE = 10.0
 
     /**
+     * How long an unknown screen may stand in the fully automatic mode
+     * before the chain stops waiting for it and says so (DirectorLoop.full,
+     * R4 of the plan of 2026-09-24): counted from the frame it was first
+     * seen, so that the [SETTLE] after a step is inside it and not on top.
+     *
+     * What an unknown screen lasts when nothing is wrong, from what is
+     * measured: "Now Loading" after a battle, three frames and 1.4 s
+     * (DungeonSkill.UNKNOWN_HOLD); and the longest in the phone's log of
+     * 2026-09-24, the game coming up from the launcher, unknown at 19:54:21
+     * and the main screen by 19:54:29 -- 8 s at most. And every step's
+     * `run` ends by confirming the auto button, so an unknown screen after
+     * a step is already off the way things go. 30 s is almost four times the
+     * longest, and a stalled chain still says why within half a minute.
+     */
+    const val UNKNOWN_END = 30.0
+
+    /** The chain's second hand presses the globe as often as every skill's `goHome` does. */
+    const val HOME_PRESSES_MAX = DungeonSkill.HOME_PRESSES_MAX
+
+    /**
      * The tap that takes the Stage Failed banner away, at a spot that opens
      * nothing on the plain main screen: `summon.NEUTRAL_TAP_FY`, where
      * open_summons taps it away too. The banner eats any tap, so nothing
@@ -413,8 +433,12 @@ class DirectorLoop(
     private var ownMotion = false
     /** The last sentence said, so that a round says a thing once (passive._once). */
     private var said: String? = null
-    /** Why the director stands still, or null. A change of screen clears it. */
-    var parked: String? = null
+    /**
+     * Why the director stands still, or null. A change of screen clears it.
+     * Written by the core's thread, read by the shell's from the main one
+     * (`Shell.parked`), in the middle of a round as well.
+     */
+    @Volatile var parked: String? = null
         private set
     /** Seconds left on the three-second clock while the director holds for it, else null. */
     var takeOverIn: Double? = null
@@ -432,6 +456,21 @@ class DirectorLoop(
     /** A skill's own prompt may still be standing: what it said it was doing, until when. */
     private var leaving: String? = null
     private var leavingUntil = 0.0
+    /** When the screen in front was first seen, for [Director.UNKNOWN_END]. */
+    private var seenSince = 0.0
+    /**
+     * The fully automatic mode's step whose `run` handed the screen back
+     * last, for as long as the main screen has not been seen since: a
+     * screen standing then is that step's leftover and gets the chain's
+     * second hand ([full]); with this null, whatever is open is the
+     * player's.
+     */
+    private var leftBy: Skill? = null
+    /** That step came back PARKED, and the next look decides what the park means ([full], R2). */
+    private var stepParked: Outcome? = null
+    /** The second hand's own count: whether the screen's skill was asked to leave, and globe presses. */
+    private var askedToLeave = false
+    private var homePresses = 0
 
     /** The shell's "Try again": look afresh at a screen the director had parked on. */
     fun retry() {
@@ -439,6 +478,14 @@ class DirectorLoop(
         said = null
         handedOver = null
         log("trying again on ${screen ?: "the screen"}")
+    }
+
+    /** Whatever a chain step left behind is forgotten: the screen is the player's from here on. */
+    private fun forgetStep() {
+        leftBy = null
+        stepParked = null
+        askedToLeave = false
+        homePresses = 0
     }
 
     /** Release the frame held for the motion measurement. */
@@ -497,7 +544,11 @@ class DirectorLoop(
         note(answer.screen, img, t)
 
         if (!on()) {
-            // Read only: what is seen goes to the log, nothing is done about it.
+            // Read only: what is seen goes to the log, nothing is done about
+            // it. And the player may do anything meanwhile, so what a chain
+            // step left behind is not its leftover any more when the switch
+            // comes back.
+            forgetStep()
             return still("paused, sees ${answer.screen}", beat = Director.BEAT_MAIN)
         }
         if (parked != null) return Director.Tick(answer.screen, parked!!, beat = Director.BEAT_MAIN)
@@ -554,7 +605,9 @@ class DirectorLoop(
                 return still("waiting for the $expect to come back after the work")
             }
         }
-        return if (mode() == SkillSettings.MODE_FULL) full(answer, img, t, justBack) else semi(answer, img, t)
+        if (mode() == SkillSettings.MODE_FULL) return full(answer, img, t, justBack)
+        forgetStep()
+        return semi(answer, img, t)
     }
 
     /** The motion measurement and the clock, on every frame read. */
@@ -566,6 +619,7 @@ class DirectorLoop(
             // skill's own result screen in between is the same visit.
             screen = seen
             quietSince = t
+            seenSince = t
             if (expect == null) handedOver = null
             if (parked != null) log("  ${parked}: over, the screen changed")
             parked = null
@@ -676,9 +730,48 @@ class DirectorLoop(
      */
     private fun full(answer: Director.Answer, img: Mat, t: Double, justBack: Boolean): Director.Tick {
         val screen = answer.screen
-        if (screen == Director.UNKNOWN) return still("no skill works on this screen", screen, Director.BEAT_MAIN)
         if (screen != Director.MAIN) {
-            return park(screen, "The fully automatic mode starts from the main screen, and $screen is open.")
+            val step = leftBy
+            if (step == null) {
+                // The player's screen, before the first step or after a
+                // pause: theirs, and a park, as it always was. An unknown
+                // one included -- but with an end and a sentence, where it
+                // used to stand still round after round with neither (R4).
+                if (screen == Director.UNKNOWN) {
+                    if (t - seenSince < Director.UNKNOWN_END) {
+                        return still("no skill works on this screen", screen, Director.BEAT_MAIN)
+                    }
+                    return park(screen, "The fully automatic mode starts from the main screen, " +
+                        "and I do not know the screen that is open.")
+                }
+                return park(screen, "The fully automatic mode starts from the main screen, and $screen is open.")
+            }
+            val stopped = stepParked
+            if (stopped != null) {
+                // R2's other half: a step that parked and did not come home.
+                // Something is in the way, and the next step would begin
+                // blind -- a park, as before.
+                forgetStep()
+                keep(img, "parked_not_home")
+                return park(screen, "${step.name} parked: ${stopped.why}")
+            }
+            return secondHand(answer, img, t, step)
+        }
+        val back = leftBy
+        if (back != null) {
+            val stopped = stepParked
+            if (stopped != null) {
+                // R2: a step that could not get in but came home does not
+                // hold the chain. Retired for this chain run -- it would
+                // meet the same wall again next round -- and the next step
+                // starts from this main screen.
+                log("  chain: retiring ${back.key} for this run -- ${stopped.why}")
+                chain.retire(back.key, stopped.why)
+                chain.advance()
+            } else if (askedToLeave || homePresses > 0) {
+                log("  chain: back on the main screen after ${back.name}; going on")
+            }
+            forgetStep()
         }
         val step = chain.current() ?: return mainRound(answer, img, "the chain is finished (${chain.summary()})")
         if (justBack) return mainRound(answer, img)
@@ -703,6 +796,10 @@ class DirectorLoop(
             ownMotion = true
             expect = Director.MAIN
             expectUntil = now() + Director.SETTLE
+            forgetStep()
+            // Whatever stands after SETTLE is this step's to be looked after,
+            // unless the switch ended it: then the screen is the player's.
+            if (outcome.result != Result.STOPPED) leftBy = s
             when (outcome.result) {
                 Result.DONE -> chain.advance()
                 Result.RETIRED -> {
@@ -715,10 +812,86 @@ class DirectorLoop(
                     chain.retire(step.key, outcome.why)
                     chain.advance()
                 }
-                Result.STOPPED, Result.PARKED -> {}
+                Result.STOPPED -> {}
+                Result.PARKED -> {
+                    // Not a park yet (R2). A step that could not get in and
+                    // came home anyway -- the runner's own `run` goes home in
+                    // its finally -- used to park the whole chain on a main
+                    // screen from which the next step could have started.
+                    // The next look decides: the main screen retires this
+                    // step for the run and the chain goes on; anything else
+                    // is a park, as it was.
+                    stepParked = outcome
+                    leaving = outcome.leaving
+                    leavingUntil = if (outcome.leaving != null) now() + Director.SETTLE else 0.0
+                    log("  chain: ${s.name} could not go on -- ${outcome.why}")
+                    return@gated Director.Tick(Director.MAIN, "${s.name} could not go on: ${outcome.why}",
+                                               "run ${s.key}")
+                }
             }
             after(s, outcome, Director.MAIN, "run")
         }
+    }
+
+    /**
+     * The chain's second hand (R3 and R4 of the plan of 2026-09-24): a
+     * screen that is still standing when [Director.SETTLE] has run out after
+     * a step, where the next step needs the main screen. Before this, the
+     * chain parked there, and nobody asked whether the way home was one tap
+     * away -- a step that did not come home stopped every step after it.
+     *
+     * In this order, one action a round, each gated like every action of
+     * the director's own:
+     *
+     *  1. A skill's screen: that skill is asked for its own way home
+     *     ([Skill.leave]) -- once, and the main screen is waited for again.
+     *  2. A frame on which the globe is read: the globe, at most
+     *     HOME_PRESSES_MAX times, as every skill's `goHome` presses it --
+     *     never a position, and only while it is read.
+     *  3. Neither: a park, with the frame kept.
+     *
+     * An unknown screen gets no skill (it has none) and no hand at all
+     * until it has stood [Director.UNKNOWN_END]: a loading screen is
+     * unknown, and so is the game closing a result it opened. A dialog no
+     * skill opened is not answered here either -- it dims the nav bar, the
+     * globe is not read, and it is a park, because the director presses OK
+     * on nothing it did not open.
+     */
+    private fun secondHand(answer: Director.Answer, img: Mat, t: Double, step: Skill): Director.Tick {
+        val screen = answer.screen
+        if (screen == Director.UNKNOWN && t - seenSince < Director.UNKNOWN_END) {
+            return still("waiting for the main screen after ${step.name}", screen)
+        }
+        val owner = if (screen == Director.UNKNOWN) null else skills.firstOrNull { it.worksOn(screen) }
+        if (owner != null && !askedToLeave) {
+            return gated(answer, img, t) {
+                askedToLeave = true
+                log("  chain: $screen left open after ${step.name}; asking ${owner.name} to leave")
+                val home = working(owner) { owner.leave() }
+                ownMotion = true
+                expect = Director.MAIN
+                expectUntil = now() + Director.SETTLE
+                Director.Tick(screen, if (home) "${owner.name} went home" else "${owner.name} could not go home",
+                              "leave ${owner.key}")
+            }
+        }
+        val globe = Dungeon.homeButton(img)
+        if (globe != null && homePresses < Director.HOME_PRESSES_MAX) {
+            return gated(answer, img, t) {
+                if (homePresses == 0) {
+                    val left = if (screen == Director.UNKNOWN) "an unknown screen for %.0f s".format(t - seenSince)
+                               else "$screen left open"
+                    log("  chain: $left after ${step.name}; pressing the home button")
+                }
+                homePresses += 1
+                tap(img, globe.fx, globe.fy)
+                Director.Tick(screen, "pressing the home button after ${step.name}", "home")
+            }
+        }
+        forgetStep()
+        keep(img, "no_way_home")
+        val what = if (screen == Director.UNKNOWN) "A screen I do not know" else "The $screen"
+        return park(screen, "$what is open after ${step.name}, and I found no way home from it.")
     }
 
     /**
@@ -787,7 +960,7 @@ class DirectorLoop(
      * `DirectorTest`, "the plate is named for the task, not for the skill the
      * task plays inside it".
      */
-    private inline fun working(skill: Skill, f: () -> Outcome): Outcome {
+    private inline fun <T> working(skill: Skill, f: () -> T): T {
         busy(skill.name)
         try {
             return f()

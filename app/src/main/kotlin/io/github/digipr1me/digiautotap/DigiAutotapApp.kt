@@ -2,7 +2,9 @@ package io.github.digipr1me.digiautotap
 
 import android.app.Application
 import android.content.Context
+import android.content.pm.ApplicationInfo
 import io.github.digipr1me.digiautotap.core.AssetSource
+import io.github.digipr1me.digiautotap.core.Census
 import io.github.digipr1me.digiautotap.core.Chain
 import io.github.digipr1me.digiautotap.core.HelperLog
 import io.github.digipr1me.digiautotap.core.Settings
@@ -12,6 +14,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.time.LocalDate
+import kotlin.concurrent.thread
 
 /**
  * Per process, once: the log file the debug package carries, and where
@@ -52,6 +55,26 @@ class DigiAutotapApp : Application() {
  * midnight.
  */
 fun today(): Long = LocalDate.now().toEpochDay()
+
+/**
+ * The phone counted once per day, week and month ([Census]), off the
+ * calling thread. Asked at every opening of the app and once an hour by the
+ * core, because a player who only ever runs the tasks never opens the app.
+ * A debuggable build is not counted: those are this project's own.
+ */
+fun census(c: Context) {
+    val app = c.applicationContext
+    if (app.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) return
+    thread(name = "census") {
+        val version = runCatching { app.packageManager.getPackageInfo(app.packageName, 0).versionName }
+            .getOrNull() ?: return@thread
+        val store = SettingsStore(app)
+        // A phone that has been through the first-run pages was here before
+        // the census, and is not a new install for having no stamp yet.
+        val known = store.bool(MainActivity.ONBOARDING_SEEN, false)
+        Census.count(store, version, known)?.let { HelperLog.line(it) }
+    }
+}
 
 /** Where things are kept. Names follow the PC's so a phone file sits beside its siblings. */
 object Paths {

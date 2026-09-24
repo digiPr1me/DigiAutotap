@@ -100,6 +100,29 @@ object PaintDungeon {
     }
 
     /**
+     * The dungeon list at its top or its bottom: blue cards centred at
+     * [Dungeon.CARD_X], 0.77 wide, at the centres and heights the oracle
+     * reads on the real frames (DungeonSkillTest.TOP_VIEW, BOTTOM_VIEW).
+     * The top view's first card is the banner, 0.208 tall against 0.116;
+     * the bottom view has five plain cards. What the painted list has to
+     * pass is the real reader, [Dungeon.listAtTop].
+     */
+    fun list(atTop: Boolean): Mat {
+        val w = Paint.W
+        val h = Paint.H
+        val img = Mat(h, w, CvType.CV_8UC3, Scalar(18.0, 18.0, 18.0))
+        val (x0, y0, gw, gh) = Dungeon.gameRect(img)
+        val cards = if (atTop) listOf(0.281 to 0.208, 0.471 to 0.116, 0.621 to 0.116, 0.771 to 0.116)
+                    else listOf(0.229 to 0.115, 0.378 to 0.116, 0.528 to 0.116, 0.678 to 0.116, 0.828 to 0.115)
+        for ((fy, fh) in cards) {
+            rect(img, (x0 + (Dungeon.CARD_X - 0.385) * gw).toInt(), (y0 + (fy - fh / 2) * gh).toInt(),
+                 (x0 + (Dungeon.CARD_X + 0.385) * gw).toInt(), (y0 + (fy + fh / 2) * gh).toInt(),
+                 Paint.hsv(105, 200, 200))
+        }
+        return img
+    }
+
+    /**
      * The wireframe globe, drawn eight times over and shrunk down, as a 0/255
      * mask.
      *

@@ -68,6 +68,21 @@ class Ui(val c: Context) {
         if (stroke != null) setStroke(maxOf(1, dp(1)), stroke)
     }
 
+    /**
+     * The overlay's disc in small, where the app names a mode by its colour:
+     * 10 dp, the dot's own colour, and a 1 dp ring of DOT_PLATE -- the dark
+     * halo that holds the dot over the game, without which DOT_SEMI swims on
+     * a white surface. Only the disc carries the colour: DOT_SEMI and DOT_ON
+     * as text on SURFACE are under 4.5:1.
+     */
+    fun modeDot(colour: Int) = GradientDrawable().apply {
+        shape = GradientDrawable.OVAL
+        setColor(colour)
+        setStroke(maxOf(1, dp(1)), p.DOT_PLATE)
+        setSize(dp(10), dp(10))
+        setBounds(0, 0, dp(10), dp(10))
+    }
+
     private fun pressable(normal: Int, pressed: Int, radius: Int, stroke: Int? = null) =
         StateListDrawable().apply {
             addState(intArrayOf(android.R.attr.state_pressed), round(pressed, stroke, radius))
@@ -311,11 +326,16 @@ class Ui(val c: Context) {
     /**
      * The outlined button beside the main switch, the mode's: TEXT on
      * SURFACE, as tall as the switch it stands next to, and no wider than
-     * its label. What it opens is a sheet; the label says which mode holds.
+     * its label. What it opens is a sheet; the label says which mode holds,
+     * and [dot], where there is one, the colour the overlay's dot has in it.
      */
-    fun ghostButton(label: String, onClick: () -> Unit) =
+    fun ghostButton(label: String, dot: Int? = null, onClick: () -> Unit) =
         text(label, 13f, p.TEXT, bold = true).apply {
             gravity = Gravity.CENTER
+            if (dot != null) {
+                setCompoundDrawablesRelative(modeDot(dot), null, null, null)
+                compoundDrawablePadding = dp(8)
+            }
             background = pressable(p.SURFACE, p.SURFACE_HOVER, radius = RADIUS, stroke = p.LINE)
             setPadding(dp(12), 0, dp(12), 0)
             layoutParams = LinearLayout.LayoutParams(
@@ -438,17 +458,38 @@ class Ui(val c: Context) {
      * others are flat. What each choice *means* is one line under the
      * track, so the control itself stays one row high whatever the
      * sentences say.
+     *
+     * [notes], where given, put one small line under each label: a
+     * [modeDot] and a word, TEXT_2 whether chosen or not. The Mode sheet is
+     * the one place that has them (since 2026-09-24: which colour the
+     * overlay's dot has in which mode).
      */
-    fun segmented(labels: List<String>, chosen: Int, onPick: (Int) -> Unit): LinearLayout {
+    fun segmented(labels: List<String>, chosen: Int, notes: List<Note>? = null,
+                  onPick: (Int) -> Unit): LinearLayout {
         val track = row().apply {
             background = round(p.BG, radius = RADIUS)
             setPadding(dp(3), dp(3), dp(3), dp(3))
         }
         labels.forEachIndexed { i, label ->
             val on = i == chosen
-            track.addView(text(label, 12f, if (on) p.TEXT else p.TEXT_2, bold = on).apply {
+            val word = text(label, 12f, if (on) p.TEXT else p.TEXT_2, bold = on).apply {
                 gravity = Gravity.CENTER
+            }
+            val note = notes?.getOrNull(i)
+            val segment: View = if (note == null) word.apply { setPadding(0, dp(7), 0, dp(7)) }
+            else column().apply {
+                gravity = Gravity.CENTER_HORIZONTAL
                 setPadding(0, dp(7), 0, dp(7))
+                addView(word)
+                addView(mono(note.text, 10f, p.TEXT_2).apply {
+                    setCompoundDrawablesRelative(modeDot(note.dot), null, null, null)
+                    compoundDrawablePadding = dp(5)
+                    gravity = Gravity.CENTER_VERTICAL
+                }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+                                             ViewGroup.LayoutParams.WRAP_CONTENT)
+                    .apply { topMargin = dp(3) })
+            }
+            track.addView(segment.apply {
                 background = if (on) round(p.SURFACE, p.LINE, radius = 6) else null
                 isClickable = true
                 setOnClickListener { onPick(i) }
@@ -458,6 +499,9 @@ class Ui(val c: Context) {
         }
         return track
     }
+
+    /** One line under a [segmented] choice: a dot in [dot]'s colour and [text]. */
+    class Note(val text: String, val dot: Int)
 
     /**
      * The "included" switch, drawn rather than fought for. A platform

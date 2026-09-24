@@ -57,14 +57,16 @@ fun HelperState.icon(): Int = when (this) {
 
 /**
  * The overlay dot's colour: the same four names in either design, and one
- * question -- is DigiAutotap doing something. Green while it is on, whether it
- * is working or only watching (the plate says which); amber while the
- * three-second clock runs; red when it is parked and needs the player;
- * grey when it is off, which is Paused and, should a dot ever be drawn
- * then, Stopped.
+ * question -- is DigiAutotap doing something. On while it is on, whether it
+ * is working or only watching (the plate says which), and since 2026-09-24
+ * "on" says the mode as well: green when [full]y automatic, blue when
+ * semi-automatic (Theme.kt, DOT_SEMI). Amber while the three-second clock
+ * runs; red when it is parked and needs the player; grey when it is off,
+ * which is Paused and, should a dot ever be drawn then, Stopped -- those
+ * three are the same in either mode.
  */
-fun HelperState.dot(p: Palette) = when (this) {
-    HelperState.RUNNING, HelperState.IDLE -> p.DOT_ON
+fun HelperState.dot(p: Palette, full: Boolean) = when (this) {
+    HelperState.RUNNING, HelperState.IDLE -> if (full) p.DOT_ON else p.DOT_SEMI
     HelperState.WAITING -> p.DOT_WAIT
     HelperState.PARKED -> p.DOT_WARN
     HelperState.PAUSED, HelperState.STOPPED -> p.DOT_OFF

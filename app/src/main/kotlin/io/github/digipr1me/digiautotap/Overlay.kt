@@ -232,12 +232,28 @@ object Overlay {
      * two lines all come from what that round left behind, and the window is
      * hidden while the game is not in front (design 3.3). The window itself
      * stays; what goes with the picture is [FLAG_KEEP_SCREEN_ON] (see
-     * [DotView.awake]).
+     * [DotView.awake]). [full] is the mode, which the disc's colour says.
      */
-    fun update(state: HelperState, screen: String?, gameInFront: Boolean, task: String? = Status.now.task) {
+    fun update(state: HelperState, screen: String?, gameInFront: Boolean, full: Boolean,
+               task: String? = Status.now.task) {
         lastInFront = gameInFront
+        lastFull = full
         if (view == null) return
-        onMain("update") { fitted()?.set(state, screen, task, gameInFront) }
+        onMain("update") { fitted()?.set(state, screen, task, gameInFront, full) }
+    }
+
+    /**
+     * The mode was chosen in the Mode sheet: the disc's colour now, not at
+     * the end of the round, which can be a minute away (see [refresh]).
+     */
+    fun mode(full: Boolean) {
+        lastFull = full
+        if (view == null) return
+        onMain("mode") {
+            // Read before fitted(), which can hand back a new view that does not know it.
+            val name = view?.screenName
+            fitted()?.set(Shell.state(), name, Status.now.task, lastInFront, full)
+        }
     }
 
     /**
@@ -282,6 +298,14 @@ object Overlay {
     private var lastInFront = true
 
     /**
+     * The mode at the last round or the last choice, for the same reason:
+     * [refresh] builds its picture from what is remembered, and a mode it did
+     * not carry would be a dot that changes colour when it is paused.
+     */
+    @Volatile
+    private var lastFull = false
+
+    /**
      * Draw the dot again **now**, for a change that did not come from a
      * round.
      *
@@ -307,7 +331,7 @@ object Overlay {
             // The screen's name is read here and handed on, because a window
             // that had to be measured again is a new view and does not know it.
             val name = v.screenName
-            fitted()?.set(Shell.state(), name, Status.now.task, lastInFront)
+            fitted()?.set(Shell.state(), name, Status.now.task, lastInFront, lastFull)
         }
     }
 
@@ -494,6 +518,8 @@ object Overlay {
         private var task: String? = null
         private var taskSince = 0L
         private var visible = true
+        /** Fully automatic? Green if so, blue if not ([HelperState.dot]). */
+        private var full = false
 
         /**
          * Is the display still portrait? Read once a round rather than in
@@ -693,8 +719,9 @@ object Overlay {
                 lp.x, lp.y, lp.width, lp.height, display().width(), display().height())
         }
 
-        fun set(s: HelperState, screen: String?, t: String?, gameInFront: Boolean) {
+        fun set(s: HelperState, screen: String?, t: String?, gameInFront: Boolean, full: Boolean) {
             state = s
+            this.full = full
             screenName = screen
             if (t != task) taskSince = SystemClock.elapsedRealtime()
             task = t
@@ -845,7 +872,7 @@ object Overlay {
             canvas.drawCircle(cx, cy, size * HALO_OF_DOT, paint)
 
             val r = size * DISC_OF_DOT
-            paint.color = state.dot(p)
+            paint.color = state.dot(p, full)
             paint.alpha = 255
             canvas.drawCircle(cx, cy, r, paint)
             paint.style = Paint.Style.STROKE

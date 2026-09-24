@@ -1,13 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- INTERNET is used in two places: redeeming a supporter code, which
+    <!-- INTERNET is used in three places: redeeming a supporter code, which
          sends the hash of the code and a random id for this installation to
          the activation server and gets back a signed token (core's
-         Activation.kt, PLAN_SUPPORTER_SERVER.md), and the update check, one
+         Activation.kt, PLAN_SUPPORTER_SERVER.md), the update check, one
          GET to GitHub's releases list when the app is opened (core's
-         Updates.kt). `NetworkTest` holds the five permissions by name and
-         those two files as the only ones that may open a connection.
+         Updates.kt), and the census, one POST a day to the same server with
+         the version and nothing that names the phone (core's Census.kt).
+         `NetworkTest` holds the five permissions by name and those three
+         files as the only ones that may open a connection.
          It is a normal permission, so there is no runtime dialog and the
          onboarding stays at three asks. -->
     <uses-permission android:name="android.permission.INTERNET" />

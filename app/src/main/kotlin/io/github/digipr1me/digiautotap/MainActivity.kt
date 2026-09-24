@@ -32,6 +32,7 @@ import android.widget.TextView
 import android.widget.Toast
 import io.github.digipr1me.digiautotap.core.Activation
 import io.github.digipr1me.digiautotap.core.Chain
+import io.github.digipr1me.digiautotap.core.Game
 import io.github.digipr1me.digiautotap.core.HelperLog
 import io.github.digipr1me.digiautotap.core.HelperState
 import io.github.digipr1me.digiautotap.core.MainSwitch
@@ -128,7 +129,10 @@ class MainActivity : Activity() {
         render()
         // Once per opening, not per rebuild: a change of light or dark
         // builds the Activity again with a saved state.
-        if (savedInstanceState == null) checkForUpdate(asked = false)
+        if (savedInstanceState == null) {
+            checkForUpdate(asked = false)
+            census(this)
+        }
     }
 
     /**
@@ -141,6 +145,7 @@ class MainActivity : Activity() {
         super.onRestart()
         val found = newer
         if (found != null) offerUpdate(found) else checkForUpdate(asked = false)
+        census(this)
     }
 
     override fun onSaveInstanceState(out: Bundle) {
@@ -372,7 +377,7 @@ class MainActivity : Activity() {
             }.apply {
                 layoutParams = LinearLayout.LayoutParams(0, ui.dp(Ui.SWITCH_H), 1f)
             })
-            buttonSlot.addView(ui.ghostButton(modeLabel() + "  ▾") { modeSheet() })
+            buttonSlot.addView(ui.ghostButton(modeLabel() + "  ▾", modeDot()) { modeSheet() })
             buttonSlot.addView(ui.ghostIcon(R.drawable.ic_game, "Open Digimon UP") { openGame() })
             // The three-second clock is the one thing on this page that
             // moves by itself, so it is the one thing that asks to be drawn
@@ -443,6 +448,11 @@ class MainActivity : Activity() {
     private fun modeLabel(): String =
         if (store.str(SkillSettings.MODE_KEY, SkillSettings.MODE_DEFAULT) == SkillSettings.MODE_FULL)
             "Fully automatic" else "Semi-automatic"
+
+    /** The overlay dot's colour in the mode that holds, for the mode's button. */
+    private fun modeDot(): Int =
+        if (store.str(SkillSettings.MODE_KEY, SkillSettings.MODE_DEFAULT) == SkillSettings.MODE_FULL)
+            ui.p.DOT_ON else ui.p.DOT_SEMI
 
     private fun setupLine(asks: List<Ask>): View {
         val open = asks.filter { !it.ok }
@@ -590,10 +600,15 @@ class MainActivity : Activity() {
             SkillSettings.MODE_FULL
         sheet.addView(ui.eyebrow("Mode"))
         sheet.addView(ui.segmented(listOf("Semi-automatic", "Fully automatic"),
-                                   if (full) 1 else 0) { i ->
+                                   if (full) 1 else 0,
+                                   listOf(Ui.Note("blue dot", ui.p.DOT_SEMI),
+                                          Ui.Note("green dot", ui.p.DOT_ON))) { i ->
             val chosen = if (i == 0) SkillSettings.MODE_SEMI else SkillSettings.MODE_FULL
             store.put(SkillSettings.MODE_KEY, chosen)
             HelperLog.line("mode: " + if (i == 0) "semi-automatic" else "fully automatic")
+            // The dot says the mode now, not at the end of a round that can
+            // be a minute long.
+            Overlay.mode(chosen == SkillSettings.MODE_FULL)
             d.dismiss()
             modeSheet()
         })
@@ -1046,7 +1061,31 @@ class MainActivity : Activity() {
                 "device, or it is damaged. Enter your code again."
         }))
         val field = ui.row().apply { setPadding(0, ui.dp(10), 0, 0) }
-        val edit = ui.edit("ABCD-EFGH-JKMN").apply { setSingleLine() }
+        val edit = ui.edit("ABCD-EFGH-JKMN").apply {
+            setSingleLine()
+            // The hyphens type themselves: after the fourth and the eighth
+            // character, while typing forwards. Deleting is left alone, or
+            // a Backspace on "ABCD-" would put the hyphen straight back.
+            addTextChangedListener(object : android.text.TextWatcher {
+                var before = 0
+                var busy = false
+                override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {
+                    before = s?.length ?: 0
+                }
+                override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                override fun afterTextChanged(s: android.text.Editable?) {
+                    if (busy || s == null) return
+                    val plain = Unlock.normalise(s.toString()).take(Unlock.LENGTH)
+                    var shaped = Unlock.pretty(plain)
+                    if (s.length > before && plain.isNotEmpty() && plain.length < Unlock.LENGTH &&
+                        plain.length % Unlock.GROUP == 0) shaped += "-"
+                    if (shaped == s.toString()) return
+                    busy = true
+                    s.replace(0, s.length, shaped)
+                    busy = false
+                }
+            })
+        }
         field.addView(ui.grow(edit))
         val answer = ui.answer("")
         answer.visibility = View.GONE
@@ -1071,14 +1110,19 @@ class MainActivity : Activity() {
         }.apply { setPadding(ui.dp(14), ui.dp(10), ui.dp(14), ui.dp(10)) })
         sup.addView(field)
         sup.addView(answer, marginTop(10))
-        // What redeeming sends; the README says it at length under "What
-        // leaves the phone".
-        sup.addView(ui.hint("A code comes with a donation on Ko-fi (${Unlock.KOFI_URL}). " +
-            "Redeeming it sends a fingerprint of the code (never the code itself) and an " +
-            "anonymous ID for this phone to the activation server, once. One code unlocks two " +
-            "devices. Reinstalled the app? Just enter the code again. New phone? Ask on " +
-            "Discord to free one up."),
-            marginTop(10))
+        // What redeeming sends is in the README under "What leaves the phone".
+        val kofi = "Ko-fi"
+        val hint = "Support DigiAutotap with a donation on $kofi and we'll email you a " +
+            "supporter code. One code works on two devices."
+        val linked = android.text.SpannableString(hint).apply {
+            val at = hint.indexOf(kofi)
+            setSpan(android.text.style.URLSpan(Unlock.KOFI_URL), at, at + kofi.length,
+                android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+        sup.addView(ui.hint(linked).apply {
+            movementMethod = android.text.method.LinkMovementMethod.getInstance()
+            setLinkTextColor(ui.p.OK)
+        }, marginTop(10))
     }
 
     private fun pageSettings() {
@@ -1136,6 +1180,23 @@ class MainActivity : Activity() {
         version.addView(ui.mono(version(), 11f, ui.p.TEXT_2))
         list.addView(version)
 
+        // Which app is the game (NOTES.md, of that name): a thin line in the
+        // Version row's shape, in a box of its own because the Version row
+        // is not tappable and this one is. The app's name on the right, the
+        // package only in the sheet; "not found" in WARN, because then no
+        // task runs and this is where the player can see why.
+        val gameBox = ui.listBox()
+        col.addView(gameBox, marginTop(10))
+        val game = DigiAutotapService.instance?.gamePackage ?: DigiAutotapService.findGame(this)
+        val gameRow = ui.row().apply { setPadding(ui.dp(12), ui.dp(10), ui.dp(12), ui.dp(10)) }
+        gameRow.addView(ui.grow(ui.name("Game")))
+        gameRow.addView(if (game != null) ui.mono(appLabel(game), 11f, ui.p.TEXT_2)
+                        else ui.mono("not found", 11f, ui.p.WARN))
+        gameRow.addView(ui.chevron().apply {
+            (layoutParams as LinearLayout.LayoutParams).leftMargin = ui.dp(8)
+        })
+        gameBox.addView(ui.tappable(gameRow) { gameSheet() })
+
         // The log and the debug package, as a pair of tiles at the foot
         // (2026-09-23, design B3): the package *is* the log plus the last
         // frames, so the two stand side by side. The log was a button in the
@@ -1155,6 +1216,65 @@ class MainActivity : Activity() {
                     .onFailure { HelperLog.line("debug package failed: $it") }
             }
         }, first = false)
+    }
+
+    /** An installed app's name as the launcher shows it, or its package when it has none. */
+    private fun appLabel(pkg: String): String = runCatching {
+        packageManager.getApplicationLabel(packageManager.getApplicationInfo(pkg, 0)).toString()
+    }.getOrDefault(pkg)
+
+    /**
+     * Which app is Digimon UP, picked by the player. A player wrote on
+     * 2026-09-24 that the Vital Bracelet and TCG apps were taken for the
+     * game; the name comes first now ([Game.pick]), and this is the way
+     * round anything the name and the hints still get wrong. Every launcher
+     * app a hint matches is a row, the choice among them even when no hint
+     * does; the last row clears the choice. The chosen row carries the chip
+     * that says so -- Ui.kt has no radio button and the design none either.
+     */
+    private fun gameSheet(): Unit = bottomSheet { sheet, d ->
+        val chosen = DigiAutotapService.chosenGame(this)
+        val names = DigiAutotapService.launcherNames(this)
+        sheet.addView(ui.title("Which app is Digimon UP?"))
+        sheet.addView(ui.hint("Every installed app whose name looks like Bandai's. DigiAutotap " +
+            "reads and taps the one you pick, and nothing else."), marginTop(4))
+
+        fun choose(pkg: String?) {
+            store.put(SkillSettings.GAME_KEY, pkg)
+            HelperLog.line("game app: " + (if (pkg != null) "chosen $pkg" else "automatic"))
+            DigiAutotapService.instance?.regame(
+                if (pkg != null) "game app chosen in Settings" else "game app left to DigiAutotap")
+            d.dismiss()
+        }
+        fun line(icon: View, left: View, on: Boolean, onClick: () -> Unit) {
+            sheet.addView(rule(8))
+            val r = ui.row().apply { setPadding(0, ui.dp(8), 0, ui.dp(8)) }
+            r.addView(icon, LinearLayout.LayoutParams(ui.dp(34), ui.dp(34)).apply {
+                rightMargin = ui.dp(10)
+            })
+            r.addView(ui.grow(left))
+            if (on) r.addView(ui.chip("chosen", ui.p.PILL_OK_FG, ui.p.PILL_OK_BG, ui.p.PILL_OK_EDGE))
+            sheet.addView(ui.tappable(r, onClick))
+        }
+
+        for (pkg in Game.candidates(names, chosen)) {
+            val left = ui.column()
+            left.addView(ui.name(appLabel(pkg)))
+            left.addView(ui.mono(pkg, 10f, ui.p.TEXT_2))
+            val icon = ImageView(this).apply {
+                runCatching { setImageDrawable(packageManager.getApplicationIcon(pkg)) }
+            }
+            line(icon, left, pkg == chosen) { choose(pkg) }
+        }
+        val auto = ui.column()
+        auto.addView(ui.name("Let DigiAutotap find it"))
+        auto.addView(ui.hint("Picks the one it knows by name, then guesses."))
+        // A choice that is no longer installed is not in the list, and is not
+        // what the service uses either (the log says "falling back").
+        line(View(this), auto, chosen == null || chosen !in names) { choose(null) }
+
+        sheet.addView(ui.hint("Digimon UP not in the list? Then it isn't installed on this phone."),
+                      marginTop(12))
     }
 
     private fun moreRow(title: String, note: String, glyph: Int, onClick: () -> Unit): View {
@@ -1200,9 +1320,12 @@ class MainActivity : Activity() {
                   "notification disappears, DigiAutotap has been stopped.")
         about(col, "Privacy",
               "Everything DigiAutotap sees on the screen stays on the phone. It goes online " +
-                  "for two things: when it is opened, it asks GitHub whether a newer version is " +
-                  "out, and that request carries nothing about you or the phone; and once, to " +
-                  "redeem a supporter code. The debug package is sent only where you share it.")
+                  "for three things: when it is opened, it asks GitHub whether a newer version is " +
+                  "out, and that request carries nothing about you or the phone; once a day it " +
+                  "tells our server the app version, with nothing that identifies you or the " +
+                  "phone; and once, to redeem a supporter code. The debug package is sent only " +
+                  "where you share it. The source code is public on GitHub, so you can check " +
+                  "for yourself exactly what the app sends and when.")
         about(col, "Type",
               "The names are set in Chakra Petch, copyright 2018 The Chakra Petch Project " +
                   "Authors, under the SIL Open Font License 1.1; the licence travels inside " +

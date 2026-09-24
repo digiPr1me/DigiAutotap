@@ -66,6 +66,11 @@ class PlannerTest {
             2, 1, counters(fireballs = 10), "step right")
     }
 
+    /**
+     * The player's rule, confirmed on 2026-09-24: claws and dashes recharge,
+     * a detour costs two steps of a hundred and a claw one of three, so with
+     * ten claws in the bank a single pyramid is still walked around.
+     */
     @Test
     fun `a pyramid in the way with a clear neighbour row is gone around`() {
         check("pyramid in the way, neighbour row clear, go around", listOf(
@@ -186,6 +191,42 @@ class PlannerTest {
         check("ticket in the same column, go vertical now", listOf(
             ". . . . .", ". . . . .", ". . . . .", ". . . . .", ". R . . ."),
             0, 1, counters(), "step down")
+    }
+
+    private val walledIn = listOf(". . P P P", ". . P P P", ". . P P P", ". . . . .", ". . . . .")
+
+    /**
+     * An unreadable fireball counter no longer forbids the dash (2026-09-24):
+     * it reads as "there are charges", as an unreadable claw counter always
+     * has. Walled in with no claws, the dash is the way forward, and the
+     * log says the counter was not read.
+     */
+    @Test
+    fun `an unreadable fireball counter does not forbid the dash when the path is blocked`() {
+        val c = linkedMapOf<String, Long?>("paws" to 500L, "meters" to 100L,
+                                           "fireballs" to null, "claws" to 0L)
+        val act = Planner(build(walledIn, 1, 1)).nextAction(c)
+        assertEquals("skill", act.kind, act.toString())
+        assertTrue(act.reason.endsWith(", charges unknown"), act.reason)
+    }
+
+    /** The floor under the case above: a counter that reads 0 still forbids it. */
+    @Test
+    fun `fireballs read as 0 still forbid the dash`() {
+        val c = linkedMapOf<String, Long?>("paws" to 500L, "meters" to 100L,
+                                           "fireballs" to 0L, "claws" to 0L)
+        val act = Planner(build(walledIn, 1, 1)).nextAction(c)
+        assertEquals("step", act.kind, act.toString())
+        assertTrue(act.reason.endsWith(", dash held: no charges"), act.reason)
+    }
+
+    /** One pyramid ahead is walked around, and the reason says why no dash came. */
+    @Test
+    fun `a dash kept back for its price says so`() {
+        val rows = listOf(". . . . .", ". . . . .", ". . P . .", ". . . . .", ". . . . .")
+        val act = Planner(build(rows, 2, 1)).nextAction(counters(fireballs = 5))
+        assertEquals("step", act.kind, act.toString())
+        assertTrue(act.reason.endsWith(", dash held: 1 pyramid(s), on foot 360 Bits against 375"), act.reason)
     }
 
     /**

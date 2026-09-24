@@ -109,6 +109,8 @@ object OracleFamilies {
         val cards = Dungeon.listCardsWithSize(img)
         f.ask("list_cards") { cards.map { it.first } }
         f.ask("list_cards(with_size=True)") { cards }
+        f.ask("list_at_top") { Dungeon.listAtTop(cards) }
+        f.ask("list_at_bottom") { Dungeon.listAtBottom(cards) }
         // The list-card readers, once per card list_cards found, with that
         // card's fy and fh in the key as Python renders them.
         for ((fy, fh) in cards) {
@@ -275,6 +277,7 @@ object OracleFamilies {
     // its slot.
     private fun runner(f: Frame) {
         val img = f.img
+        f.ask("events_icon") { Runner.eventsIcon(img)?.toOracle() }
         f.ask("events_dialog") { Runner.eventsDialog(img)?.toOracle() }
         f.ask("event_page") { Runner.eventPage(img)?.toOracle() }
         f.ask("result_dialog") { Runner.resultDialog(img)?.toOracle() }
@@ -302,7 +305,8 @@ object OracleFamilies {
 
     val DUNGEON = Family(
         "dungeon", listOf("Dungeon", "Startup"),
-        listOf("game_rect", "find_buttons", "list_cards", "badge_crop", "badge_glyphs",
+        listOf("game_rect", "find_buttons", "list_cards", "list_at_top", "list_at_bottom",
+               "badge_crop", "badge_glyphs",
                "card_counters", "card_budget", "card_has_attempts", "confirm_kind",
                "party_slots_filled", "popup_ok", "claim_button", "stage_failed",
                "auto_button", "home_button", "recognise", "reward_sheet", "panel_tickets",
@@ -341,8 +345,8 @@ object OracleFamilies {
         data = listOf("templates", "digits"), depends = listOf("Cv"), script = ::vision)
     val RUNNER = Family(
         "runner", listOf("Runner"),
-        listOf("events_dialog", "event_page", "result_dialog", "pause_dialog", "missions_dialog",
-               "claim_buttons", "missions_x", "reward_overlay", "obstacles", "answer",
+        listOf("events_icon", "events_dialog", "event_page", "result_dialog", "pause_dialog",
+               "missions_dialog", "claim_buttons", "missions_x", "reward_overlay", "obstacles", "answer",
                "orbs_in_air", "bar_state", "read_score"),
         depends = listOf("Summon", "Dungeon", "Cv"), script = ::runner)
     val DIRECTOR = Family(

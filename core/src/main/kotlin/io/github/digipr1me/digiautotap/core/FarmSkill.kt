@@ -704,6 +704,16 @@ class FarmSkill(
      * Not gated on the main switch: this runs on the way out whatever else
      * happened, the same shape as explore.Nav.leave_board.
      */
+    /**
+     * The chain's second hand (Skill.leave): [leaveField] from a field the
+     * director has classified as one -- six plots and the white X -- which
+     * is the "found open" [fieldTapped] asks for.
+     */
+    override fun leave(): Boolean {
+        fieldTapped = true
+        return leaveField()
+    }
+
     fun leaveField(): Boolean {
         var taps = 0
         for (i in 0 until EXIT_ROUNDS) {

@@ -47,18 +47,32 @@ enum class HelperState(val word: String, val action: String, val glyph: String) 
  * holds no switch of its own -- [MainSwitch] is the switch
  * (PLAN_ANDROID_5_SHELL.md 3.3) -- and no copy of what the loop saw.
  *
- * Three things it cannot know by itself, and so is told, each by a function
- * and never by a copied value: whether the service is alive, what the last
- * round saw, and what time it is on a clock that does not jump. The app
- * fills them in once (`CoreService`); a test fills them in with its own.
+ * Four things it cannot know by itself, and so is told, each by a function
+ * and never by a copied value: whether the service is alive, why the
+ * director stands still, what the last round saw, and what time it is on a
+ * clock that does not jump. The app fills them in once (`CoreService`); a
+ * test fills them in with its own.
  */
 object Shell {
 
-    /** The director's reason for standing still; the service copies it after every round. */
+    /**
+     * The director's reason for standing still, or null: `DirectorLoop.parked`,
+     * asked, not copied. It was a copy the service took after every round
+     * until 2026-09-24, and the dot stayed red on the World Search board
+     * while the figure walked: the director clears its park *inside* a
+     * round, the moment the screen changes, and hands a screen that moves by
+     * itself straight to its skill, for a round of minutes -- all of it read
+     * through the copy of the round before.
+     */
     @Volatile
-    var parked: String? = null
+    var parked: () -> String? = { null }
 
-    /** The clock reading the three-second wait runs out at; 0 while it is not running. */
+    /**
+     * The clock reading the three-second wait runs out at; 0 while it is not
+     * running. This one stays a copy after the round: the clock only runs
+     * while the director stands still, never while a skill works, so the
+     * copy is never older than the round that is over.
+     */
     @Volatile
     var takeOverAt: Long = 0L
 
@@ -85,7 +99,7 @@ object Shell {
         return when {
             !alive() -> HelperState.STOPPED
             !MainSwitch.on -> HelperState.PAUSED
-            parked != null -> HelperState.PARKED
+            parked() != null -> HelperState.PARKED
             takeOverAt > clock() -> HelperState.WAITING
             screen != null -> HelperState.RUNNING
             else -> HelperState.IDLE
@@ -98,7 +112,7 @@ object Shell {
         return when (state) {
             HelperState.STOPPED -> "The service is off."
             HelperState.PAUSED -> "Paused. Nothing happens until you resume."
-            HelperState.PARKED -> parked ?: "Something unexpected is on the screen."
+            HelperState.PARKED -> parked() ?: "Something unexpected is on the screen."
             HelperState.WAITING -> {
                 val left = (takeOverAt - clock() + 999) / 1000
                 val what = screen ?: "This screen"

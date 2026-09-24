@@ -57,6 +57,7 @@ class Palette(
     val DISABLED_BG: Int,
     val DISABLED_FG: Int,
     val DOT_ON: Int,
+    val DOT_SEMI: Int,
     val DOT_WAIT: Int,
     val DOT_OFF: Int,
     val DOT_WARN: Int,
@@ -155,6 +156,7 @@ object Theme {
         DISABLED_BG = rgb("#cfd5de"),
         DISABLED_FG = rgb("#98a2b1"),
         DOT_ON = rgb("#3ddc84"),
+        DOT_SEMI = rgb("#7ac6ff"),
         DOT_WAIT = rgb("#ffb547"),
         DOT_OFF = rgb("#9aa0a8"),
         DOT_WARN = rgb("#ff5a5f"),
@@ -177,6 +179,15 @@ object Theme {
      * knows: green is on, grey is off, amber is about to, red needs you.
      * Paused is grey and not the app's amber for that reason: over a game
      * an amber dot said "careful" where it meant "nothing happens".
+     *
+     * Since 2026-09-24 "on" has two colours, and they say the mode: green is
+     * on *and fully automatic*, blue ([DOT_SEMI]) on *and semi-automatic*.
+     * The blue is as light as the green because the green was the measure:
+     * the game is blue itself under the dot on 68 % of 319 corpus frames,
+     * and against the halo-blended game the worst frame reads 2.94 for
+     * #7ac6ff where the green reads 3.05 (#4da6ff, the first proposal,
+     * 2.13, where the grey of Paused lies). What carries either disc over
+     * dark ground is the white rim, never under 5.4; the halo reads 1.00.
      */
     val DARK = Palette(
         BG = rgb("#0f1216"),
@@ -209,6 +220,7 @@ object Theme {
         DISABLED_BG = rgb("#262c34"),
         DISABLED_FG = rgb("#626b78"),
         DOT_ON = rgb("#3ddc84"),
+        DOT_SEMI = rgb("#7ac6ff"),
         DOT_WAIT = rgb("#ffb547"),
         DOT_OFF = rgb("#9aa0a8"),
         DOT_WARN = rgb("#ff5a5f"),

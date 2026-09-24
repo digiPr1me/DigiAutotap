@@ -123,6 +123,19 @@ class WorldSearchSkill(
 
     fun debugCounts(): Map<String, Int> = LinkedHashMap(debugCounts)
 
+    /**
+     * Every counter the run believes, None for one it has never read. The
+     * run wrote none of them until 2026-09-24, and a player's "it never
+     * dashes" could not be told apart from a fireball counter that does not
+     * read on their phone.
+     */
+    private fun countersText(values: Map<String, Long>): String {
+        fun v(key: String) = values[key]?.toString() ?: "None"
+        return "paws %s, claws %s, fireballs %s, meters %s, top %s/%s/%s".format(
+            v("paws"), v("claws"), v("fireballs"), v("meters"),
+            v("top_orange"), v("top_green"), v("top_pink"))
+    }
+
     // ------------------------------------------------------------------------
     // The board's own readings
     // ------------------------------------------------------------------------
@@ -344,6 +357,9 @@ class WorldSearchSkill(
      * only the good one" rule that puts `go_home` in a finally elsewhere. A
      * return before the finally would skip it.
      */
+    /** The chain's second hand (Skill.leave): the X and the globe, `run`'s own way out. */
+    override fun leave(): Boolean = Nav(settings()).leaveBoard()
+
     override fun run(): Outcome {
         val s = settings()
         val nav = if (s.navigate) Nav(s) else null
@@ -411,6 +427,13 @@ class WorldSearchSkill(
 
         log("cell %.2f x %.2f, start row %d column %d"
                 .format(calib.cellW, calib.cellH, started.figure.row + 1, started.figure.col + 1))
+        log("counters at start: " + countersText(countersState.values))
+        // The board as the run found it, once a run: the corpus had no board
+        // from a phone at all when the counters' reading there was the
+        // question (2026-09-24), and this frame is whole, so it can go into
+        // corpus/explore as it comes.
+        saveDebug(started.img, "board_start")?.let { log("the start frame is in the debug package as $it") }
+        var countersShown = countersState.values.keys.toSet()
 
         var done = 0
         val startMeters = countersState.values["meters"]
@@ -432,6 +455,13 @@ class WorldSearchSkill(
                 break@loop
             }
 
+            // The counters again every 25 actions, and whenever one is read
+            // for the first time: a counter the tracker believes never goes
+            // back to unknown, so that is the one change there is to say.
+            if (done > 0 && (done % 25 == 0 || countersState.values.keys != countersShown)) {
+                countersShown = countersState.values.keys.toSet()
+                log("  counters: " + countersText(countersState.values))
+            }
             val action = plan.nextAction(countersState.values)
             log("  %d. %s -- %s".format(done + 1, action.toString(), world.describe()))
 
@@ -498,6 +528,13 @@ class WorldSearchSkill(
                 }
                 Actions.MOVED_INSTEAD -> {
                     log("pyramid was already gone, logged as step ${action.direction}")
+                    // engine.py's column, kept: right is figGcol + 1 and
+                    // every other direction figGcol + 0, which for a step
+                    // left is the figure's own column and not the one the
+                    // pyramid stood in (figGcol - 1). It only matters when a
+                    // pyramid to the left vanishes under a tap; the log line
+                    // above says when that happens (2026-09-24, noted, not
+                    // changed).
                     world.forget(world.figGcol!! + (if (action.direction == "right") 1 else 0),
                                  action.cell!!.first)
                     world.applyStep(action.direction!!)

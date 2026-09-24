@@ -25,6 +25,7 @@ import io.github.digipr1me.digiautotap.core.PassiveSkill
 import io.github.digipr1me.digiautotap.core.QuestSkill
 import io.github.digipr1me.digiautotap.core.Shell
 import io.github.digipr1me.digiautotap.core.Skill
+import io.github.digipr1me.digiautotap.core.SkillSettings
 import io.github.digipr1me.digiautotap.core.SkillStats
 import io.github.digipr1me.digiautotap.core.Stored
 import io.github.digipr1me.digiautotap.core.SummonSkill
@@ -170,9 +171,16 @@ class CoreService : Service() {
         // does not answer" (section 4). The version is the oracle's.
         val loaded = OpenCVLoader.initLocal()
         HelperLog.line("core started; OpenCV loaded=$loaded version ${Core.VERSION}")
+        var censusAt = 0L
         try {
             while (running.get()) {
                 val t0 = SystemClock.elapsedRealtime()
+                // Once an hour is enough to meet every new day; the census
+                // itself says nothing when the day is already counted.
+                if (t0 >= censusAt) {
+                    censusAt = t0 + CENSUS_EVERY_MS
+                    census(this)
+                }
                 // A round that threw is one round, not the end of the core.
                 // The first live hand-over to a skill ended the whole loop on
                 // a single "takeScreenshot: called again too soon" -- the app
@@ -224,9 +232,10 @@ class CoreService : Service() {
         }
         val tick = d.tick()
         val ms = SystemClock.elapsedRealtime() - t0
-        // What the shell reads: the park and the three-second clock are
-        // the director's, copied after every round and nowhere else.
-        Shell.parked = d.parked
+        // What the shell reads: the three-second clock is the director's,
+        // copied after every round and nowhere else. The park is asked
+        // (Shell.parked, wired in directorOver): a round can clear it and
+        // then work for minutes.
         Shell.takeOverAt = d.takeOverIn?.let { t0 + (it * 1000).toLong() } ?: 0L
         val size = d.frameSize?.let { "${it.first} x ${it.second}" } ?: ""
         show(tick.screen, tick.note, size, ms)
@@ -235,10 +244,12 @@ class CoreService : Service() {
     }
 
     /**
-     * The dot, after every round (PLAN_ANDROID_DESIGN.md 3.3). Three things
-     * decide it and all three are asked here rather than remembered: whether
-     * the player wants an overlay at all, what state the shell is in, and
-     * whether the game is in front.
+     * The dot, after every round (PLAN_ANDROID_DESIGN.md 3.3). Four things
+     * decide it and all four are asked here rather than remembered: whether
+     * the player wants an overlay at all, what state the shell is in,
+     * whether the game is in front, and the mode, which the disc's colour
+     * says. The mode is read through the same store as the switch: two
+     * copies of the settings file is how a save got lost once.
      *
      * The window goes up and stays up while the core runs -- it is only
      * the *drawing* that stops when the game is not in front. The window
@@ -247,13 +258,15 @@ class CoreService : Service() {
      * while the game is in front and the switch is on (Overlay.DotView).
      */
     private fun overlay(svc: DigiAutotapService, screen: String?) {
-        val want = SettingsStore(this).bool(Overlay.KEY_ON, true)
+        val store = SettingsStore(this)
+        val want = store.bool(Overlay.KEY_ON, true)
         if (!want) {
             if (Overlay.up) Overlay.hide()
             return
         }
         if (!Overlay.up) Overlay.show(svc)
-        Overlay.update(Shell.state(), screen, svc.inFront() == svc.gamePackage)
+        Overlay.update(Shell.state(), screen, svc.inFront() == svc.gamePackage,
+                       Stored.mode(store) == SkillSettings.MODE_FULL)
     }
 
     /**
@@ -384,6 +397,7 @@ class CoreService : Service() {
         )
         director = d
         directorFor = svc
+        Shell.parked = { director?.parked }
         return d
     }
 
@@ -455,6 +469,9 @@ class CoreService : Service() {
          * out the same beat before the next -- never an immediate retry.
          */
         const val INTERVAL_MS = 1000L
+
+        /** How often the running core asks whether the phone is counted for today yet ([census]). */
+        const val CENSUS_EVERY_MS = 60 * 60 * 1000L
 
         /** The director, while the loop runs: the shell's "Try again" reaches it here. */
         @Volatile
@@ -560,7 +577,6 @@ class ActionReceiver : BroadcastReceiver() {
                 HelperState.PAUSED -> MainSwitch.set(true)
                 HelperState.PARKED -> {
                     CoreService.director?.retry()
-                    Shell.parked = null
                     MainSwitch.set(true)
                 }
                 else -> MainSwitch.set(false)

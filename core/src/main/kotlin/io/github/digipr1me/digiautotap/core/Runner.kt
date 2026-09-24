@@ -31,10 +31,9 @@ object Runner {
     // Places, all in window space
     // ------------------------------------------------------------------------
     // Measured on 2026-09-19 from the device taps that worked, converted with
-    // game_rect_wh(1080, 1920): events icon 789,389 -> 0.693/0.225, and so on.
-    val EVENTS_ICON = Explore.Target(0.693, 0.225)
-    val EVENT_CARD = Explore.Target(0.476, 0.332)
-    val PLAY_GAME = Explore.Target(0.319, 0.680)
+    // game_rect_wh(1080, 1920). The three on the way in -- the Events icon,
+    // the Gekkomon Run card, Play Game -- are readers since 2026-09-24
+    // ([eventsIcon], [eventCard], [eventPage]); these are what is left.
     val MISSIONS = Explore.Target(0.284, 0.786)
     val PAUSE = Explore.Target(0.781, 0.105)
     val QUIT_RESULT = Explore.Target(0.475, 0.611)
@@ -54,6 +53,7 @@ object Runner {
         val height get() = fy1 - fy0
         val cx get() = (fx0 + fx1) / 2
         val cy get() = (fy0 + fy1) / 2
+        fun toOracle(): Map<String, Any?> = mapOf("fx0" to fx0, "fy0" to fy0, "fx1" to fx1, "fy1" to fy1)
     }
 
     /**
@@ -109,35 +109,141 @@ object Runner {
     }
 
     // ------------------------------------------------------------------------
+    // The way in: the Events icon on the main screen
+    // ------------------------------------------------------------------------
+    // **A constant is a place on one display.** The way in was three
+    // constants until 2026-09-24, "measured from the device taps that
+    // worked" on a 9:16 frame, and the HUD is not the canvas: on the long
+    // display it stands elsewhere in window space, as the Bond bubble did
+    // (NOTES.md, "The token is not only ever drawn in the middle"). The
+    // Events tile's own star, read on the frames of both shapes:
+    //
+    //                                   fx0 - fx1         fy0 - fy1
+    //   ADB 1080 x 1920 (main_screen)   0.6678-0.6905     0.2081-0.2212
+    //   Poco F3 1080 x 2400 (passive)   0.6611-0.6827     0.2343-0.2473
+    //
+    // The old constant stood at 0.693/0.225: 0.017 below the star's top edge
+    // on the ADB frame and 0.009 *above* it on the phone's. So the icon is
+    // read, and the tap hangs off what was read.
+    //
+    // What is read is the yellow star in the tile's upper left, the one
+    // piece of the HUD's artwork that no other tile carries, together with
+    // the dark navy of the tile around it. Measured over every frame of the
+    // corpus, every yellow blob of a star's size and fill (0.018-0.030 gw
+    // wide, 0.010-0.017 gh tall, fill 0.28-0.44) between fy 0.12 and 0.36
+    // and right of fx 0.45, with the navy share of a box half its size
+    // larger on every side:
+    //
+    //   the Events star        167 frames   w 0.0216-0.0237  h 0.0116-0.0134
+    //                                       fill 0.34-0.39   navy 0.32-0.52
+    //   everything else on      48 blobs    navy 0.00-0.18
+    //   the main screens                    (damage numbers, stage art, the
+    //                                       Battle Pass ticket's corners)
+    //
+    // So navy 0.25, the middle of the gap, and no frame has two. The Events
+    // label under the tile, which the plan first named, is a pale cyan on
+    // stage art that is sometimes snow; the star on its tile does not share
+    // that trouble.
+    //
+    // Null on 179 of the 346 main screens, and every one of them was looked
+    // at: 169 have no Events tile at all -- the HUD there is Missions alone,
+    // the 66 bond frames of 584 x 1076 among them -- eight have a boss's name
+    // banner across the tile, and two are the run frames auto_button calls
+    // main. The banner is up for seconds, and the skill waits it out rather
+    // than tapping where the tile would be. And only on the plain main
+    // screen: the tile shows, dimmed, under 24 other frames of the corpus,
+    // and the main screen is the one place a tap on it is ever sent.
+    val STAR_YELLOW = Dungeon.Hsv(intArrayOf(20, 120, 200), intArrayOf(35, 255, 255))
+    val TILE_NAVY = Dungeon.Hsv(intArrayOf(100, 170, 40), intArrayOf(120, 255, 130))
+    val STAR_BAND = doubleArrayOf(0.12, 0.36)
+    val STAR_FX0 = doubleArrayOf(0.45, 0.85)
+    val STAR_W = doubleArrayOf(0.018, 0.030)
+    val STAR_H = doubleArrayOf(0.010, 0.017)
+    val STAR_FILL = doubleArrayOf(0.28, 0.44)
+    // A floor far under the smallest real star, which is the phone's: under
+    // 0.0001 of the window, where the ADB star was just over it.
+    const val STAR_MIN_SHARE = 0.00003
+    const val STAR_NAVY_MIN = 0.25
+    // The tap that worked on 2026-09-19, 789,389 on the ADB frame, as a
+    // distance from that frame's star in the star's own size: 0.61 of its
+    // width to the right and 0.79 of its height down, the middle of the
+    // tile's cone. In the star's own size, so that it scales with the tile.
+    const val EVENTS_TAP_DX = 0.6
+    const val EVENTS_TAP_DY = 0.8
+
+    /** The navy share of the box around [b], half its size larger on every side, the star included. */
+    private fun navyAround(img: Mat, b: Blob): Double {
+        val (x0, y0, gw, gh) = Dungeon.gameRect(img)
+        val ex = b.width * 0.5; val ey = b.height * 0.5
+        val sub = Py.crop(img, maxOf(0, Py.int(y0 + (b.fy0 - ey) * gh)),
+                          minOf(img.rows(), Py.int(y0 + (b.fy1 + ey) * gh)),
+                          maxOf(0, Py.int(x0 + (b.fx0 - ex) * gw)),
+                          minOf(img.cols(), Py.int(x0 + (b.fx1 + ex) * gw))) ?: return 0.0
+        val m = Cv.hsvMask(sub, TILE_NAVY)
+        val share = Cv.share(m)
+        m.release()
+        return share
+    }
+
+    /** Where to tap the Events icon on the plain main screen, or null. */
+    fun eventsIcon(img: Mat): Explore.Target? {
+        if (Dungeon.autoButton(img) == null) return null
+        for (b in blobs(img, STAR_YELLOW, band = STAR_BAND, minShare = STAR_MIN_SHARE)) {
+            if (b.fx0 !in STAR_FX0[0]..STAR_FX0[1]) continue
+            if (b.width !in STAR_W[0]..STAR_W[1] || b.height !in STAR_H[0]..STAR_H[1]) continue
+            if (b.fill !in STAR_FILL[0]..STAR_FILL[1]) continue
+            if (navyAround(img, b) < STAR_NAVY_MIN) continue
+            return Explore.Target(b.cx + EVENTS_TAP_DX * b.width, b.cy + EVENTS_TAP_DY * b.height)
+        }
+        return null
+    }
+
+    // ------------------------------------------------------------------------
     // The dialogs on the way in and out
     // ------------------------------------------------------------------------
     // The event's own blue, H 101-106 S 233 V 139 on every panel it draws; the
     // Events dialog is one solid box of it (fill 0.88, share 0.33).
     val EVENT_BLUE = Dungeon.Hsv(intArrayOf(98, 180, 100), intArrayOf(110, 255, 190))
 
-    /** The Events window with the Gekkomon Run card in it, or null. */
-    fun eventsDialog(img: Mat): Explore.Target? {
+    /** The Events window's box, the Gekkomon Run card in it, or null. */
+    fun eventsDialog(img: Mat): Blob? {
         // The panel below its lighter title bar: fx 0.160-0.793, fy 0.245-0.782,
         // share 0.25, fill 0.74 on the ADB frame it was measured on.
         for (b in blobs(img, EVENT_BLUE, minShare = 0.18)) {
-            if (within(b, 0.160, 0.793, 0.245, 0.782, tol = 0.04) && b.fill >= 0.65) return EVENT_CARD
+            if (within(b, 0.160, 0.793, 0.245, 0.782, tol = 0.04) && b.fill >= 0.65) return b
         }
         return null
     }
+
+    // The card stands at a fixed place in the box: the tap that worked,
+    // 0.476/0.332, is the box's own middle across and 0.087 under its top
+    // edge on the frame the box was measured on (0.245). Hung off the top
+    // edge rather than the height, because the card is one card high
+    // however far the box reaches down.
+    const val EVENT_CARD_BELOW = 0.087
+
+    /** Where to tap the Gekkomon Run card in the Events window [box]. */
+    fun eventCard(box: Blob): Explore.Target = Explore.Target(box.cx, box.fy0 + EVENT_CARD_BELOW)
 
     // "Play Game" is pink text on a translucent band; the three rows below it
     // are the same pink. Together with the white X plate at the bottom right
     // (summon.exit_button, the same reused artwork) that is the event page.
     val PINK_TEXT = Dungeon.Hsv(intArrayOf(140, 120, 150), intArrayOf(170, 255, 255))
 
-    /** The event page (Play Game / Pull / Missions / Ranking), or null. */
+    /**
+     * The event page (Play Game / Pull / Missions / Ranking), or null; where
+     * it is, the middle of the word "Play", which is where Play Game is
+     * tapped. The word is the button's own label, so a tap on it lands on
+     * the button whatever the band's own extent -- the tap that worked on
+     * 2026-09-19, 0.319/0.680, stood 0.022 right of it, between the words.
+     */
     fun eventPage(img: Mat): Explore.Target? {
         if (Summon.exitButton(img) == null) return null
         // "Play" and "Game" come back as two blobs; "Play" is the one asked for,
         // fx 0.188-0.297 fy 0.664-0.699 on both frame shapes, share 0.0008.
         for (b in blobs(img, PINK_TEXT, band = doubleArrayOf(0.60, 0.75), minShare = 0.0005)) {
             if (b.fx0 in 0.16..0.22 && b.fx1 in 0.26..0.33 && b.fy0 in 0.64..0.69 &&
-                b.fy1 in 0.68..0.72) return PLAY_GAME
+                b.fy1 in 0.68..0.72) return Explore.Target(b.cx, b.cy)
         }
         return null
     }

@@ -488,6 +488,9 @@ class SummonSkill(
      * independent evidence that the main screen is in front with nothing over
      * it, never "the X is gone now".
      */
+    /** The chain's second hand (Skill.leave): [leaveSummons], which is `run`'s own way out. */
+    override fun leave(): Boolean = leaveSummons()
+
     internal fun leaveSummons(): Boolean {
         var taps = 0
         var blind = 0

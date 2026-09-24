@@ -33,7 +33,15 @@ object PlannerConst {
      */
     const val BIT_MIDDLE_BIAS = 1
 
-    // Shop prices, 50 paws cost 2,000 Bits
+    // Shop prices, 50 paws cost 2,000 Bits.
+    //
+    // The prices are the rule, and the player confirmed it on 2026-09-24
+    // when players asked why the claws lie unused: stamina, claws and dashes
+    // all recharge over time (100 steps, 3 claws, 3 dashes), and a detour
+    // around a pyramid costs two steps of a hundred while a claw is one of
+    // three. So a claw is spent only when there is no way around, a dash
+    // only when walled in or when walking clearly costs more, never on an
+    // empty row, and never when a power-up in another row would scroll off.
     const val BIT_PAW = 40
     const val BIT_CLAW = 200
     const val BIT_SKILL = 400
@@ -105,8 +113,25 @@ class Planner(
     private val bitPerAction: Int = PlannerConst.BIT_PER_ACTION,
 ) {
 
+    /**
+     * Why the last [skillWorthIt] of this decision kept the dash back
+     * although a pyramid lay ahead, or null. Not a decision of its own: it
+     * goes onto the reason of whatever [nextAction] chose instead, so that
+     * the log says which of the rule's reasons it was (2026-09-24, "it does
+     * not use the dashes").
+     */
+    private var dashHeld: String? = null
+
     // ------------------------------------------------------------------------
     fun nextAction(counters: Map<String, Long?>, depth: Int = 0): Action {
+        if (depth > 0) return decide(counters, depth)
+        dashHeld = null
+        val act = decide(counters, 0)
+        dashHeld?.let { if (act.kind != "skill") act.reason += ", dash held: $it" }
+        return act
+    }
+
+    private fun decide(counters: Map<String, Long?>, depth: Int): Action {
         val w = world
         if (w.row == null || w.col == null) return Action("wait", reason = "position unknown")
 
@@ -234,6 +259,9 @@ class Planner(
             return routeAction(route, counters, "fetching object in the left column",
                                target = leftGcol to row)
         }
+        // Only reached if wouldLoseItems(1) and isWanted disagreed about the
+        // left column, which they cannot: both ask world.isWanted. Kept as
+        // planner.py has it.
         return Action("wait", reason = "safety rule with no target")
     }
 
@@ -241,7 +269,8 @@ class Planner(
     private fun unreachable(counters: Map<String, Long?>, target: Pair<Int, Int>?): Action {
         val skill = skillWorthIt(counters, minPyramids = 1)
         if (skill != null) {
-            skill.reason = "no path free, skill clears it"
+            skill.reason = "no path free, skill clears it" +
+                (if (counters["fireballs"] == null) ", charges unknown" else "")
             return skill
         }
         if (target != null) {
@@ -318,16 +347,30 @@ class Planner(
     private fun skillWorthIt(counters: Map<String, Long?>, minPyramids: Int? = null): Action? {
         val w = world
         val charges = counters["fireballs"]
-        if (charges == null || charges == 0L) return null
         val span = if (w.col!! >= WorldConst.FIG_COL_MAX) 3 else 2
         val cells = (1..span).map { (w.figGcol!! + it) to w.row!! }
+        val pyramids = cells.count { (gcol, row) -> w.isPyramid(gcol, row) }
+        // What was said about a dash kept back, only where a pyramid lay
+        // ahead: on an empty row there is nothing to explain.
+        fun held(why: String): Action? {
+            if (pyramids > 0) dashHeld = why
+            return null
+        }
+        // Only a counter that reads 0 forbids the dash. planner.py forbade it
+        // on an unreadable one too, while an unreadable claw counter reads
+        // as "there are claws" (router, cellCost) -- and "never dash" is the
+        // fault a player reported on 2026-09-24, should the counter not read
+        // on a phone. A dash with no charge left costs one Insufficient
+        // banner, and runLoop sets the counter to 0 after it: a cheap error
+        // that corrects itself.
+        if (charges == 0L) return held("no charges")
         // The skill also picks up from the ground, so it is allowed to fly
         // over items. But it scrolls by span columns, and that pushes
         // objects off the left edge of the board. In its own row they get
         // collected; in every other row they would be lost.
-        if (wouldLoseItems(span, keepRow = w.row)) return null
-        val pyramids = cells.count { (gcol, row) -> w.isPyramid(gcol, row) }
+        if (wouldLoseItems(span, keepRow = w.row)) return held("an item in another row would scroll off")
         if (pyramids < (minPyramids ?: 1)) return null
+        val unknown = if (charges == null) ", charges unknown" else ""
 
         var walkBits: Int? = 0
         var walkActs = 0
@@ -341,7 +384,7 @@ class Planner(
             walkActs += acts!!
         }
         if (walkBits == null) {
-            return Action("skill", reason = "path on foot blocked, %d pyramids".format(pyramids))
+            return Action("skill", reason = "path on foot blocked, %d pyramids%s".format(pyramids, unknown))
         }
 
         // The fireball collects whatever it uncovers under the pyramids
@@ -349,9 +392,11 @@ class Planner(
         // The skill is one action, walking is several. Anyone who values
         // time sets bit_per_action higher
         val walk = walkBits + maxOf(0, walkActs - 1) * bitPerAction
-        if (walk <= skillBits) return null
+        if (walk <= skillBits) {
+            return held("%d pyramid(s), on foot %d Bits against %d".format(pyramids, walk, skillBits))
+        }
         return Action("skill",
-                      reason = "%d pyramids, path on foot costs %d Bits against %d"
-                          .format(pyramids, walk, skillBits))
+                      reason = "%d pyramids, path on foot costs %d Bits against %d%s"
+                          .format(pyramids, walk, skillBits, unknown))
     }
 }

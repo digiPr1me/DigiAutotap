@@ -6,15 +6,16 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /**
- * The app goes on the network in two places, and this is what says so.
+ * The app goes on the network in three places, and this is what says so.
  *
- * `Activation.kt` redeems a supporter code (PLAN_SUPPORTER_SERVER.md), and
+ * `Activation.kt` redeems a supporter code (PLAN_SUPPORTER_SERVER.md),
  * `Updates.kt` asks GitHub's list of releases whether a newer version is out,
- * once each time the app is opened. Nothing else in the sources may open a
- * connection: an accessibility service sees every pixel of the phone, and
- * where it can reach the network is worth knowing by file name rather than
- * by reading all of it. A third place is a decision, and it goes into the
- * list below and the README's "What leaves the phone" together.
+ * once each time the app is opened, and `Census.kt` tells the Worker once a
+ * day that a phone ran, with the version and nothing that names the phone.
+ * Nothing else in the sources may open a connection: an accessibility
+ * service sees every pixel of the phone, and where it can reach the network
+ * is worth knowing by file name rather than by reading all of it. A fourth
+ * place is a decision, and it goes into the list below.
  *
  * Built like CorpusTest, and for the same reason: the rule is about what
  * the sources may contain, so the sources are what is read. A call site
@@ -30,7 +31,7 @@ class NetworkTest {
     private val repo = File(System.getProperty("digiautotap.repo") ?: "..")
 
     /** The files that are allowed to, and the only ones. */
-    private val allowed = setOf("Activation.kt", "Updates.kt")
+    private val allowed = setOf("Activation.kt", "Updates.kt", "Census.kt")
 
     /**
      * Anything that opens a connection, or that carries a library which
@@ -50,7 +51,7 @@ class NetworkTest {
             .sortedBy { it.path }
 
     @Test
-    fun `two files may open a connection`() {
+    fun `three files may open a connection`() {
         val problems = ArrayList<String>()
         var sites = 0
         for (file in sources()) {

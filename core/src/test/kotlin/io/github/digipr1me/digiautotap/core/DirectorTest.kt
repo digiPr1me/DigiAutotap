@@ -54,12 +54,18 @@ class DirectorTest {
         private val screen = screen
         var worked = 0
         var ran = 0
+        var left = 0
         /** The beat this one asks for on the main screen, null for the director's own. */
         var wants: Double? = null
+        /** What the game does while [run] is at it: the screen the step leaves behind. */
+        var onRun: () -> Unit = {}
+        /** Its way home ([Skill.leave]): what the game does, and whether the main screen came back. */
+        var onLeave: () -> Boolean = { false }
         override fun worksOn(screen: String) = screen == this.screen
         override fun hasBudget() = budget
         override fun work(img: Mat): Outcome { worked += 1; inner?.run(); return outcome }
-        override fun run(): Outcome { ran += 1; inner?.run(); return outcome }
+        override fun run(): Outcome { ran += 1; inner?.run(); onRun(); return outcome }
+        override fun leave(): Boolean { left += 1; return onLeave() }
         override fun beat(): Double? = wants
     }
 
@@ -247,6 +253,46 @@ class DirectorTest {
         val home = r.tick()
         assertNull(r.director.parked)
         assertEquals("round", home.did)
+    }
+
+    /**
+     * The dot stayed red on the World Search board while the figure walked
+     * (2026-09-24, from the phone): the shell read a copy of the park the
+     * service took *after* every round, while the director clears the park
+     * *inside* the round, the moment the screen changes, and hands a screen
+     * that moves by itself straight to its skill -- a round of minutes. The
+     * main screen is the other such screen, and its round-skill is where the
+     * shell is asked here, from inside the work.
+     */
+    @Test
+    fun `a park the screen change cleared is off the shell before the skill's work is over`() {
+        val r = Rig()
+        val during = ArrayList<HelperState>()
+        r.passive.inner = object : Skill {
+            override val key = "probe"
+            override val name = "probe"
+            override fun worksOn(screen: String) = false
+            override fun hasBudget() = true
+            override fun work(img: Mat) = Outcome.DONE
+            override fun run(): Outcome { during += Shell.state(); return Outcome.DONE }
+        }
+        Shell.alive = { true }
+        Shell.parked = { r.director.parked }
+        Shell.seen = { r.director.screen to "" }
+        MainSwitch.set(true)
+        try {
+            r.cap.scene = { Paint.prompt(pink = true) }
+            r.run(6.0)
+            assertEquals(HelperState.PARKED, Shell.state())
+            r.cap.scene = { Paint.battle(it) }
+            r.tick()
+            assertEquals(1, r.passive.worked)
+            assertEquals(listOf(HelperState.RUNNING), during, "the shell still read the park the round had cleared")
+        } finally {
+            Shell.parked = { null }
+            Shell.alive = { false }
+            Shell.seen = { null to "" }
+        }
     }
 
     @Test
@@ -450,6 +496,123 @@ class DirectorTest {
         assertNull(r.director.parked)
         r.tick()
         assertNotNull(r.director.parked)
+        assertEquals(0, r.dungeons.left, "the second hand is for a step's leftovers, not for the player's screen")
+    }
+
+    // ==================================================================
+    // The chain's way through (NOTES.md, "A constant is a place on one display")
+    // ==================================================================
+
+    /**
+     * R2. The Gekkomon Run step on the player's Poco F3: it could not get
+     * in, its `run` came home in its finally, and it said PARKED -- and the
+     * chain stood still on a main screen from which the next step could have
+     * started. A step that parks and is home retires for this chain run; one
+     * that parks and is not home is still a park.
+     */
+    @Test
+    fun `a step that parks but came home retires for the run, and the next step starts`() {
+        val r = Rig(SkillSettings.MODE_FULL, listOf("dungeon", "summon"))
+        r.dungeons.outcome = Outcome.parked("I could not open the dungeon list from here.")
+        r.cap.scene = { Paint.mainScreen() }
+        val first = r.tick()
+        assertEquals("run dungeon", first.did, first.toString())
+        assertNull(r.director.parked, "parked the chain on the main screen")
+        r.run(6.0)
+        assertEquals(1, r.summons.ran, r.log.toString())
+        assertEquals(1, r.dungeons.ran, "the retired step ran again in the same chain run")
+        assertEquals("I could not open the dungeon list from here.", r.chain.retiredReason("dungeon"))
+        assertTrue(r.log.contains("  chain: retiring dungeon for this run -- I could not open the dungeon list from here."),
+                   r.log.toString())
+        assertNull(r.director.parked)
+
+        // Parked and not home: something is in the way, and that is a park.
+        val r2 = Rig(SkillSettings.MODE_FULL, listOf("dungeon", "summon"))
+        r2.dungeons.outcome = Outcome.parked("the panel would not close")
+        r2.dungeons.onRun = { r2.cap.scene = { Paint.dungeonList() } }
+        r2.cap.scene = { Paint.mainScreen() }
+        r2.tick()
+        val t = r2.run(Director.SETTLE + 2.0)
+        assertNotNull(r2.director.parked, t.toString())
+        assertEquals("Dungeons parked: the panel would not close", t.note)
+        assertEquals(0, r2.summons.ran)
+        assertEquals(0, r2.dungeons.left, "a parked step is not asked to leave")
+        assertTrue("parked_not_home" in r2.kept, r2.kept.toString())
+    }
+
+    /**
+     * R3. A step that leaves its own screen standing: once SETTLE has run
+     * out, the skill that works on that screen is asked for its way home,
+     * and the chain goes on from the main screen it brings back.
+     */
+    @Test
+    fun `a list left open after the dungeon step is the dungeon skill's to leave, and Summon starts after`() {
+        val r = Rig(SkillSettings.MODE_FULL, listOf("dungeon", "summon"))
+        r.dungeons.onRun = { r.cap.scene = { Paint.dungeonList() } }
+        r.dungeons.onLeave = { r.cap.scene = { Paint.mainScreen() }; true }
+        r.cap.scene = { Paint.mainScreen() }
+        assertEquals("run dungeon", r.tick().did)
+        // SETTLE first: the game may still be closing what the step opened.
+        r.run(Director.SETTLE - 1.0)
+        assertEquals(0, r.dungeons.left, "asked to leave inside SETTLE")
+        r.run(8.0)
+        assertEquals(1, r.dungeons.left, r.log.toString())
+        assertEquals(1, r.summons.ran, r.log.toString())
+        assertNull(r.director.parked)
+        assertTrue(r.log.contains("  chain: dungeon_list left open after Dungeons; asking Dungeons to leave"),
+                   r.log.toString())
+        assertTrue(r.log.contains("  chain: back on the main screen after Dungeons; going on"), r.log.toString())
+        assertTrue(r.cap.taps.isEmpty(), "the director tapped something itself")
+        // The plate names the skill that is walking home while it walks.
+        assertEquals(listOf("Dungeons", "Dungeons", "Special Summon"),
+                     r.named.filter { it == "Dungeons" || it == "Special Summon" })
+    }
+
+    /**
+     * R3, no skill's screen: the Explore menu has no skill of its own here,
+     * but the globe stands on it, and the globe is what every skill's way
+     * home presses -- found on the frame, never a position.
+     */
+    @Test
+    fun `a screen with the globe on it after a step gets the globe, and the chain goes on`() {
+        val r = Rig(SkillSettings.MODE_FULL, listOf("dungeon", "summon"))
+        r.dungeons.onRun = {
+            r.cap.scene = { if (r.cap.taps.isEmpty()) PaintFarm.exploreMenu() else Paint.mainScreen() }
+        }
+        r.cap.scene = { Paint.mainScreen() }
+        r.tick()
+        r.run(Director.SETTLE + 8.0)
+        val menu = PaintFarm.exploreMenu()
+        val globe = Dungeon.homeButton(menu)!!
+        menu.release()
+        assertEquals(listOf(Py.roundInt(globe.fx * Paint.W) to Py.roundInt(globe.fy * Paint.H)), r.cap.taps)
+        assertEquals(1, r.summons.ran, r.log.toString())
+        assertNull(r.director.parked)
+        assertTrue(r.log.contains("  chain: explore_menu left open after Dungeons; pressing the home button"),
+                   r.log.toString())
+    }
+
+    /**
+     * R4. An unknown screen after a step is waited for -- a loading screen
+     * is unknown -- and then it has an end: no globe to read on it, so a
+     * park, with a sentence and the frame, where it used to stand still
+     * round after round saying nothing to the player.
+     */
+    @Test
+    fun `an unknown screen after a step ends in a park with a sentence and a frame`() {
+        val r = Rig(SkillSettings.MODE_FULL, listOf("dungeon", "summon"))
+        r.dungeons.onRun = { r.cap.scene = { Paint.dungeonBattle(it) } }
+        r.cap.scene = { Paint.mainScreen() }
+        r.tick()
+        r.run(Director.UNKNOWN_END - 2.0)
+        assertNull(r.director.parked, "parked inside UNKNOWN_END")
+        assertTrue(r.kept.isEmpty())
+        val t = r.run(4.0)
+        assertNotNull(r.director.parked, t.toString())
+        assertEquals("A screen I do not know is open after Dungeons, and I found no way home from it.", t.note)
+        assertEquals(listOf("no_way_home"), r.kept)
+        assertEquals(0, r.summons.ran)
+        assertTrue(r.cap.taps.isEmpty(), "tapped an unknown screen")
     }
 
     @Test

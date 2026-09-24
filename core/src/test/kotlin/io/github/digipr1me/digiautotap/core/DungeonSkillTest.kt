@@ -222,8 +222,8 @@ class DungeonSkillTest {
     ) : Bot(sim, settings = settings, attemptWorks = attemptWorks) {
         var tops = 0
         var bottoms = 0
-        override fun scrollTop(swipes: Int) { tops += 1 }
-        override fun scrollBottom(swipes: Int) { bottoms += 1 }
+        override fun scrollTop(swipes: Int): Mat? { tops += 1; return frame }
+        override fun scrollBottom(swipes: Int): Mat? { bottoms += 1; return frame }
         override fun listCards(img: Mat): List<Double> = listOf(0.2, 0.4, 0.6, 0.8, 1.0)
     }
 
@@ -262,7 +262,7 @@ class DungeonSkillTest {
             val bot = object : Scrolls(Sim(listOf(Dungeon.LIST)),
                                        settings = { DungeonSkill.Settings(budgets, survey = survey) }) {
                 override fun playEntry(index: Int, label: String, key: Pair<String, Int>?) {}
-                override fun survey(positions: List<Int>, label: String): List<Int> = positions
+                override fun survey(positions: List<Int>, label: String, img: Mat): List<Int> = positions
             }
             assertEquals(Result.DONE, bot.work(bot.frame).result)
             return bot.tops to bot.bottoms
@@ -772,7 +772,7 @@ class DungeonSkillTest {
      * nothing it spends can be counted any more.
      */
     @Test
-    fun `an unreadable counter twice in a row parks the pass`() {
+    fun `an unreadable counter twice in a row ends the card, not the pass`() {
         val (bot, kept) = ticketCase(listOf(
             Dungeon.LIST, "dialog",
             "dialog", "dialog",
@@ -781,9 +781,49 @@ class DungeonSkillTest {
             "dialog"), tickets = 3, clearAfter = 10)
         assertEquals(2, bot.taps("Attempt"), bot.sim.messages.toString())
         assertEquals(2, bot.stats["lost"])
-        assertNotNull(bot.parkedBecause)
-        assertTrue(bot.parkedBecause!!.contains("could not be read twice"), bot.parkedBecause)
+        assertNull(bot.parkedBecause, "the pass used to park here; it leaves the card now")
+        assertTrue(bot.sim.messages.any { it.contains("could not be read twice in a row, leaving it") },
+                   bot.sim.messages.toString())
         assertEquals(2, kept.count { it == "counter_unreadable" })
+    }
+
+    /**
+     * NOTES.md, "A swipe is proved, not assumed": `unreadableInARow` counted over the pass,
+     * so the last lost run on Bakemon and the first on Digifactory parked
+     * the pass, and Network Defense Ops and Metal Sea were never opened.
+     * Per card now: two unreadable runs end that card, the next card is
+     * still opened, and the pass ends DONE.
+     */
+    @Test
+    fun `after an unreadable card the next card is still played`() {
+        val script = listOf(
+            // card 1: two runs whose counter never reads
+            Dungeon.LIST, "dialog", "dialog", "dialog", "dialog", "dialog", "dialog",
+            // card 2: one won run, the sheet and the counter agree
+            Dungeon.LIST, "dialog:2", Dungeon.REWARD, "dialog:1", "dialog:1", "dialog:1",
+            Dungeon.LIST)
+        val sim = Sim(script)
+        val kept = ArrayList<String>()
+        val bot = object : Bot(sim, attemptWorks = true,
+                               settings = { DungeonSkill.Settings(budgets = mapOf(0 to 1, 1 to 1),
+                                                                  survey = false) }) {
+            override fun plan(): Pair<Int, Int> = 2 to 0
+            override fun scrollTop(swipes: Int): Mat? = frame
+            override fun scrollBottom(swipes: Int): Mat? = frame
+            override fun listCards(img: Mat): List<Double> = listOf(0.3, 0.5, 0.7, 0.9, 1.0)
+            /** The list with two cards on it, so that card 2 is there to open. */
+            override fun recognise(img: Mat): Dungeon.Recognition =
+                sim.nextState().let { if (it.state == Dungeon.LIST) it.copy(karten = listOf(0.3, 0.5)) else it }
+            override fun saveUnknown(img: Mat, tag: String) { kept += tag }
+        }
+        bot.minBattle = 0.0
+        val outcome = bot.work(bot.frame)
+        assertEquals(Result.DONE, outcome.result, "${outcome} ${sim.messages}")
+        assertEquals(3, bot.taps("Attempt"), sim.messages.toString())
+        assertEquals(2, bot.stats["lost"])
+        assertEquals(1, bot.stats["tickets"], "the second card's ticket was booked")
+        assertEquals(2, kept.count { it == "counter_unreadable" })
+        assertNull(bot.parkedBecause)
     }
 
     /**
@@ -932,6 +972,153 @@ class DungeonSkillTest {
         assertTrue(stuck.taps("neutral, accept the reward") > 0, "a screen that stays is tapped")
     }
 
+    // ------------------------------------------------------------------
+    // 8b. The scroll is proved (NOTES.md, "A swipe is proved, not assumed")
+    // ------------------------------------------------------------------
+    /** A skill whose list answers a scripted view per settled frame. */
+    private open class Views(sim: Sim, views: List<List<Pair<Double, Double>>>,
+                             settings: () -> DungeonSkill.Settings = { DungeonSkill.Settings(budgets = emptyMap()) })
+        : Bot(sim, settings = settings) {
+        val views = ArrayDeque(views)
+        /** Settled frames looked at, one per swipe. */
+        var served = 0
+        private var last: List<Pair<Double, Double>> = BOTTOM_VIEW
+        override fun listCardsWithSize(img: Mat): List<Pair<Double, Double>> {
+            served += 1
+            last = views.removeFirstOrNull() ?: BOTTOM_VIEW
+            return last
+        }
+        /** The plan's count on the frame the scroll handed it: the same view, not another look. */
+        override fun listCards(img: Mat): List<Double> = last.map { it.first }
+        override fun labelOf(index: Int, label: String): String =
+            DungeonSkill.dungeonLabel(index, label == DungeonSkill.BOTTOM, entries, visibleAtBottom)
+    }
+
+    /**
+     * NOTES.md, "A swipe is proved, not assumed": a swipe sent into the list's opening
+     * animation is swallowed, the plan counts the four cards of the top view
+     * as the bottom four, and every bottom card is played one off -- Network
+     * Defense Ops under Metal Sea's budget, and not at all when that is 0.
+     * The swipe is proved on a settled frame now: the first "bottom" here is
+     * the top view, banner and all, the second is the bottom, and the plan
+     * says 2 and 4, not 3 and 3, with card 3 of the bottom half Network
+     * Defense Ops.
+     */
+    @Test
+    fun `a swallowed swipe is repeated, and the plan counts the proved bottom`() {
+        val bot = Views(Sim(listOf(Dungeon.LIST)), listOf(TOP_VIEW, BOTTOM_VIEW))
+        assertEquals(2 to 4, bot.plan(), bot.sim.messages.toString())
+        assertEquals(5, bot.visibleAtBottom)
+        assertEquals(DungeonSkill.NETDEF, bot.labelOf(2, DungeonSkill.BOTTOM))
+        assertTrue(bot.sim.messages.any { it.contains("did not take (4 cards, list at the top: true), once more") },
+                   bot.sim.messages.toString())
+        assertEquals(2, bot.served, "one look per swipe")
+    }
+
+    /** The list at the top, three times over: no count is taken on it, and the pass parks with the frame kept. */
+    @Test
+    fun `a swipe that never takes parks the plan`() {
+        val kept = ArrayList<String>()
+        val bot = object : Views(Sim(listOf(Dungeon.LIST)), List(6) { TOP_VIEW }) {
+            override fun saveUnknown(img: Mat, tag: String) { kept += tag }
+        }
+        assertNull(bot.plan(), bot.sim.messages.toString())
+        assertEquals(DungeonSkill.SCROLL_TRIES, bot.served)
+        assertEquals(listOf("list_not_at_bottom"), kept)
+        assertNotNull(bot.parkedBecause)
+        assertTrue(bot.parkedBecause!!.contains("did not reach the bottom"), bot.parkedBecause)
+        // The pass says the same, and plays nothing.
+        val outcome = bot.play()
+        assertEquals(Result.PARKED, outcome.result, outcome.toString())
+        assertTrue(outcome.why.contains("did not reach the bottom"), outcome.toString())
+        assertEquals(0, bot.taps("Test") + bot.taps("Attempt"))
+    }
+
+    /** A list in the middle of a scroll is neither end: four cards without a banner is not the bottom. */
+    @Test
+    fun `the bottom wants no banner and five cards`() {
+        assertEquals(true, Dungeon.listAtTop(TOP_VIEW))
+        assertEquals(false, Dungeon.listAtTop(BOTTOM_VIEW))
+        assertEquals(false, Dungeon.listAtTop(MID_VIEW))
+        assertEquals(true, Dungeon.listAtBottom(BOTTOM_VIEW))
+        assertEquals(false, Dungeon.listAtBottom(MID_VIEW))
+        assertEquals(false, Dungeon.listAtBottom(TOP_VIEW))
+        assertNull(Dungeon.listAtTop(listOf(0.5 to 0.17)))
+        assertNull(Dungeon.listAtBottom(emptyList()))
+    }
+
+    /** The painted list, top and bottom, measured by the real readers. */
+    @Test
+    fun `the banner is read off a painted list`() {
+        val top = PaintDungeon.list(atTop = true)
+        val bottom = PaintDungeon.list(atTop = false)
+        val topCards = Dungeon.listCardsWithSize(top)
+        val bottomCards = Dungeon.listCardsWithSize(bottom)
+        println("  painted top: %d cards, first fh %.3f; bottom: %d cards, first fh %.3f".format(
+            topCards.size, topCards.firstOrNull()?.second ?: -1.0,
+            bottomCards.size, bottomCards.firstOrNull()?.second ?: -1.0))
+        assertEquals(4, topCards.size)
+        assertEquals(5, bottomCards.size)
+        assertEquals(true, Dungeon.listAtTop(topCards))
+        assertEquals(true, Dungeon.listAtBottom(bottomCards))
+        assertEquals(false, Dungeon.listAtBottom(topCards))
+        Paint.release(top, bottom)
+    }
+
+    /**
+     * The same finding: the party search got two looks 4.5 s apart
+     * and a neutral tap on anything it did not know, and a tap outside the
+     * panel is what raises "Disband the party?". The search gets
+     * [DungeonSkill.PARTY_WAIT] now, nothing is tapped while the panel shows
+     * fewer than two slots or an unknown screen, and the second "Find a
+     * Party" comes only after the wait.
+     */
+    @Test
+    fun `the party search waits and taps nothing meanwhile`() {
+        val sim = Sim(listOf(Dungeon.LIST) + List(400) { Dungeon.DIALOG_PARTY } + List(400) { Dungeon.UNKNOWN })
+        val bot = Bot(sim)
+        bot.partyWait = 0.1     // 100 reads of the clock
+        bot.playEntry(0, DungeonSkill.TOP)
+        assertEquals(2, bot.taps("Find a Party"), sim.messages.toString())
+        assertEquals(0, bot.taps("neutral"), "tapped into the searching panel: ${sim.clicks}")
+        assertEquals(0, bot.taps("Attempt"))
+        assertEquals(2, sim.messages.count { it.startsWith("  no party after") }, sim.messages.toString())
+        assertTrue(sim.messages.last().contains("no party found, moving on"), sim.messages.toString())
+        // Two waits of 100 reads each, and the reads in between.
+        assertTrue(sim.i >= 200, "the wait was cut short: ${sim.i} reads")
+    }
+
+    /** A party found ends the wait, and the loop goes on to Attempt. */
+    @Test
+    fun `a party found ends the wait`() {
+        val sim = Sim(listOf(Dungeon.LIST, Dungeon.DIALOG_PARTY, Dungeon.UNKNOWN, Dungeon.UNKNOWN,
+                             "dialog:0"))
+        val bot = Bot(sim)
+        bot.partyWait = 10.0
+        bot.playEntry(0, DungeonSkill.TOP)
+        assertEquals(1, bot.taps("Find a Party"), sim.messages.toString())
+        assertTrue(sim.messages.any { it.contains("the party panel changed after") }, sim.messages.toString())
+        assertTrue(sim.i < 20, "the wait ran on after the panel changed: ${sim.i} reads")
+    }
+
+    /**
+     * The main loop's neutral tap on an unknown screen gets the patience
+     * [DungeonSkill.waitDialogBack] has had since UNKNOWN_HOLD: a screen
+     * between two known ones is not tapped, one that stays is.
+     */
+    @Test
+    fun `an unknown screen in the main loop is held before it is tapped`() {
+        val patient = Bot(Sim(listOf(Dungeon.LIST, Dungeon.UNKNOWN, Dungeon.UNKNOWN, "dialog:0")))
+        patient.playEntry(0, DungeonSkill.TOP)
+        assertEquals(0, patient.taps("neutral"), "tapped into a transition: ${patient.sim.clicks}")
+        assertTrue(patient.sim.messages.any { it.contains("0 tickets left") }, patient.sim.messages.toString())
+
+        val hasty = Bot(Sim(listOf(Dungeon.LIST, Dungeon.UNKNOWN, Dungeon.UNKNOWN, "dialog:0")))
+        hasty.unknownHold = 0.0
+        hasty.playEntry(0, DungeonSkill.TOP)
+        assertEquals(2, hasty.taps("neutral"), "a screen that stays is tapped: ${hasty.sim.clicks}")
+    }
+
     /** The ceiling holds: a panel that never becomes anything is left. */
     @Test
     fun `the loop ceiling holds`() {
@@ -959,8 +1146,8 @@ class DungeonSkillTest {
                                settings = { DungeonSkill.Settings(budgets = mapOf(0 to 1), survey = false,
                                                                   attemptsBeforeClear = 3) }) {
             override fun plan(): Pair<Int, Int> = 1 to 0
-            override fun scrollTop(swipes: Int) {}
-            override fun scrollBottom(swipes: Int) {}
+            override fun scrollTop(swipes: Int): Mat? = frame
+            override fun scrollBottom(swipes: Int): Mat? = frame
         }
         bot.minBattle = 0.0
         for (pass in 1..2) {
@@ -1034,8 +1221,8 @@ class DungeonSkillTest {
             var played = 0
             override fun grab(): Mat = frame
             override fun tap(fx: Double, fy: Double, was: String) {}
-            override fun scrollTop(swipes: Int) {}
-            override fun scrollBottom(swipes: Int) {}
+            override fun scrollTop(swipes: Int): Mat? = frame
+            override fun scrollBottom(swipes: Int): Mat? = frame
             override fun listCards(img: Mat): List<Double> = listOf(0.3, 0.5, 0.7, 0.9, 1.0)
             override fun recognise(img: Mat): Dungeon.Recognition = sim.nextState()
             override fun labelOf(index: Int, label: String) = "Test"
@@ -1059,5 +1246,12 @@ class DungeonSkillTest {
          */
         const val TICK = 0.001
         var CLOCK = 0.0
+
+        /** The list at the top, as the oracle has it on 25 frames: the banner, then three cards. */
+        val TOP_VIEW = listOf(0.281 to 0.208, 0.471 to 0.116, 0.621 to 0.116, 0.771 to 0.116)
+        /** The list at the bottom, on its three frames: five cards, no banner. */
+        val BOTTOM_VIEW = listOf(0.229 to 0.115, 0.378 to 0.116, 0.528 to 0.116, 0.678 to 0.116, 0.828 to 0.115)
+        /** A list in the middle of a scroll (corpus/passive/unclear_214359): four cards, no banner. */
+        val MID_VIEW = listOf(0.36 to 0.116, 0.51 to 0.116, 0.66 to 0.116, 0.81 to 0.116)
     }
 }

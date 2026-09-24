@@ -45,7 +45,7 @@ class WorldSearchFlowTest {
     private val vision = Vision(ClassPathAssets)
 
     /** The game's package, as `Game.pick` finds it on a device. */
-    private val GAME = "com.bandainamcoent.dgup_ww"
+    private val GAME = Game.KNOWN
 
     @BeforeAll
     fun load() {
@@ -191,8 +191,9 @@ class WorldSearchFlowTest {
         // The screen never changes, so nothing the taps do shows in the
         // counters: every action comes back as no effect and resyncs, and
         // the frame it resynced on is in the debug package under its own
-        // number. That is the giving-up rule working, not a failure.
-        assertEquals(listOf("resync_00", "resync_01", "resync_02"), kept,
+        // number. That is the giving-up rule working, not a failure. The
+        // board as the run found it comes first, once a run.
+        assertEquals(listOf("board_start_00", "resync_00", "resync_01", "resync_02"), kept,
                      "each resync keeps its frame, numbered: $kept")
 
         // And the board is still the board afterwards: work hands back the
@@ -202,7 +203,7 @@ class WorldSearchFlowTest {
     }
 
     @Test
-    fun `counters that really move confirm the action, and nothing is kept`() {
+    fun `counters that really move confirm the action, and only the start is kept`() {
         // Three boards of one live run, in order. Every tap moves the capture
         // on by one, so the counters between two frames are what the game
         // really did: paws 998 -> 995 -> 993, metres 32320 -> 32323 -> 32324.
@@ -219,8 +220,10 @@ class WorldSearchFlowTest {
         val outcome = skill.work(frames[0])
         assertEquals(Result.DONE, outcome.result, "$outcome, log:\n${lines.joinToString("\n")}")
         assertEquals(2, cap.points.size)
-        assertTrue(kept.isEmpty(),
-                   "a confirmed action keeps no frame; kept $kept\n${lines.joinToString("\n")}")
+        assertEquals(listOf("board_start_00"), kept,
+                     "a confirmed action keeps no frame, only the start does; kept $kept\n${lines.joinToString("\n")}")
+        assertTrue(lines.any { it.startsWith("counters at start: paws 998, claws 142, fireballs 16") },
+                   "the counters the run began with are in the log:\n${lines.joinToString("\n")}")
         assertTrue(lines.any { it.contains(Actions.OK) },
                    "both actions were confirmed against the counters:\n${lines.joinToString("\n")}")
 

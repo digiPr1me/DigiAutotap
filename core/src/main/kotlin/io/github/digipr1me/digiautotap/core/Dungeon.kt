@@ -175,6 +175,17 @@ object Dungeon {
     // Partner window and was never a card.
     const val CARD_H_MAX = 0.25
     const val LIST_MIN_CARDS = 3
+    // The banner is the witness that the list is at the top: the first card
+    // there is 0.208 to 0.210 tall on all 25 top-of-list frames of the
+    // corpus (16 in dungeon, 4 in tall, 5 in passive), and 0.115 to 0.116
+    // everywhere else -- the three bottom-of-list frames and the four the
+    // director calls unclear, which are a list in the middle of a scroll.
+    // Nothing lies between, and 0.16 is the middle. "No banner" alone is
+    // not the bottom: those four mid-scroll frames have none either, and
+    // what tells the bottom from them is the count, five cards against
+    // three or four.
+    const val CARD_BANNER_H_MIN = 0.16
+    const val LIST_BOTTOM_CARDS = 5
 
     // Ticket badge in the list card. The ticket count sits at the bottom
     // left, possibly with a second counter for ad attempts next to it.
@@ -905,6 +916,26 @@ object Dungeon {
 
     /** `list_cards(img)`: the vertical centres alone. */
     fun listCards(img: Mat): List<Double> = listCardsWithSize(img).map { it.first }
+
+    /**
+     * Is the list scrolled to its top? True when the first card is the
+     * banner ([CARD_BANNER_H_MIN]), false when it is an ordinary card, null
+     * where [cards] is not a list at all (fewer than [LIST_MIN_CARDS]; a lone
+     * blob of 0.17 in corpus/passive is not one). The skill asks it after
+     * every swipe, because a swipe sent into the list's opening animation is
+     * swallowed and a count taken on the wrong half plays every bottom card
+     * one off (NOTES.md, "A swipe is proved, not assumed").
+     */
+    fun listAtTop(cards: List<Pair<Double, Double>>): Boolean? =
+        if (cards.size < LIST_MIN_CARDS) null else cards[0].second >= CARD_BANNER_H_MIN
+
+    /**
+     * Is the list scrolled to its bottom? No banner, and at least
+     * [LIST_BOTTOM_CARDS] cards: the three bottom frames of the corpus show
+     * five, the four mid-scroll ones three or four. Null as [listAtTop].
+     */
+    fun listAtBottom(cards: List<Pair<Double, Double>>): Boolean? =
+        listAtTop(cards)?.let { atTop -> !atTop && cards.size >= LIST_BOTTOM_CARDS }
 
     /**
      * Crop containing a list card's counters.

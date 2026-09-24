@@ -19,6 +19,8 @@ import org.opencv.core.Mat
  *                     said yes to; work it and end on that same screen
  *   run()             the whole: from the plain main screen, go there, work,
  *                     come home -- "hingehen, work, nach Hause"
+ *   leave()           run's last third alone: from the skill's own screen,
+ *                     home -- the chain's second hand (DirectorLoop.full)
  *
  * Where the seam lies in each Python skill, so that the skill sessions cut
  * it at the same place (the Python skills are **not** rebuilt for it; the
@@ -116,6 +118,22 @@ interface Skill {
 
     /** The whole: from the plain main screen, go there, [work], come home. */
     fun run(): Outcome
+
+    /**
+     * The last third of [run] on its own: from a screen [worksOn] says yes
+     * to, home to the plain main screen. True once the main screen is back.
+     *
+     * Asked by the director's fully automatic mode when a chain step has
+     * handed the screen back and one of the skills' screens is still
+     * standing after [Director.SETTLE] -- the second hand of the chain
+     * (DirectorLoop.full). Every walking skill already has this way home in
+     * its `run`'s finally; this is the seam that lets somebody else ask for
+     * it. Not gated on the main switch, bounded, and it taps only what it
+     * has recognised, as every way home here does. The default is "I have
+     * none": the round-skills live on the main screen, and the Tower has no
+     * screen of its own.
+     */
+    fun leave(): Boolean = false
 
     /**
      * The beat this skill wants until its next round, in seconds, or null

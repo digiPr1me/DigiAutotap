@@ -26,7 +26,8 @@ each one has its own switch:
 - **Gekkomon Run** -- plays the Gekkomon Run event, one run after another
 
 A small dot at the top of the screen shows what it is doing; tap it to pause
-and tap it again to go on. Most of it is free. A few tasks need a supporter
+and tap it again to go on. It is blue in semi-automatic mode and green in
+fully automatic mode. Most of it is free. A few tasks need a supporter
 code (below).
 
 
@@ -96,13 +97,19 @@ new device. To move a code to a new phone, ask on Discord.
 ## Privacy
 
 Everything DigiAutotap sees on the screen stays on the phone. There is no
-analytics and no crash reporting. It goes online in one moment only: when you
-redeem a supporter code it sends one request, once, with two values -- a hash
-of the code (never the code itself) and an anonymous id for this phone, a
-salted hash of the per-app id Android gives it. The server keeps those two and
-the time: no e-mail, no IP address. What comes back is a signed token the app
-checks offline from then on, in flight mode too, and even if the server is
-gone for good. The debug package goes only where you share it.
+crash reporting. When the app is opened it asks GitHub whether a newer version
+is out, and that request carries nothing about you or the phone. Once a day it
+tells our server the app version, with nothing that identifies you or the
+phone. And when you redeem a supporter code it sends one request, once, with
+two values -- a hash of the code (never the code itself) and an anonymous id
+for this phone, a salted hash of the per-app id Android gives it. The server
+keeps those two and the time: no e-mail, no IP address. What comes back is a
+signed token the app checks offline from then on, in flight mode too, and even
+if the server is gone for good. The debug package goes only where you share it.
+
+You do not have to take our word for any of this: the source code is public,
+right here in this repository, so you can check for yourself exactly what the
+app sends and when.
 
 ## Building it yourself
 

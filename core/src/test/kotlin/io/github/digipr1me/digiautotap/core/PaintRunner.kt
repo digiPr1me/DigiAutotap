@@ -1,6 +1,7 @@
 package io.github.digipr1me.digiautotap.core
 
 import org.opencv.core.Mat
+import org.opencv.core.MatOfPoint
 import org.opencv.core.Point
 import org.opencv.core.Scalar
 import org.opencv.imgproc.Imgproc
@@ -101,15 +102,58 @@ object PaintRunner {
              Summon.EXIT_BUTTON_FX + hx, Summon.EXIT_BUTTON_FY + hy, DIMMED_X)
     }
 
-    /** The plain main screen with the nav bar: what go_to_event starts from. */
-    fun mainScreen(): Mat = PaintFarm.mainScreen()
+    // The Events tile on the main screen: Runner.TILE_NAVY, H 100-120, S >= 170,
+    // V 40-130, measured H 109-110 S 223 V 69-96 inside the tile; and the
+    // star in its upper left, Runner.STAR_YELLOW, at the place and size it
+    // measures on the ADB frame, fx 0.668-0.691 fy 0.208-0.221. The tile's
+    // own extent is the painter's: the flow test holds a tap to it, so a tap
+    // that lands on the tile is one the game would have taken.
+    private val TILE = Paint.hsv(110, 223, 96)
+    private val STAR = Paint.hsv(28, 200, 255)
+    val EVENTS_TILE = doubleArrayOf(0.650, 0.195, 0.725, 0.270)
+    private const val STAR_FX = 0.679
+    private const val STAR_FY = 0.215
+    // The star's outer radius in pixels: 0.0227 of 805 is 18.3 px across, and
+    // a five-pointed star is 1.902 of its radius across.
+    private const val STAR_R = 9.6
 
-    /** The Events window: one solid box of the event's blue, fx 0.160-0.793 fy 0.245-0.782. */
+    /** A five-pointed star, point up, inner radius 0.382 of the outer. */
+    private fun star(img: Mat, cx: Double, cy: Double, r: Double, colour: Scalar) {
+        val pts = (0 until 10).map { i ->
+            val a = Math.PI / 2 + i * Math.PI / 5
+            val rr = if (i % 2 == 0) r else r * 0.382
+            Point(cx + rr * Math.cos(a), cy - rr * Math.sin(a))
+        }
+        Imgproc.fillPoly(img, listOf(MatOfPoint(*pts.toTypedArray())), colour)
+    }
+
+    /** The Events tile and its star, painted onto [img]. */
+    fun eventsTile(img: Mat): Mat {
+        rect(img, EVENTS_TILE[0], EVENTS_TILE[1], EVENTS_TILE[2], EVENTS_TILE[3], TILE)
+        star(img, STAR_FX * W, STAR_FY * H, STAR_R, STAR)
+        return img
+    }
+
+    /** The plain main screen with the nav bar, and the Events tile unless [events] is false. */
+    fun mainScreen(events: Boolean = true): Mat =
+        PaintFarm.mainScreen().also { if (events) eventsTile(it) }
+
+    // The Gekkomon Run card in the Events window: lighter than the box and
+    // outside Runner.EVENT_BLUE (S 120 against its floor of 180), from just
+    // under the title bar down, the width of the box less its margins.
+    private val CARD = Paint.hsv(100, 120, 230)
+    val EVENT_CARD = doubleArrayOf(0.180, 0.265, 0.773, 0.400)
+
+    /** The Events window: one solid box of the event's blue, fx 0.160-0.793 fy 0.245-0.782, the card in it. */
     fun eventsDialog(): Mat {
         val img = Paint.blank()
         rect(img, 0.160, 0.245, 0.793, 0.782, EVENT_BOX)
+        rect(img, EVENT_CARD[0], EVENT_CARD[1], EVENT_CARD[2], EVENT_CARD[3], CARD)
         return img
     }
+
+    /** Play Game's row on the event page: the band the word "Play" is the label of. */
+    val PLAY_BAND = doubleArrayOf(0.15, 0.655, 0.60, 0.705)
 
     /** The event page: "Play" at fx 0.188-0.297 fy 0.664-0.699, and the X. */
     fun eventPage(): Mat {
