@@ -6,7 +6,7 @@
 > game are the property of their owners.
 
 An Android app that does the repetitive parts of Digimon UP for you, on the
-phone itself: no PC, no emulator, no root. It looks at the screen the way you
+phone (or emulator) itself. It looks at the screen the way you
 do and taps where you would.
 
 **Download: [Releases](https://github.com/digiPr1me/digiautotap/releases)**,
@@ -29,8 +29,6 @@ A small dot at the top of the screen shows what it is doing; tap it to pause
 and tap it again to go on. Most of it is free. A few tasks need a supporter
 code (below).
 
-What it cannot do: the Midsummer skewer stand moves faster than a phone can
-take pictures of its own screen.
 
 ## What it needs
 
