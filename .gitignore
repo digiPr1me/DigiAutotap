@@ -1,0 +1,38 @@
+.gradle/
+build/
+.kotlin/
+local.properties
+.idea/
+*.iml
+.cxx/
+
+# The release signing key. It lives outside the repository; keystore.properties
+# only names it and holds its passwords. Ignored here so that nothing has to
+# be remembered, and refused by the release build and ShellCoreTest besides.
+keystore.properties
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.apk
+*.aab
+
+# The frame corpus the oracle names: pictures of the game, so not in the
+# repository, and only on this machine. A frame gets in by hand, and nothing
+# here writes into it (CorpusTest).
+corpus/
+__pycache__/
+*.pyc
+
+# The activation server's admin credentials (PLAN_SUPPORTER_SERVER.md 4.2):
+# make_codes.py --push and codes_gui.py read the Worker's URL and its
+# ADMIN_TOKEN from here, the same way keystore.properties holds the signing
+# key's passwords. Never published.
+server.properties
+
+# server/: a normal Node project. Its own real secrets (the activation
+# private key, the admin token) are Worker secrets and never touch a file
+# here at all -- server/README.md, "Deploy".
+server/node_modules/
+server/.wrangler/
+server/.dev.vars

@@ -9,6 +9,11 @@ You may not redistribute the app, whether unchanged or modified, and you may
 not publish a modified version of it -- including one with the supporter
 check removed or altered. Link to this repository instead.
 
+The source code is published here so that you can read it and build the
+app for your own use. The same terms apply to it: you may not redistribute
+the source or a build of it, changed or unchanged, and you may not publish
+a modified version.
+
 The app is provided "as is", without warranty of any kind, express or
 implied. In no event shall the author be liable for any claim, damages or
 other liability arising from the app or its use.

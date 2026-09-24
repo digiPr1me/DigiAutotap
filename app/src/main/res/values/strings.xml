@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">DigiAutotap</string>
+    <string name="service_label_main">DigiAutotap</string>
+    <string name="service_description_main">Lets DigiAutotap see the game\'s screen and tap for you. What it sees stays on the phone.</string>
+    <string name="service_label">DigiAutotap (spike)</string>
+    <string name="service_description">Takes screenshots of the game and reads which screen is up. Spike build: it measures and taps nothing.</string>
+</resources>

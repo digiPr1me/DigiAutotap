@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Light or dark follows the phone and nothing else (design session,
+     decision 4). Android picks between this file and values-night/ before
+     the first view exists, which is what keeps a dark phone from flashing
+     white while the Activity is still starting; Theme.kt answers the same
+     question again for the colours the app draws itself. -->
+<resources>
+    <style name="DigiAutotap" parent="@android:style/Theme.Material.Light.NoActionBar" />
+</resources>

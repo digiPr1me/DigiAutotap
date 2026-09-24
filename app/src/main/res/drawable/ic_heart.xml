@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The thanks in a redeemed supporter code's card. The colour is the
+     caller's: every use tints it from Theme.kt. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:strokeColor="@android:color/white"
+        android:strokeWidth="1.8"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="@android:color/transparent"
+        android:pathData="M19.5,12.572 L12,20 L4.5,12.572 A5,5 0 1,1 12,6.006 A5,5 0 1,1 19.5,12.572 Z" />
+</vector>

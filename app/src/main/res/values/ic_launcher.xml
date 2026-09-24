@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The navy the artwork's inside ends in (make_icon.py, NAVY). The
+     foreground is opaque from edge to edge, so this only shows while the
+     launcher animates the icon. -->
+<resources>
+    <color name="ic_launcher_background">#FF020D2E</color>
+</resources>

@@ -104,6 +104,38 @@ the time: no e-mail, no IP address. What comes back is a signed token the app
 checks offline from then on, in flight mode too, and even if the server is
 gone for good. The debug package goes only where you share it.
 
+## Building it yourself
+
+The source is in this repository, so you can read what the app does with
+your screen and build it. It needs a JDK 17 and the Android SDK with
+platform 36, named as `sdk.dir` in a `local.properties` beside
+`settings.gradle.kts`; then
+
+```
+gradlew :app:assemblePhoneDebug
+```
+
+writes an arm64 APK under `app/build/outputs/apk/phone/debug/`
+(`assembleEmulatorDebug` an x86_64 one for an emulator). A build of your
+own is signed with your own key, so it does not install over the release
+and the release does not install over it.
+
+Two folders are empty here on purpose: `templates/` and `digits/`, the
+small crops of the game's own screen that the Digital World Search task
+reads the board with. They are the game's pictures and are not
+distributed, so a build from this source does everything **except Digital
+World Search**; the APKs under Releases carry them. The same goes for the
+corpus of screen frames the readers are measured against and the oracle
+written from it: the tests that need them step aside here, and `gradlew
+:core:fastTest` is the part that runs anywhere. It needs the desktop
+OpenCV 5.0.0 named as `opencv.dir` in `local.properties` (see
+`core/build.gradle.kts`).
+
+The supporter code is a signed token from the activation server, checked
+offline (`Unlock.kt`, `Activation.kt` in `core`). Taking that check out of
+a build of your own is not hard, and it is not allowed: see
+[LICENSE.txt](LICENSE.txt).
+
 ## Legal notice
 
 The publisher's terms of service explicitly prohibit bots, emulators and

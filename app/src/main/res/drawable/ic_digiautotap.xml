@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The status bar's mark: a D on an 8 x 8 grid of 3 dp blocks, with two loose
+     pixels in front of it. Every block is a whole multiple of a device pixel at
+     every density, so the D stays crisp at 24 dp. Android keeps only the alpha
+     of a small icon; the colour here is ignored in the status bar and tinted
+     from Theme.kt's PRIMARY in the shade (CoreService.notification). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M18,0h3v3h-3zM3,3h12v3h-12zM3,6h3v3h-3zM12,6h6v3h-6zM3,9h3v3h-3zM15,9h6v3h-6zM3,12h3v3h-3zM15,12h6v3h-6zM3,15h3v3h-3zM12,15h6v3h-6zM3,18h12v3h-12zM18,21h3v3h-3z" />
+</vector>
