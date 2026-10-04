@@ -7,10 +7,11 @@ body:
     attributes:
       value: |
         Thank you for taking the time. One thing makes a report easy to act
-        on: **the debug package**. In the app, tap *Share debug package* right
-        after the problem happened, save the ZIP, and drag it into the box
-        below. It holds the log, the settings and the pictures the app kept
-        of what it saw -- nothing else from the phone.
+        on: **the log**. In the app, open *Settings*, then *Log*, and tap
+        *Share* right after the problem happened (on 1.2: *Share debug
+        package*), save the ZIP, and drag it into the box below. It holds the
+        log, the settings and the phone model -- no pictures, and nothing else
+        from the phone. If it is about a screen of the game, add a screenshot.
 
   - type: dropdown
     id: task
@@ -24,6 +25,9 @@ body:
         - Dungeons
         - Quest Loop
         - Gekkomon Run
+        - Chef's Special
+        - EX Missions
+        - Presets
         - The app itself (setup, the dot, the notification)
         - Supporter code
     validations:
@@ -43,10 +47,10 @@ body:
   - type: textarea
     id: package
     attributes:
-      label: The debug package
+      label: The log
       description: >
-        Drag the ZIP from "Share debug package" in here. Without it a report
-        usually cannot be answered.
+        Drag the ZIP from Settings -> Log -> Share in here (on 1.2: "Share
+        debug package"). Without it a report usually cannot be answered.
     validations:
       required: true
 
@@ -54,8 +58,8 @@ body:
     id: version
     attributes:
       label: DigiAutotap version
-      description: Shown under More, at the bottom.
-      placeholder: "0.2"
+      description: Shown under Settings, in the Version row.
+      placeholder: "1.3"
     validations:
       required: true
 

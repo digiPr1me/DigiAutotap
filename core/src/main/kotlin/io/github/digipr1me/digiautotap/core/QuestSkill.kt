@@ -22,9 +22,9 @@ import kotlin.math.abs
  * [Quest.closeX] (P4), [Dungeon.autoButton], [Dungeon.stageFailed] (P1) --
  * and not one of them is touched here. What this file carries of quest.py
  * is the loop: the routine, the resync rule, the claim, the two steps it
- * plays, each number with the sentence it has there. A number is measured
- * in Python first and only then written here (NOTES.md, "Two
- * implementations, one direction").
+ * plays, each number with the sentence it has there. A number is changed
+ * in this file, with a measurement and its sentence (NOTES.md, "One
+ * project").
  *
  * What the director takes off this loop's hands, the same three things it
  * took off the passive helper (PassiveSkill):
@@ -84,6 +84,17 @@ open class QuestSkill(
      * same reason.
      */
     private val clock: () -> Double = { System.currentTimeMillis() / 1000.0 },
+    /**
+     * The other rounds of the main screen, between two rounds of the chain's
+     * step ([loop]) that tapped nothing: the director's
+     * `DirectorLoop.aside`, which gives the bond token its look where its
+     * switch is on. A chain step is one turn of the director's for as long
+     * as the loop waits on its card -- "Defeat 50 enemies" is minutes -- and
+     * until 2026-10-02 the bond token got no round in all that time
+     * (PLAN_BEFUNDE_1_3.md N3 d: "Wenn Quest Loop läuft, sollen
+     * zwischendurch die Bond Tokens collected werden").
+     */
+    private val aside: () -> Unit = {},
 ) : Skill {
 
     /**
@@ -119,17 +130,23 @@ open class QuestSkill(
          */
         val attemptsBeforeClear: Int = ATTEMPTS_BEFORE_CLEAR,
         /**
-         * `ad_pass`: does the player have the game's Ad Skip Pass
-         * (SkillSettings.AD_PASS_KEY)? With it the free ads are the
-         * quest's to spend -- the card's ad tickets count towards the day
-         * and the summon step watches its two ads first. Without it none
-         * of them is ever tapped, and a dungeon card at 0 tickets is the
-         * day being over, whatever its film symbol says. Until 2026-09-24
-         * the loop built both its bots with the ads hard-wired on and asked
-         * no switch at all; that was the ad video a player without the pass
-         * met.
+         * `dungeon_ads`, the Dungeons page's switch (Stored.DUNGEON_ADS_KEY):
+         * with it a card's two ad tickets count towards the day and the film
+         * button is tapped, as from 2026-09-26 to 2026-09-30; without it a
+         * card is its tickets alone ([usable]) and the button is never
+         * tapped. Off by default on the page, and since 2026-10-03 on only
+         * with the Ad Skip Pass ([Stored.quest], [FreeAds]); on here, as
+         * [DungeonSkill.Settings.useAds] is, for the flow tests written
+         * while the ads were always the loop's.
          */
-        val adPass: Boolean = SkillSettings.AD_PASS_DEFAULT,
+        val dungeonAds: Boolean = true,
+        /**
+         * `summon_free_ads`, the Summon page's switch (Stored.SUMMON_ADS_KEY):
+         * whether the summon step watches its mode's free ads before it
+         * draws. Off by default on the page ([Stored.quest]), on here for
+         * the flow tests, as [dungeonAds].
+         */
+        val summonAds: Boolean = true,
     )
 
     // ------------------------------------------------------------------------
@@ -190,6 +207,13 @@ open class QuestSkill(
     private var mismatch: Triple<Int, Int, Pair<Int, Int>?>? = null
     private var retriedStep: Int? = null
     private var claimStallStep: Int? = null
+
+    // A claim that read its card unmoved and gave up on it: the step, the
+    // card as it read before the tap, and whether a claim there moves the
+    // step on -- an unknown card's does not ([claimUnknown]). Its window may
+    // still come ([stuck]).
+    private class LateClaim(val step: Int, val ist: Int, val ziel: Int, val advances: Boolean)
+    private var lateClaim: LateClaim? = null
     private var holoDead = 0
     private var said: String? = null
     private var blindSince: Double? = null
@@ -250,6 +274,27 @@ open class QuestSkill(
     override fun hasBudget(): Boolean = !lockedForTheDay()
 
     /**
+     * The chain's skip names the lock, as the log line of [lockedForTheDay]
+     * and the row do (PLAN_ABSCHLUSS_1_3.md A2): on the Poco on 2026-10-02 the
+     * lock was written at 18:33:35, and the chain's next run said at 19:12:27
+     * "skipping quest -- nothing to do, on the settings as they stand", which
+     * named neither the lock nor the way out of it.
+     */
+    override fun noBudgetWhy(): String? {
+        val until = settings().lockedUntil ?: return null
+        if (clock() >= until) return null
+        return "stopped until ${whenText(until)}: out of dungeon tickets"
+    }
+
+    /**
+     * The row switched off and on: the lock is out of the file already
+     * (Stored.restart), and the loop's own ending goes with it -- the day's,
+     * and one the chain's step wrote after its tries ([switchOff]), which no
+     * round in the semi-automatic mode would ever have lifted.
+     */
+    override fun restarted() = resume()
+
+    /**
      * Is the loop stopped for the day, on the record in the settings file?
      *
      * The player asked for this on 2026-09-22: once the loop has stopped
@@ -285,7 +330,11 @@ open class QuestSkill(
      */
     override fun work(img: Mat): Outcome {
         startPass()
+        waiting = false
         tick(img)
+        // A step the switch stopped inside the round: the round goes on
+        // where it stood when the switch comes back ([resume]).
+        if (inner != null) return Outcome.STOPPED
         return outcome()
     }
 
@@ -308,21 +357,57 @@ open class QuestSkill(
      */
     override fun run(): Outcome {
         startPass()
+        inner = null
+        // The step's own clock, and the step's own ending (PLAN_RELEASE_1_3.md
+        // B70). [movedAt] is set by every reading of the card, in the
+        // semi-automatic rounds as well, and a chain step that began on a card
+        // the rounds had read a quarter of an hour before switched itself off
+        // 34 s after "chain: starting the quest loop" with "nothing on the
+        // quest card has moved for 15 minutes" -- live on instance 1 on
+        // 2026-10-01, 13:29:32 to 13:30:06, the card unchanged since 13:15.
+        // The same shape as "A counter nothing clears" (notes/director.md):
+        // what one pass measures begins at the top of that pass. And an
+        // earlier step's own ending -- nothing moved, the same park three
+        // times, both a chain step's alone ([stopWhenStuck]) -- is not this
+        // one's: the next chain run met it on its first tick and handed it
+        // back at once, for as long as the core ran. A stop until the reset
+        // stays, as it is the day's ([lockedForTheDay]).
+        movedAt = null
+        seen = null
+        if (stoppedBecause != null && !stoppedUntilReset) resume()
+        return loop()
+    }
+
+    /** [run]'s waiting, from its first tick or from where a pause stopped it ([resume]). */
+    private fun loop(): Outcome {
         stopWhenStuck = true
+        waiting = true
         try {
             while (true) {
                 if (!on()) return Outcome.STOPPED
                 val img = try {
                     grab()
                 } catch (e: CaptureError) {
-                    return Outcome.parked("no frame: ${e.message}")
+                    waiting = false
+                    return Outcome.noFrame(e)
                 }
+                val xTaps = stuckTaps
                 try {
                     tick(img)
                 } finally {
                     img.release()
                 }
-                if (stoppedBecause != null) return outcome()
+                if (inner != null) return Outcome.STOPPED
+                if (stoppedBecause != null) {
+                    waiting = false
+                    return outcome()
+                }
+                // A round that tapped nothing -- no claim, no step played, no
+                // X -- leaves the main screen to the other rounds for one look
+                // ([aside]), on a frame of their own: a tap of this round's
+                // would still be landing, and a picture taken before it is
+                // not one to aim with.
+                if (!did.claimed && !did.acted && stuckTaps == xTaps && on()) aside()
                 sleep(TICK)
             }
         } finally {
@@ -459,6 +544,7 @@ open class QuestSkill(
         parkTries = 0
         retriedStep = null
         claimStallStep = null
+        lateClaim = null
         holoDead = 0
         said = null
         saveStep(step)
@@ -518,6 +604,16 @@ open class QuestSkill(
             return
         }
         blindSince = null
+        // A claim that gave up on its card, and the card has moved on since:
+        // its window came late and went -- closed here or by the player --,
+        // and the claim landed after all.
+        val late = lateClaim
+        lateClaim = null
+        if (late != null && late.step == step && isNext(card, late.ist, late.ziel)) {
+            say("  the claim landed after all, next is ${card.ist}/${card.ziel}")
+            landed(late)
+            return
+        }
         val ist = card.ist
         val ziel = card.ziel
         lastProgress = ist to ziel
@@ -529,7 +625,7 @@ open class QuestSkill(
         // The position is only a tie-breaker between steps the card itself
         // cannot tell apart -- see [matches].
         if (!matches(step, ziel, words)) {
-            handleMismatch(ist, ziel, words)
+            if (handleMismatch(ist, ziel, words)) claimUnknown(card, img, result)
             return
         }
 
@@ -662,13 +758,50 @@ open class QuestSkill(
      * keeps the frame instead of guessing. One tap per round, checked by the
      * next round's auto button rather than by another look at the picture
      * that aimed it -- the same rule the rest of [tick] follows.
+     *
+     * Before the X, the Reward sheet, which has none: tapped at the dead
+     * spot the claim closes it at, on the same terms as the X. And the one
+     * screen that does not wait the [STUCK_AFTER]: the sheet of a claim that
+     * gave up on its card a round before ([lateClaim]) -- it is the loop's
+     * own window, closed at once and its claim counted ([closeLate]).
+     * notes/director.md, "A claim's Reward window can come after the claim
+     * has given up on it".
      */
     private fun stuck(img: Mat) {
+        val sheet by lazy { rewardSheet(img) }
+        val late = lateClaim
+        if (late != null && late.step == step && sheet) {
+            lateClaim = null
+            closeLate(img, late)
+            return
+        }
         val t = now()
         if (stuckSince == null) stuckSince = t
         val waited = t - stuckSince!!
         if (waited < STUCK_AFTER) {
             once("busy", "  not the plain main screen, nothing done this round")
+            return
+        }
+        // A Reward sheet has no X: "Tap to close" is all there is on it, and
+        // a phone's sheet over the main screen and another over Network
+        // Defense Ops stood for minutes on the line below (2026-10-01 and
+        // 10-02). Closed as the claim closes its own, at the dead spot, one
+        // tap a round and the next round's auto button the check; never at
+        // "Give Up" under the sheet, and only on a frame [rewardSheet] reads.
+        if (sheet) {
+            if (stuckTaps >= STUCK_TAPS_MAX) {
+                once("sheetstuck", "  the Reward sheet is still there after $stuckTaps taps -- " +
+                    "leaving it alone")
+                keepFrame(img, "sheet-would-not-close")
+                return
+            }
+            if (t - stuckTapAt < STUCK_TAP_EVERY) return
+            stuckTaps += 1
+            stuckTapAt = t
+            say(String.format(Locale.US,
+                "  not the plain main screen for %.0f s -- a Reward sheet, tapping " +
+                    "it closed (%d of %d)", waited, stuckTaps, STUCK_TAPS_MAX))
+            tap(img, DEAD_TAP[0], DEAD_TAP[1])
             return
         }
         val x = closeX(img)
@@ -692,7 +825,7 @@ open class QuestSkill(
             "  not the plain main screen for %.0f s -- tapping %s at %.3f/%.3f " +
                 "to get out (%d of %d)",
             waited, x.which, x.fx, x.fy, stuckTaps, STUCK_TAPS_MAX))
-        tap(img, x.fx, x.fy)
+        tap(img, x.fx, x.fy, x.anchor)
     }
 
     /**
@@ -703,7 +836,7 @@ open class QuestSkill(
      * line saying so hanging in the log.
      */
     private fun backAgain() {
-        if (stuckTaps > 0) say("  the main screen is back after $stuckTaps tap(s) on the X")
+        if (stuckTaps > 0) say("  the main screen is back after $stuckTaps tap(s) to get out")
         stuckSince = null
         stuckTaps = 0
     }
@@ -802,7 +935,7 @@ open class QuestSkill(
      * the card could actually be -- by its target, and by the length of the
      * words either side of it wherever those have been counted.
      */
-    private fun handleMismatch(ist: Int, ziel: Int, words: Pair<Int, Int>?) {
+    private fun handleMismatch(ist: Int, ziel: Int, words: Pair<Int, Int>?): Boolean {
         if (mismatch == Triple(step, ziel, words)) {
             val candidates = forwardCandidates(ziel, words)
             if (candidates.isNotEmpty()) {
@@ -811,6 +944,10 @@ open class QuestSkill(
                 say("  the card is not step ${old + 1} (${ROUTINE[old].name}): " +
                     "it shows $ist/$ziel, ${wordsSaid(words)} -- going to step " +
                     "${step + 1} (${ROUTINE[step].name})")
+            } else if (ziel in 1..ist) {
+                // Finished: the caller claims it ([claimUnknown]).
+                mismatch = null
+                return true
             } else {
                 once("nomatch:$ziel:$words",
                      "  the card shows $ist/$ziel, ${wordsSaid(words)}, and no " +
@@ -820,6 +957,36 @@ open class QuestSkill(
             mismatch = null
         } else {
             mismatch = Triple(step, ziel, words)
+        }
+        return false
+    }
+
+    /**
+     * A finished card that no step of the routine looks like is claimed
+     * rather than parked on: claiming needs no name, only the card and the
+     * proof every claim has -- the card after it is a different one. The
+     * step stays where it was, and the next card is matched afresh; one that
+     * is unknown and not finished parks as before ([handleMismatch]).
+     *
+     * The routine was counted on one player's turn of the quests, targets of
+     * 2, 30, 50 and 100. A Poco F3's report of 2026-09-30 showed another
+     * stretch of the game's quests -- 10/10 with five characters behind the
+     * number, 15/15 and 0/15 with six in front -- and the loop parked on
+     * each, the finished ones included, so the player claimed them by hand
+     * (notes/director.md, "A finished quest card the routine does not know is
+     * claimed, not parked on").
+     */
+    private fun claimUnknown(card: Quest.Card, img: Mat, result: Did) {
+        if (parkedBecause != null && now() < parkRetryAt) return
+        say("  the card shows ${card.ist}/${card.ziel}, " +
+            "${wordsSaid(card.nameLen to card.afterLen)}, and no step in the routine looks " +
+            "like that -- it is finished, so claiming it all the same")
+        val (claimed, fell) = claim(card, img, "the unknown card", advances = false)
+        if (claimed) {
+            result.claimed = true
+            parkedBecause = null
+        } else if (fell == false) {
+            park("an unknown finished card did not go when it was claimed")
         }
     }
 
@@ -912,10 +1079,12 @@ open class QuestSkill(
      * whether the number actually moved; the caller gives that one case a
      * single extra try before it counts as a park.
      */
-    private fun claim(card: Quest.Card, img: Mat): Pair<Boolean, Boolean?> {
+    private fun claim(card: Quest.Card, img: Mat,
+                      what: String = "step ${step + 1}",
+                      advances: Boolean = true): Pair<Boolean, Boolean?> {
         val beforeIst = card.ist
         val beforeZiel = card.ziel
-        say("  step ${step + 1} ready (${card.ist}/${card.ziel}), claiming")
+        say("  $what ready (${card.ist}/${card.ziel}), claiming")
         tap(img, card.fx, card.fy)
         if (!waitFor(CLAIM_OPEN_TIMEOUT) { autoButton(it) == null }) {
             park("tapping the card did not open the reward window")
@@ -948,16 +1117,90 @@ open class QuestSkill(
             after.release()
         }
         if (progress == null) return false to false
-        // Proof that the claim landed is the card being a *different* card,
-        // and the ist side falling is only the usual way that shows. On the
-        // step where the routine hands over to one with another target it
-        // does not fall at all: 100/100 was claimed and the next card read
-        // 610/610, which is not "the counter did not fall", it is the next
-        // quest. Judged on the ist side alone that came back as a failed
-        // claim and cost the loop a retry on a card it had already collected.
-        if (progress.ziel == beforeZiel && progress.ist >= beforeIst) return false to false
+        if (!isNext(progress, beforeIst, beforeZiel)) {
+            // The window may still be on its way. A phone on 2026-10-02 at
+            // 18:22:17 put a frame without the auto button between the card
+            // and the window: the dead spot was tapped on that, the button
+            // was back a frame later on a card still at 30/30, and "Reward
+            // ... Tap to close" stood up after the claim had given up -- by
+            // 18:22:21, the next round's frame, so within five seconds of the
+            // tap (the log counts seconds). Looked for here as long again
+            // ([CLAIM_LATE_WAIT]), because in the semi-automatic mode this is
+            // the only round there is: the sheet is `unknown` to the
+            // director, and no round of the main screen comes back to it.
+            // What comes later still is [stuck]'s ([lateClaim]).
+            if (!waitFor(CLAIM_LATE_WAIT) { autoButton(it) == null && rewardSheet(it) }) {
+                lateClaim = LateClaim(step, beforeIst, beforeZiel, advances)
+                return false to false
+            }
+            say("  the reward window came after all -- closing it")
+            if (!closeSheet(img)) {
+                lateClaim = LateClaim(step, beforeIst, beforeZiel, advances)
+                return false to false
+            }
+            val again = readOnFresh { questCard(it) }
+            if (again == null || !isNext(again, beforeIst, beforeZiel)) return false to false
+            say("  claimed, next is ${again.ist}/${again.ziel}")
+            return true to true
+        }
         say("  claimed, next is ${progress.ist}/${progress.ziel}")
         return true to true
+    }
+
+    /**
+     * Proof that the claim landed is the card being a *different* card, and
+     * the ist side falling is only the usual way that shows. On the step
+     * where the routine hands over to one with another target it does not
+     * fall at all: 100/100 was claimed and the next card read 610/610, which
+     * is not "the counter did not fall", it is the next quest. Judged on the
+     * ist side alone that came back as a failed claim and cost the loop a
+     * retry on a card it had already collected.
+     */
+    private fun isNext(card: Quest.Card, beforeIst: Int, beforeZiel: Int): Boolean =
+        card.ziel != beforeZiel || card.ist < beforeIst
+
+    /**
+     * A Reward sheet that is standing, closed the way [claim] closes its
+     * window: a tap at [DEAD_TAP], the auto button coming back as the proof.
+     * Stricter than the claim's own taps in one way: a tap goes out only on
+     * a frame [rewardSheet] reads as the sheet -- the first is [img], every
+     * later one a fresh frame that still reads so. Anything else standing
+     * there is not this function's to tap at, and it says false.
+     */
+    private fun closeSheet(img: Mat): Boolean {
+        for (attempt in 0 until CLAIM_CLOSE_TAPS) {
+            tap(img, DEAD_TAP[0], DEAD_TAP[1])
+            if (waitFor(CLAIM_CLOSE_STEP) { autoButton(it) != null }) return true
+            if (readOnFresh { rewardSheet(it) } != true) return false
+        }
+        return false
+    }
+
+    /**
+     * The window of a claim that gave up, standing in front of the next
+     * round: [stuck] closes it at once and counts the claim here, without the
+     * [STUCK_AFTER] it gives a screen it knows nothing about.
+     */
+    private fun closeLate(img: Mat, late: LateClaim) {
+        say("  the reward window came after the claim -- closing it")
+        if (!closeSheet(img)) {
+            keepFrame(img, "late-reward-would-not-close")
+            return
+        }
+        stuckSince = null
+        val card = readOnFresh { f -> if (autoButton(f) != null) questCard(f) else null }
+        if (card == null || !isNext(card, late.ist, late.ziel)) {
+            say("  the late window is closed, and the counter did not fall")
+            return
+        }
+        say("  claimed, next is ${card.ist}/${card.ziel}")
+        landed(late)
+    }
+
+    /** A late claim counted, as [oneRound] counts one that landed in time. */
+    private fun landed(late: LateClaim) {
+        did.claimed = true
+        if (late.advances) advance(step + 1) else parkedBecause = null
     }
 
     // ------------------------------------------------------------------------
@@ -1069,7 +1312,20 @@ open class QuestSkill(
         val needed = ziel - ist
         say("  step ${step + 1}: ${q.name} -- playing the dungeon")
         val bot = dungeonFor(arg, needed)
-        bot.run()
+        val out = bot.run()
+        if (out.result == Result.STOPPED) {
+            // The switch stopped the dungeon where it stands (its way home
+            // asks the switch, [Stays]): the step is the one to go on with,
+            // and nothing is read off a card that is not in front.
+            paused(Inner.DUNGEON, ist, ziel, dungeon = bot)
+            return
+        }
+        afterDungeon(bot, ist, ziel)
+    }
+
+    /** What follows a dungeon step's run, the first time or after a pause ([resume]). */
+    private fun afterDungeon(bot: DungeonRun, ist: Int, ziel: Int) {
+        val needed = ziel - ist
         val short = dungeonShort(bot, needed)
         afterAction(ist, ziel, blocked = dungeonBlocked(bot))
         if (short != null && stillUnfinished(ziel)) {
@@ -1093,14 +1349,16 @@ open class QuestSkill(
      * it opens anything ([DungeonSkill.counted], one entry because `only`
      * picks a single card): `total` is what the game still owes today,
      * tickets and ads together. What one skill learns belongs in something
-     * the caller can read, and the caller has to ask (NOTES.md, "Silencing
-     * another skill's log throws away its measurements").
+     * the caller can read, and the caller has to ask (the laboratory's
+     * notes, "Silencing another skill's log throws away its measurements").
      *
      * Only a *counted* total says this, never a missing one. Null is "the ads
      * are behind a symbol the game has not drawn yet" -- the film symbol is
      * drawn only while tickets read 0 (NOTES.md), so a card with tickets
      * left says nothing at all about its ads, and reading that as "not
-     * enough" would stop the loop on a quest it could still finish.
+     * enough" would stop the loop on a quest it could still finish. With the
+     * Dungeons page's ad switch off the ads are not the loop's to spend, and
+     * the tickets alone are a counted answer wherever they read ([usable]).
      */
     internal fun dungeonShort(bot: DungeonRun?, needed: Int): String? {
         if (bot == null || needed <= 0) return null
@@ -1151,13 +1409,12 @@ open class QuestSkill(
         val ads = budget.ads
         val total = budget.total
         if (usable(budget) == 0) {
-            if (settings().adPass) {
-                say("  the dungeon card reads 0 tickets and no ads left")
-                return "the dungeon is out of tickets and ads until tomorrow"
+            if (!settings().dungeonAds && tickets == 0) {
+                say("  the dungeon card reads 0 tickets, and its free ads are not taken (the Ad Rewards card)")
+                return "the dungeon is out of tickets until tomorrow (ads switched off)"
             }
-            say("  the dungeon card reads 0 tickets, and the ads are not yours " +
-                "without the Ad Skip Pass")
-            return "the dungeon is out of tickets until tomorrow"
+            say("  the dungeon card reads 0 tickets and no ads left")
+            return "the dungeon is out of tickets and ads until tomorrow"
         }
         if (total != null) {
             say("  the dungeon card reads $tickets ticket${if (tickets == 1) "" else "s"} " +
@@ -1247,23 +1504,119 @@ open class QuestSkill(
             // that is behind it. Two free ads cannot finish a quest that wants
             // thirty draws anyway -- what finishes it is the one draw below.
             val before = bot.adsWatched
-            // Asked here, of the loop's own settings, and not left to the
-            // bot: a free ad without the Ad Skip Pass is a video, and this
-            // step is the one place a quest ever taps View Ads.
-            val pass = settings().adPass
-            if (pass) bot.watchAds(mode)
+            // Only with the Summon pick and the Ad Skip Pass (summonBot):
+            // otherwise the bot is built without them, and its watchAds
+            // returns at once. An ad the game asks for all the same parks
+            // the bot, untouched (FreeAds.PARK).
+            bot.watchAds(mode)
+            bot.adPark?.let {
+                // The ad is still in front; nothing is drawn behind it.
+                park(it)
+                return
+            }
             val drawn = bot.spam(mode)
+            if (!on()) {
+                // Stopped in the draw: the summon screen stays where it is,
+                // and the card says afterwards what the step still wants.
+                paused(Inner.SUMMON, ist, ziel, summon = bot)
+                return
+            }
             if (drawn == 0 && bot.adsWatched == before) {
                 park("nothing to draw with: ${tickets?.toString() ?: "an unreadable count of"} " +
                     "tickets against a price of ${MODE_PRICE[mode]}, and " +
-                    if (pass) "no free ads left" else "the free ads are not yours without the Ad Skip Pass")
+                    if (settings().summonAds) "no free ads left" else "the free ads not taken in Summon (the Ad Rewards card)")
                 return
             }
         } finally {
             bot.leaveSummons()
         }
+        if (!on()) {
+            paused(Inner.SUMMON, ist, ziel, summon = bot)
+            return
+        }
         afterAction(ist, ziel)
     }
+
+    // ------------------------------------------------------------------------
+    // After a pause (PLAN_RELEASE_1_3.md B4, the player's rule of 2026-09-30)
+    // ------------------------------------------------------------------------
+    /** The step the quest loop plays inside its own round: a dungeon, or a draw. */
+    private enum class Inner { DUNGEON, SUMMON }
+
+    /** The step the main switch stopped, its card reading, and the skill that played it; null where none. */
+    private var inner: Inner? = null
+    private var innerAt = 0 to 0
+    private var innerDungeon: DungeonRun? = null
+    private var innerSummon: SummonRun? = null
+
+    private fun paused(kind: Inner, ist: Int, ziel: Int, dungeon: DungeonRun? = null, summon: SummonRun? = null) {
+        inner = kind
+        innerAt = ist to ziel
+        innerDungeon = dungeon
+        innerSummon = summon
+        say("  step ${step + 1}: stopped by the main switch -- the game stays where it is")
+    }
+
+    /**
+     * Where the quest loop goes on after the switch stopped it: the main
+     * screen it lives on, and the screens of the step it was playing -- the
+     * dungeon's (asked of that step's own skill, [DungeonRun.resumesOn]) or
+     * Special Summon's.
+     */
+    override fun resumesOn(screen: String, img: Mat): Boolean {
+        return when (inner) {
+            null -> false
+            Inner.DUNGEON -> screen == Director.MAIN || innerDungeon?.resumesOn(screen, img) == true
+            Inner.SUMMON -> screen == Director.MAIN || screen == Director.SUMMON ||
+                screen == Director.SUMMON_DIALOG || screen == Director.NO_TICKETS || screen == Director.UNKNOWN
+        }
+    }
+
+    /**
+     * The quest loop going on where the switch stopped it: the dungeon step's
+     * own pass gone on with and home ([DungeonRun.resume]) -- the same pass,
+     * so a ticket it spent before the pause counts against what the quest
+     * wanted -- or the summon step's page left, the card saying afterwards
+     * what it still wants; then the card read as after any action, and the
+     * round or the chain step goes on as it would have.
+     */
+    override fun resume(img: Mat, whole: Boolean): Outcome {
+        val kind = inner ?: return if (whole) run() else work(img)
+        val (ist, ziel) = innerAt
+        startPass()
+        inner = null
+        say("  step ${step + 1}: going on after the pause")
+        when (kind) {
+            Inner.DUNGEON -> {
+                val bot = innerDungeon
+                innerDungeon = null
+                if (bot != null) {
+                    val out = bot.resume(img)
+                    if (out.result == Result.STOPPED) {
+                        paused(Inner.DUNGEON, ist, ziel, dungeon = bot)
+                        return Outcome.STOPPED
+                    }
+                    afterDungeon(bot, ist, ziel)
+                }
+            }
+            Inner.SUMMON -> {
+                val bot = innerSummon
+                innerSummon = null
+                bot?.leaveSummons()
+                if (!on()) {
+                    paused(Inner.SUMMON, ist, ziel, summon = bot)
+                    return Outcome.STOPPED
+                }
+                afterAction(ist, ziel)
+            }
+        }
+        if (stoppedBecause != null) return outcome()
+        // The chain's quest step waits on, as [run] does; a round is one tick.
+        return if (whole && waiting) loop() else outcome()
+    }
+
+    /** The chain step's loop is running ([run]): a resume of it goes on waiting. */
+    private var waiting = false
 
     private fun <T> readOnFresh(read: (Mat) -> T?): T? {
         val img = grabOrNull() ?: return null
@@ -1292,8 +1645,12 @@ open class QuestSkill(
      * would be a second picture inside one round, which is the thing "one tap
      * a round" exists to stop.
      */
-    internal open fun tap(img: Mat, fx: Double, fy: Double) {
-        val r = Dungeon.gameRect(img)
+    internal open fun tap(img: Mat, fx: Double, fy: Double,
+                          anchor: Dungeon.Anchor = Dungeon.Anchor.BOTTOM) {
+        // A fraction is a place only in the rectangle it was read in
+        // (Dungeon.Anchor): a window's answer is tapped at its anchor, the
+        // HUD's at the bottom. One rectangle under the canvas ceiling.
+        val r = Dungeon.gameRect(img, anchor)
         cap.tap(Py.roundInt(r.x0 + fx * r.gw), Py.roundInt(r.y0 + fy * r.gh))
     }
 
@@ -1311,6 +1668,13 @@ open class QuestSkill(
     internal open fun autoButton(img: Mat): Dungeon.Button? = Dungeon.autoButton(img)
     internal open fun stageFailed(img: Mat): Boolean = Dungeon.stageFailed(img)
     internal open fun closeX(img: Mat): Quest.CloseX? = Quest.closeX(img)
+
+    /**
+     * Is the Reward sheet ("Tap to close") in front? [Dungeon.recognise]'s
+     * answer, which reads the sheet at the anchor it stands at on a display
+     * with headroom; `reward_sheet` on both frames of the phone's late window.
+     */
+    internal open fun rewardSheet(img: Mat): Boolean = Dungeon.recognise(img).state == Dungeon.REWARD
 
     /**
      * Which mode banner the quest card landed on, or null for anywhere else.
@@ -1343,45 +1707,55 @@ open class QuestSkill(
         return object : DungeonRun {
             override fun run(): Outcome = skill.run()
             override val counted: Map<Pair<String, Int>, Dungeon.Budget> get() = skill.counted
+            override fun resumesOn(screen: String, img: Mat): Boolean = skill.resumesOn(screen, img)
+            override fun resume(img: Mat): Outcome = skill.resume(img, true)
         }
     }
 
     /** What [dungeonFor] hands the Dungeons skill: one card, [needed] tickets, the quest's own N. */
     internal fun dungeonSettings(arg: Int, needed: Int) = DungeonSkill.Settings(
         budgets = mapOf(arg to maxOf(1, needed)),
-        // `useAds` defaulted to true here until 2026-09-24, whatever the
-        // Dungeons page said: the quest loop's own ad video.
-        useAds = settings().adPass,
+        // The film button: only with the Dungeons pick since 2026-09-30, and
+        // with the Ad Skip Pass beside it since 2026-10-03 ([dungeonAds]).
+        useAds = settings().dungeonAds,
         attemptsBeforeClear = settings().attemptsBeforeClear,
+        // Every attempt, won or lost, as before 2026-10-04: the Dungeons
+        // page's number counts the lost runs alone since that day, and
+        // the player asked about that page, not this one.
+        countLostOnly = false,
         survey = true)
 
     /**
-     * What a card still owes today, as far as it is this player's to
-     * spend: tickets and ads together with the Ad Skip Pass, the tickets
-     * alone without it. Null where the card did not say ([dungeonShort]
+     * What a card still owes today: tickets and ads together where the free
+     * ads are the loop's ([Settings.dungeonAds]: the Dungeons pick, and since
+     * 2026-10-03 the Ad Skip Pass beside it), and the tickets alone where
+     * they are not ([DungeonSkill.owed]). Null where the card did not say ([dungeonShort]
      * and [dungeonBlocked] both read this, so they cannot disagree).
      */
-    private fun usable(budget: Dungeon.Budget): Int? =
-        if (settings().adPass) budget.total else budget.tickets
+    private fun usable(budget: Dungeon.Budget): Int? = DungeonSkill.owed(budget, settings().dungeonAds)
 
     /**
      * The Summons skill for one quest step: the two modes that have quests,
-     * the free ads first, and one draw. Crest has no quest and is off.
-     * `watchAdsFirst` stays on: whether the ads are watched at all is the
-     * Ad Skip Pass's question, and [runSummonStep] asks it before it
-     * calls [SummonRun.watchAds].
+     * the free ads first where the Summon page's switch says so
+     * ([Settings.summonAds], with the Ad Skip Pass), and one draw. Crest has
+     * no quest and is off.
      */
+    /** What [summonBot] hands the Summons skill, read fresh on every question as [dungeonSettings] is. */
+    internal fun summonSettings() = SummonSkill.Settings(
+        skill = true, support = true, crest = false,
+        watchAdsFirst = settings().summonAds, maxPerMode = 1)
+
     internal open fun summonBot(): SummonRun {
         val skill = SummonSkill(
             cap,
-            { SummonSkill.Settings(skill = true, support = true, crest = false,
-                                   watchAdsFirst = true, maxPerMode = 1) },
+            { summonSettings() },
             log = { }, keep = keep, on = on, now = now)
         return object : SummonRun {
             override fun watchAds(mode: Int) = skill.watchAds(mode)
             override fun spam(mode: Int): Int = skill.spam(mode)
             override fun leaveSummons() { skill.leaveSummons() }
             override val adsWatched: Int get() = skill.adsWatched
+            override val adPark: String? get() = skill.adPark
         }
     }
 
@@ -1405,6 +1779,12 @@ open class QuestSkill(
 
         /** `DungeonBot.counted`: what the survey read off the card it played. */
         val counted: Map<Pair<String, Int>, Dungeon.Budget>
+
+        /** Can the pass the switch stopped go on from [screen] ([Skill.resumesOn]); a stand-in says no. */
+        fun resumesOn(screen: String, img: Mat): Boolean = false
+
+        /** Go on with it, and home ([Skill.resume]); a stand-in runs again. */
+        fun resume(img: Mat): Outcome = run()
     }
 
     interface SummonRun {
@@ -1414,6 +1794,9 @@ open class QuestSkill(
 
         /** `SummonBot.stats["ads"]`: free ads watched so far this run. */
         val adsWatched: Int
+
+        /** An ad the game asked for in [watchAds] where the pass was taken for granted: the step parks on it. */
+        val adPark: String? get() = null
     }
 
     companion object {
@@ -1576,6 +1959,18 @@ open class QuestSkill(
             return reset.toEpochSecond().toDouble()
         }
 
+        /**
+         * The TODAY card's day ([SkillStats.DAY_KEY]) at [nowEpoch]: the
+         * reset that ends it, as epoch seconds. The same number from one
+         * reset to the next, and a new one exactly there, so the card falls
+         * when the game's day does and every daily limit with it -- not at
+         * midnight in the phone's zone, which it did until 2026-10-04
+         * (`LocalDate.now().toEpochDay()` in the app). A moment rather than
+         * a date: a phone in another zone works out the same one, and the
+         * phone's zone is not asked at all (QuestSkillTest).
+         */
+        fun statsDay(nowEpoch: Double): Long = nextReset(nowEpoch).toLong()
+
         /** "2026-09-23 08:00", in [RESET_ZONE] -- the log's and the row's word for a lock. */
         fun whenText(epoch: Double): String =
             ZonedDateTime.ofInstant(Instant.ofEpochMilli((epoch * 1000).toLong()), RESET_ZONE).format(WHEN_FMT)
@@ -1621,6 +2016,17 @@ open class QuestSkill(
          */
         const val CLAIM_CLOSE_TAPS = 5
         const val CLAIM_CLOSE_STEP = 3.0
+
+        /**
+         * How long a claim whose card did not move looks on for a window that
+         * comes late. The phone's of 2026-10-02 stood within five seconds of
+         * the tap at the latest (tap 18:22:17, the next round's frame
+         * 18:22:21, the log counting seconds), and the look begins about a
+         * second after the tap: five seconds more cover it with one to spare.
+         * A claim that really did not land pays these once more before its
+         * retry -- the rare case, and the same price the retry already has.
+         */
+        const val CLAIM_LATE_WAIT = 5.0
 
         const val BLIND_AFTER = 60.0
 
@@ -1695,8 +2101,22 @@ open class QuestSkill(
          * itself (0.5, 0.82), which sits over the hologram device on the
          * screen behind the window and would open that instead if the window
          * had already closed by itself.
+         *
+         * 0.10, not the 0.04 it was: on a display taller than 9:16 the canvas
+         * covers and loses its sides, and 0.04 lay left of the picture on 30
+         * of the 47 rows of corpus/formats (-64 px at 1080 x 2400 with an
+         * 80 px cutout, -106 at 1644 x 3840) -- a gesture Android refuses
+         * outright, so the round ended and the reward window stayed. 0.10 is
+         * inside on every row (9 px at 720 x 1600 is the least) and still
+         * left of the figures at 1080 x 1920 (109 px; the first stands at
+         * about 130).
+         * Under the cover the team stands at the very edge and no fraction
+         * at this height is clear of it; what keeps the tap off the main
+         * screen there is that it is only sent after a frame without the
+         * auto button. notes/formats.md, "A dead spot left of the picture is
+         * no place, and Android ends the round over it".
          */
-        val DEAD_TAP = doubleArrayOf(0.04, 0.47)
+        val DEAD_TAP = doubleArrayOf(0.10, 0.47)
 
         /**
          * How far a counted name may sit from the length written into the

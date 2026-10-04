@@ -98,6 +98,31 @@ class RouterTest {
         assertEquals(COST_STEP + 20.0, rt.cost)
     }
 
+    /**
+     * keepLeft, not in router.py (PLAN_WORLD_SEARCH_FORMATE.md 4.2, F1): the
+     * way to a target in the left column may not step right out of column
+     * 1, which would scroll the target off. The format tour's board: without
+     * the switch the way goes round by column 3, with it through a pyramid,
+     * and without claws there is none.
+     */
+    @Test
+    fun `keepLeft keeps a way to the left column off the scrolling step`() {
+        val rows = listOf(".....", ".F...", "PP...", "Z....", ".P...")
+        val b = build(rows)
+        fun rt(keepLeft: Boolean, canDestroy: Boolean) =
+            Router({ r, c -> (r to c) in b.pyramids }, COST_STEP, COST_DESTROY,
+                   canDestroy = canDestroy, keepLeft = keepLeft).search(b.start, setOf(b.goal!!))
+        val round = rt(keepLeft = false, canDestroy = true)
+        assertEquals("right", round.first)
+        assertEquals(444.0, round.cost)
+        val kept = rt(keepLeft = true, canDestroy = true)
+        assertEquals("down", kept.first)
+        assertEquals(477.0, kept.cost)
+        assertEquals(1, kept.destroys)
+        assertTrue(kept.path.all { it.second <= 1 }, "stays in columns 0 and 1: ${kept.path}")
+        assertTrue(!rt(keepLeft = true, canDestroy = false).reachable, "no claws, no way that keeps it")
+    }
+
     @Test
     fun `an empty goal set advances to the furthest column`() {
         val rt = route(listOf(".....", ".....", ".F...", ".....", "....."),

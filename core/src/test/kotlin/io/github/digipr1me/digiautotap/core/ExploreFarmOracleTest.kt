@@ -18,9 +18,10 @@ import kotlin.test.fail
  * the file. The file is called `explore` and holds both modules, Explore.kt
  * and Farm.kt, because farm's readers stand on explore's.
  * A frame that answers differently is a reader change to look at, never a
- * reason to edit the oracle by hand (NOTES.md, "The oracle is the seam"):
- * if the change was meant, with a measurement, `gradlew :core:writeOracle`
- * writes the file again and its diff is the list of frames that tipped.
+ * reason to edit the oracle by hand (NOTES.md, "The oracle is the contract, and
+ * `writeOracle` writes it"): if the change was meant, with a measurement,
+ * `gradlew :core:writeOracle` writes the file again and its diff is the list of
+ * frames that tipped.
  */
 @Tag(OracleFamilies.CORPUS_TAG)
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
@@ -39,7 +40,7 @@ class ExploreFarmOracleTest {
 
     @Test
     fun `every reader gives the oracle's answer on every frame`() {
-        val report = OracleFamilies.check(OracleFamilies.EXPLORE, oracle, repo, Vision(ClassPathAssets))
+        val report = OracleFamilies.check(OracleFamilies.EXPLORE, oracle, repo)
         report.print()
         if (report.mismatches.isNotEmpty()) fail(report.summary())
     }

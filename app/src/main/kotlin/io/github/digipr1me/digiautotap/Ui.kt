@@ -8,6 +8,7 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.InsetDrawable
 import android.graphics.drawable.LayerDrawable
 import android.graphics.drawable.StateListDrawable
 import android.text.InputType
@@ -55,9 +56,31 @@ class Ui(val c: Context) {
          * The main switch's height, and the mode button's beside it. It was
          * 46 dp on a row of its own; the one-page layout of 2026-09-22 put
          * the mode next to it and took 8 dp off both, so that the status
-         * panel is a sentence and one row of buttons.
+         * panel is a sentence and one row of buttons. 44 since 2026-09-28:
+         * 38 dp was under [TOUCH], and the app is used on the phone, with a
+         * thumb; 44 keeps the panel one row of buttons.
          */
-        const val SWITCH_H = 38
+        const val SWITCH_H = 44
+
+        /**
+         * The least a thing that is tapped may be, either way: Android's
+         * 48 dp, less the few dp of air a row keeps around it anyway. The app
+         * bar's two buttons, the main switch and the filled buttons stand on
+         * it since 2026-09-28; the outlined and the text buttons on 40. Until
+         * that day the back arrow was an 18 dp glyph and the glyph was the
+         * whole target, which the player could hardly hit on the phone.
+         */
+        const val TOUCH = 44
+
+        /**
+         * What the app bar's [TOUCH] squares add around the 32 dp boxes the
+         * player sees, on every side: the box is drawn inset by this much and
+         * the square around it takes the tap.
+         */
+        const val BAR_INSET = (TOUCH - 32) / 2
+
+        /** The bar's padding at either end: 14 dp to a box's edge, less what the square adds. */
+        const val BAR_SIDE = 14 - BAR_INSET
     }
 
     // --- shapes ---------------------------------------------------------
@@ -153,6 +176,16 @@ class Ui(val c: Context) {
         letterSpacing = 0.14f
         setPadding(0, 0, 0, dp(6))
     }
+
+    /**
+     * An [eyebrow] that stands on the page between two panels rather than
+     * inside one -- Tasks over its list, "Newest first" over the pictures:
+     * 2 dp in, so that the letters do not sit on the panel's edge, and 8 dp
+     * of air under it. The Tasks heading had that air taken away until
+     * 2026-09-28 by a padding set for the 2 dp alone, which sets all four
+     * sides and left the word standing on its list.
+     */
+    fun sectionHead(t: String) = eyebrow(t).apply { setPadding(dp(2), 0, 0, dp(8)) }
 
     fun title(t: String) = text(t, 16f, p.TEXT, bold = true)
 
@@ -315,10 +348,37 @@ class Ui(val c: Context) {
         setImageResource(res)
         imageTintList = ColorStateList.valueOf(p.TEXT_2)
         contentDescription = what
-        background = pressable(p.SURFACE, p.SURFACE_HOVER, radius = 6, stroke = p.LINE)
-        val inset = dp(7)
+        // The box the player sees is still 32 dp; what takes the tap is the
+        // [TOUCH] square around it, so the box is an inset drawable and the
+        // view is the square. The margin gives the same 8 dp of air to the
+        // box's edge as before.
+        background = InsetDrawable(pressable(p.SURFACE, p.SURFACE_HOVER, radius = 6, stroke = p.LINE),
+                                   dp(BAR_INSET))
+        val inset = dp(BAR_INSET + 7)
         setPadding(inset, inset, inset, inset)
-        layoutParams = LinearLayout.LayoutParams(dp(32), dp(32)).apply { leftMargin = dp(8) }
+        layoutParams = LinearLayout.LayoutParams(dp(TOUCH), dp(TOUCH))
+            .apply { leftMargin = dp(8 - BAR_INSET) }
+        isClickable = true
+        setOnClickListener { onClick() }
+    }
+
+    /**
+     * The way back from a page, at the bar's left end: the chevron turned
+     * round, so there is one arrow drawable in the app rather than a second
+     * one that has to be kept the same shape as the first. An 18 dp glyph in
+     * a [TOUCH] square, with [barButton]'s 32 dp box under the finger while
+     * it is pressed and nothing drawn around it otherwise.
+     */
+    fun barBack(onClick: () -> Unit): ImageView = ImageView(c).apply {
+        setImageResource(R.drawable.ic_chevron)
+        scaleX = -1f
+        imageTintList = ColorStateList.valueOf(p.TEXT)
+        contentDescription = "Back"
+        background = InsetDrawable(pressable(Color.TRANSPARENT, p.SURFACE_HOVER, radius = 6),
+                                   dp(BAR_INSET))
+        val inset = dp(BAR_INSET + 7)
+        setPadding(inset, inset, inset, inset)
+        layoutParams = LinearLayout.LayoutParams(dp(TOUCH), dp(TOUCH))
         isClickable = true
         setOnClickListener { onClick() }
     }
@@ -361,27 +421,38 @@ class Ui(val c: Context) {
         setOnClickListener { onClick() }
     }
 
+    /**
+     * The outlined small button: Fix, Copy, Set all, a step's arrows. At
+     * least 40 dp tall and [TOUCH] wide since 2026-09-28, whatever its label
+     * and padding -- the arrows beside a chain step were 26 dp.
+     */
     fun outButton(label: String, onClick: () -> Unit) =
         text(label, 12f, p.PRIMARY, bold = true).apply {
+            gravity = Gravity.CENTER
             background = pressable(p.SURFACE, p.SURFACE_HOVER, radius = 6, stroke = p.LINE)
             setPadding(dp(10), dp(6), dp(10), dp(6))
+            minHeight = dp(40)
+            minWidth = dp(TOUCH)
             isClickable = true
             setOnClickListener { onClick() }
         }
 
     fun textButton(label: String, onClick: () -> Unit) =
         text(label, 13f, p.PRIMARY, bold = true).apply {
+            gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(4), dp(8), dp(4), dp(8))
+            minHeight = dp(40)
             isClickable = true
             setOnClickListener { onClick() }
         }
 
-    /** The filled small button beside a field, Unlock's shape. */
+    /** The filled small button beside a field, Unlock's shape; [TOUCH] tall at the least. */
     fun primaryButton(label: String, onClick: () -> Unit) =
         text(label, 13f, p.ON_PRIMARY, bold = true).apply {
             gravity = Gravity.CENTER
             background = pressable(p.PRIMARY, p.PRIMARY_ACTIVE, radius = 6)
             setPadding(dp(14), dp(10), dp(14), dp(10))
+            minHeight = dp(TOUCH)
             isClickable = true
             setOnClickListener { onClick() }
         }
@@ -429,27 +500,6 @@ class Ui(val c: Context) {
         setOnClickListener { onClick() }
     }
 
-    /**
-     * Half of a pair (design B3): the same panel stood on end, icon field
-     * over name over line, for two things that belong side by side -- the
-     * log and the debug package at the foot of Settings. The caller gives it
-     * its half of the row.
-     */
-    fun squareTile(res: Int, fg: Int, bg: Int, edge: Int?, title: String, note: String,
-                   onClick: () -> Unit): LinearLayout = column().apply {
-        background = pressable(p.SURFACE, p.SURFACE_HOVER, radius = RADIUS, stroke = p.LINE)
-        setPadding(dp(PAD), dp(PAD), dp(PAD), dp(PAD))
-        addView(iconField(res, 36, fg, bg, edge))
-        addView(taskName(title).apply {
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
-                                                     ViewGroup.LayoutParams.WRAP_CONTENT)
-                .apply { topMargin = dp(10) }
-        })
-        addView(hint(note))
-        isClickable = true
-        setOnClickListener { onClick() }
-    }
-
     // --- controls ---------------------------------------------------------
 
     /**
@@ -476,9 +526,15 @@ class Ui(val c: Context) {
                 gravity = Gravity.CENTER
             }
             val note = notes?.getOrNull(i)
-            val segment: View = if (note == null) word.apply { setPadding(0, dp(7), 0, dp(7)) }
+            // A segment is at least 36 dp tall (with the track's 3 dp above
+            // and below, 42 under the thumb), whatever the label wants.
+            val segment: View = if (note == null) word.apply {
+                setPadding(0, dp(7), 0, dp(7))
+                minHeight = dp(36)
+            }
             else column().apply {
-                gravity = Gravity.CENTER_HORIZONTAL
+                gravity = Gravity.CENTER
+                minimumHeight = dp(36)
                 setPadding(0, dp(7), 0, dp(7))
                 addView(word)
                 addView(mono(note.text, 10f, p.TEXT_2).apply {
@@ -548,7 +604,16 @@ class Ui(val c: Context) {
         left.addView(name(label))
         if (note.isNotEmpty()) left.addView(hint(note))
         r.addView(grow(left))
-        r.addView(switch(checked, enabled, onChange))
+        val toggle = switch(checked, enabled, onChange)
+        r.addView(toggle)
+        // The whole row throws the switch, not the 40 dp of the switch
+        // alone: on the phone the thumb lands on the label (2026-09-28). A
+        // switch that cannot be thrown leaves its row as it was.
+        if (enabled) {
+            r.background = pressable(Color.TRANSPARENT, p.SURFACE_HOVER, radius = 6)
+            r.isClickable = true
+            r.setOnClickListener { toggle.performClick() }
+        }
         box.addView(r)
         return box
     }

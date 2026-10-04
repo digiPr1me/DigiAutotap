@@ -7,7 +7,11 @@
          Activation.kt, PLAN_SUPPORTER_SERVER.md), the update check, one
          GET to GitHub's releases list when the app is opened (core's
          Updates.kt), and the census, one POST a day to the same server with
-         the version and nothing that names the phone (core's Census.kt).
+         the version, once a month what kind of phone it is, and nothing
+         that names the phone (core's Census.kt). The log leaves the phone
+         only as a ZIP the player hands to the share sheet (LogShare.kt),
+         which opens no connection of its own; the bug report that sent
+         itself went in 1.3's fourth candidate.
          `NetworkTest` holds the five permissions by name and those three
          files as the only ones that may open a connection.
          It is a normal permission, so there is no runtime dialog and the

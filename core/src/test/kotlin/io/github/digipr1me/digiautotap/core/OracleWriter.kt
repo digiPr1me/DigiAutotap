@@ -1,11 +1,13 @@
 package io.github.digipr1me.digiautotap.core
 
 import org.opencv.core.Core
+import org.opencv.core.Mat
 import org.opencv.imgcodecs.Imgcodecs
 import java.io.File
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ExecutionException
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
 import kotlin.system.exitProcess
@@ -32,9 +34,25 @@ import kotlin.system.exitProcess
  */
 object OracleWriter {
 
-    /** {family: {rel: entry}} for these frames, the picture read once per frame. */
+    /**
+     * {family: {rel: entry}} for these frames, the picture read once per frame.
+     * This is the one loop over the corpus: the writer fills the files from
+     * it and [OracleFamilies.check] holds the files against it, so the tests
+     * ask on the same threads the files were written on. `prepare` is what
+     * happens to a picture before it is asked -- nothing, unless a test is
+     * about a picture that was changed on purpose.
+     *
+     * Eight threads, and OpenCV's own left as they are. Measured 2026-10-03
+     * on 20 logical processors, the director's file over 1886 frames: one
+     * frame after the other 266 s, 8 threads 69 s, 16 threads 61 s; with
+     * OpenCV's own threads off 78 s on 8 and 52 s on 20. A reader call
+     * already spreads over the idle cores, so what is left to win is the
+     * machine's and not the loop's, and `:core:test` runs four of these
+     * loops side by side (core/build.gradle.kts).
+     */
     fun collect(frames: List<String>, families: List<OracleFamilies.Family>, repo: File,
                 workers: Int = minOf(Runtime.getRuntime().availableProcessors(), 8),
+                prepare: (Mat) -> Unit = {},
                 log: (String) -> Unit = ::println): Map<String, Map<String, Map<String, Any?>>> {
         val results = families.associate { it.name to ConcurrentHashMap<String, Map<String, Any?>>() }
         // Vision keeps caches the Python module kept at module level; one
@@ -45,9 +63,10 @@ object OracleWriter {
         try {
             val jobs: List<Future<*>> = frames.map { rel ->
                 pool.submit {
-                    val img = Imgcodecs.imread(File(repo, rel).path)
+                    val img = OracleFamilies.read(File(repo, rel))
                     require(!img.empty()) { "cannot read $rel" }
                     try {
+                        prepare(img)
                         for (family in families) {
                             results[family.name]!![rel] = OracleFamilies.answers(family, img, vision.get())
                         }
@@ -57,11 +76,15 @@ object OracleWriter {
                 }
             }
             jobs.forEachIndexed { i, job ->
-                job.get()
+                // What a frame threw, as it was thrown: a test's report names
+                // the reader and the frame, not the pool.
+                try { job.get() } catch (e: ExecutionException) { throw e.cause ?: e }
                 if ((i + 1) % 100 == 0) log("  ${i + 1} / ${frames.size}  ${(System.nanoTime() - started) / 1_000_000_000} s")
             }
         } finally {
-            pool.shutdown()
+            // After a frame that threw, the frames still queued are dropped;
+            // after the last frame there is nothing left to drop.
+            pool.shutdownNow()
         }
         return results
     }

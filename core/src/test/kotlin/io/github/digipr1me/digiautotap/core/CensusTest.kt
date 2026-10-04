@@ -111,4 +111,27 @@ class CensusTest {
         val json = Census.Visit(day = true, week = false, month = false, first = false).json("1.1\"<x>")
         assertEquals("""{"version":"1.1x","day":true,"week":false,"month":false,"first":false}""", json)
     }
+
+    private val device = Census.Device("samsung", "SM-S938B", 36, 1440, 3120, 505, 105, 0, 0, 0, "Display P3")
+
+    @Test
+    fun `the phone is described once a month, with the month's counter`() {
+        val described = """{"manufacturer":"samsung","model":"SM-S938B","sdk":36,"width":1440,"height":3120,""" +
+            """"dpi":505,"insetTop":105,"insetBottom":0,"insetLeft":0,"insetRight":0,"colorSpace":"Display P3"}"""
+        assertEquals("""{"version":"1.3","day":true,"week":true,"month":true,"first":false,"device":$described}""",
+                     Census.Visit(true, true, true, false).json("1.3", device))
+        // A day that is not a new month carries no description.
+        assertEquals("""{"version":"1.3","day":true,"week":false,"month":false,"first":false}""",
+                     Census.Visit(true, false, false, false).json("1.3", device))
+    }
+
+    @Test
+    fun `the description goes over the wire and is cleaned like the version`() {
+        serving(200) { url, bodies ->
+            Census.count(Memory(), "1.3", known = false, now = thursday, url = url,
+                         device = device.copy(model = "Pixel\"<8>", colorSpace = ""))
+            assertTrue("\"model\":\"Pixel8\"" in bodies.single() && "\"colorSpace\":\"unknown\"" in bodies.single(),
+                       bodies.single())
+        }
+    }
 }

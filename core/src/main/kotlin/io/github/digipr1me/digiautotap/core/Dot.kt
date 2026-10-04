@@ -99,12 +99,106 @@ object Dot {
      * up at 0.025 gw above and below tip 7 and 11. There is no place on
      * either edge with the 0.05 gw of margin the rule asks for -- that is the
      * result, not a gap in it (section 5, last paragraph).
+     *
+     * A fraction of the window (`Dungeon.gameRectWh`), in the probe
+     * ([square]) and in the app ([displayY]) alike, since 2026-09-26: until
+     * then the app read it as a fraction of the frame and stood 48 px lower
+     * at 1920 than this was measured (PLAN_FORMATE.md, V2).
      */
     const val DEFAULT_FY = 0.1555
 
-    /** The narrow band of fy the sweep found quiet on the right edge (PLAN_ANDROID_DESIGN.md 3.2). */
+    /**
+     * The narrow band of fy the sweep found quiet on the right edge (PLAN_ANDROID_DESIGN.md 3.2).
+     * Like [DEFAULT_FY], a fraction of the window, which is what the sweep
+     * measured in: see [displayY].
+     */
     const val MEASURED_FY_MIN = 0.060
     const val MEASURED_FY_MAX = 0.155
+
+    /**
+     * Where a place's [fy] stands on a display [w] x [h] whose game canvas
+     * starts [top] rows down, in display pixels: the rows over the camera,
+     * then fy in the readers' own vocabulary of the frame they get -- the
+     * display less those rows, `DigiAutotapService.grab` cuts them off --
+     * which is a fraction of the window (`Dungeon.gameRectWh`), the
+     * arithmetic [square] does on a frame. So the dot the app draws is the
+     * dot the probe measured, on every display, with a cutout or without.
+     *
+     * Until 2026-09-26 the app read fy as a fraction of the frame, twice
+     * over. First of the display, which under a cutout is a picture the
+     * readers never see (V1: the plate stood at fy 0.154 to 0.176 of the
+     * frame on LDPlayer at 1080 x 2340 with a 136 px strip). Then of the
+     * frame, which is not the window either: 0.1555 of a 9:16 frame is
+     * 0.1796 of the window, 48 px below the measured place at 1920, and the
+     * plate stood in the rows of [Quest.STAGE_BAND] -- 158 frames tipped by
+     * the 128 dp plate against the 57 the probe had priced, `stage_number`
+     * 99 of them (V2, PLAN_FORMATE.md; notes/overlay.md, "The overlay").
+     */
+    fun displayY(fy: Double, w: Int, h: Int, top: Int): Double {
+        val r = Dungeon.gameRectWh(w, h - top)
+        return top + r.y0 + fy * r.gh
+    }
+
+    /** [displayY] backwards: the fy of display row [y]. */
+    fun fyAt(y: Double, w: Int, h: Int, top: Int): Double {
+        val r = Dungeon.gameRectWh(w, h - top)
+        return (y - top - r.y0) / r.gh
+    }
+
+    /**
+     * The dot's rows on a display [w] x [h] whose game canvas starts [top]
+     * rows down, at [fy]: first and one past the last, in display pixels.
+     * The plate stands inside them, lowered by half the difference of the
+     * two heights ([plate]), so these are the rows of both windows.
+     */
+    fun rowsAt(fy: Double, w: Int, h: Int, top: Int): Pair<Double, Double> {
+        val sq = square(w, h - top, false, fy)
+        return top + sq.y to top + sq.y + sq.h
+    }
+
+    /**
+     * Where the overlay stands off the readers' rows [fy0] to [fy1] while a
+     * skill reads them (`Capture.overlayClear`), from [fy]: null where it is
+     * off them already, else the place to stand at for the while. The top
+     * of the measured strip, [MEASURED_FY_MIN], as since 2026-09-23; where
+     * that is on the rows too, just above them, and where that is off the
+     * display, just below them; where nothing is clear, [MEASURED_FY_MIN]
+     * again, and the app says it is still in the way.
+     *
+     * Why the top of the strip is not always enough (PLAN_FORMATE.md V14,
+     * measured 2026-09-27 on the corpus's whole 1080 x 2520 frames with the
+     * dot and plate the app draws): over the canvas ceiling the Digivice
+     * page stands at the top of the headroom, its bar at display rows 168
+     * to 248, and the dot at 0.060 stands at 193 to 319 -- the bar is lost
+     * at 0.060 and 0.070 and the page reads `unknown`. At 1920 the same bar
+     * (rows 138 to 203) is lost with the dot at 0.100 to 0.130, and its list
+     * with the plate anywhere from 0.140 down. The place just above the bar
+     * is in the headroom at 2520 (the dot at rows 41 to 167) and is 0.060
+     * itself at 1920. A place off the player's strip is only ever one of
+     * these, for as long as one page is read: where the player may put the
+     * dot (`Overlay.drop`) is unchanged.
+     */
+    fun clearFy(fy: Double, fy0: Double, fy1: Double, w: Int, h: Int, top: Int): Double? {
+        val first = displayY(fy0, w, h, top)
+        val last = displayY(fy1, w, h, top)
+        fun inTheWay(f: Double): Boolean {
+            val (a, b) = rowsAt(f, w, h, top)
+            return a < last && b > first
+        }
+        fun onDisplay(f: Double): Boolean {
+            val (a, b) = rowsAt(f, w, h, top)
+            return a >= 0 && b <= h
+        }
+        if (!inTheWay(fy)) return null
+        if (!inTheWay(MEASURED_FY_MIN)) return MEASURED_FY_MIN
+        val size = rowsAt(fy, w, h, top).let { it.second - it.first }
+        // One row of margin, and one more for the rounding of the corner.
+        val above = fyAt(first - size / 2.0 - 2.0, w, h, top)
+        if (!inTheWay(above) && onDisplay(above)) return above
+        val below = fyAt(last + size / 2.0 + 2.0, w, h, top)
+        if (!inTheWay(below) && onDisplay(below)) return below
+        return MEASURED_FY_MIN
+    }
 
     /**
      * A rectangle in frame pixels. The dot's is square -- the probe writes
@@ -134,34 +228,64 @@ object Dot {
      *
      * `left` puts it flush against the left edge of the *screen*, which on a
      * long display is well inside the canvas; the fy is the centre, as a
-     * fraction of the window -- the vocabulary every number in NOTES.md is
+     * fraction of the window -- the vocabulary every number in notes/overlay.md is
      * written in. `_overlay_probe.geometry` and `dot_rect`, in one.
+     *
+     * **In whole pixels, the way the app lays its windows out**
+     * (`Overlay.DotView`: the disc a rounded fraction of the screen, the
+     * window's corner rounded from [displayY]). Until 2026-09-26 this was
+     * the laboratory's fractional square, and the plate beside it sat half
+     * a row off the app's: at 1080 x 2340 its top at 282.6, drawn as 283,
+     * where the app draws 282 -- and that one row is what decides whether
+     * `summon.general_tab` finds Buddy on the General page there (notes/overlay.md,
+     * "The overlay"). A probe that prices a rectangle the app does not draw
+     * prices nothing.
      */
     fun square(w: Int, h: Int, left: Boolean, fy: Double): Box {
         val r = Dungeon.gameRectWh(w, h)
         val (edgeL, edgeR) = edges(w, h)
-        val size = DOT_OF_SCREEN * (edgeR - edgeL)
-        val x = if (left) edgeL else edgeR - size
-        return Box(x, r.y0 + fy * r.gh - size / 2.0, size)
+        val size = Math.round(DOT_OF_SCREEN * (edgeR - edgeL)).toDouble()
+        // Flush with the display's edge, as the app lays its window out
+        // (`Overlay`: lp.x 0 or display width less the window). On a display
+        // wider than the game that edge is in the background beside the
+        // canvas ([Dungeon.pillared]); everywhere else it is the canvas's.
+        val (sideL, sideR) = if (Dungeon.pillared(w, h)) 0.0 to w.toDouble() else edgeL to edgeR
+        val x = if (left) Math.round(sideL).toDouble() else Math.round(sideR) - size
+        return Box(x, Math.round(r.y0 + fy * r.gh - size / 2.0).toDouble(), size)
     }
+
+    /**
+     * The width the dot, the gap and the plate are fractions of: the part of
+     * the canvas the screen shows. The screen itself on a phone, the canvas
+     * on a display wider than the game -- sized by the display, a 2076 px
+     * tablet drew a 242 px disc and a 646 px plate, reaching 470 px into the
+     * canvas, where the phone's plate reaches 336 of 1080 (PLAN_FORMATE.md
+     * 9). The app sizes its windows by this ([Overlay]), the probe by the
+     * same, so the mask costs a tablet what it costs a phone.
+     */
+    fun shownWidth(w: Int, h: Int): Double = edges(w, h).let { it.second - it.first }
 
     /**
      * The plate beside the dot, on the side away from the edge: the same
      * row, centred on the dot, [GAP_OF_SCREEN] between them, and its two
      * sides given as fractions of the screen the way [PLATE_W_OF_SCREEN] is.
      * `_overlay_probe.word_rect`, with the plate's size as an argument so
-     * that a probe can ask what another size would cost.
+     * that a probe can ask what another size would cost. Whole pixels, as
+     * [square] and as `Overlay.DotView.plateParams`: every side rounded, and
+     * the plate lowered from the dot's corner by half the difference of the
+     * two heights in whole pixels.
      */
     fun plate(w: Int, h: Int, left: Boolean, fy: Double,
               plateW: Double = PLATE_W_OF_SCREEN, plateH: Double = PLATE_H_OF_SCREEN): Box {
         val dot = square(w, h, left, fy)
         val (edgeL, edgeR) = edges(w, h)
         val screen = edgeR - edgeL
-        val pw = plateW * screen
-        val ph = plateH * screen
-        val gap = GAP_OF_SCREEN * screen
-        val x = if (left) dot.x + dot.w + gap else dot.x - gap - pw
-        return Box(x, dot.y + dot.h / 2.0 - ph / 2.0, pw, ph)
+        val pw = Math.round(plateW * screen).toInt()
+        val ph = Math.round(plateH * screen).toInt()
+        val gap = Math.round(GAP_OF_SCREEN * screen).toInt()
+        val size = dot.w.toInt()
+        val x = if (left) dot.x + size + gap else dot.x - gap - pw
+        return Box(x, dot.y + (size - ph) / 2, pw.toDouble(), ph.toDouble())
     }
 
     /**

@@ -16,8 +16,13 @@ import io.github.digipr1me.digiautotap.core.Chain
 import io.github.digipr1me.digiautotap.core.Counted
 import io.github.digipr1me.digiautotap.core.DirectorLoop
 import io.github.digipr1me.digiautotap.core.DungeonSkill
+import io.github.digipr1me.digiautotap.core.ExMissionsSkill
 import io.github.digipr1me.digiautotap.core.FarmSkill
+import io.github.digipr1me.digiautotap.core.LostSectorSkill
+import io.github.digipr1me.digiautotap.core.PresetSkill
 import io.github.digipr1me.digiautotap.core.RunnerSkill
+import io.github.digipr1me.digiautotap.core.SkewerIcons
+import io.github.digipr1me.digiautotap.core.SkewerSkill
 import io.github.digipr1me.digiautotap.core.HelperLog
 import io.github.digipr1me.digiautotap.core.HelperState
 import io.github.digipr1me.digiautotap.core.MainSwitch
@@ -92,7 +97,7 @@ data class Status(
 class CoreService : Service() {
 
     private val running = AtomicBoolean(false)
-    private var thread: Thread? = null
+    @Volatile private var thread: Thread? = null
     private var directorFor: DigiAutotapService? = null
     private val onSwitch: (Boolean) -> Unit = { on ->
         HelperLog.line("main switch: " + if (on) "on" else "off")
@@ -141,6 +146,15 @@ class CoreService : Service() {
         startForeground(NOTIFICATION_ID, notification(this),
                         ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
         if (running.compareAndSet(false, true)) {
+            // A stop of the logic that a service turned off never got to:
+            // the loop it was owed to is gone, and this one builds its
+            // director fresh anyway. Only here, where a loop begins -- the
+            // app starts the service again at every opening, and a drop
+            // cleared under a loop still unwinding would let it go on.
+            synchronized(logicLock) {
+                dropOwed = false
+                startOwed = false
+            }
             // One loop per process, however often the service is started:
             // a core that exists twice would, once it can tap, tap twice.
             thread = Thread(::loop, "digiautotap-core").apply { start() }
@@ -174,6 +188,7 @@ class CoreService : Service() {
         var censusAt = 0L
         try {
             while (running.get()) {
+                letGo()
                 val t0 = SystemClock.elapsedRealtime()
                 // Once an hour is enough to meet every new day; the census
                 // itself says nothing when the day is already counted.
@@ -191,6 +206,12 @@ class CoreService : Service() {
                 // DigiAutotapService.grab, which is where it can be.)
                 val beat = try {
                     round()
+                } catch (e: InterruptedException) {
+                    // The dot's Stop ([stopLogic]) cut the task's wait short:
+                    // a round that ends here, and is no error.
+                    if (!running.get()) break
+                    HelperLog.line("the round was cut short by the stop")
+                    INTERVAL_MS
                 } catch (e: Throwable) {
                     HelperLog.line("the round ended in ${e::class.java.simpleName}: ${e.message}" +
                         " -- going on at the next beat")
@@ -198,7 +219,9 @@ class CoreService : Service() {
                     INTERVAL_MS
                 }
                 SystemClock.sleep(maxOf(0L, beat - (SystemClock.elapsedRealtime() - t0)))
-                if (Thread.interrupted()) break
+                // An interrupt is the service turned off -- or the dot's Stop,
+                // which [letGo] answers at the top of the next turn.
+                if (!running.get()) break
             }
         } catch (e: Throwable) {
             HelperLog.line("core loop ended: $e")
@@ -206,6 +229,37 @@ class CoreService : Service() {
             director?.close()
             director = null
         }
+    }
+
+    /**
+     * The dot's Stop, answered between two rounds and nowhere else: the
+     * director that ran the task is dropped whole -- its chain, its claims,
+     * every skill's carried pass -- as a Stop in the app drops them with
+     * the service, and the next round builds a fresh one over the same
+     * accessibility service, which watches with the switch off as before.
+     * Here, on the loop's own thread, because a director is only ever
+     * touched from inside its round. A Start that came while the stopped
+     * round was still letting go ([startLogic]) is given now, and not
+     * before: with the switch on, a task still inside its wait would have
+     * gone on with its pass.
+     */
+    private fun letGo() {
+        val start = synchronized(logicLock) {
+            if (!dropOwed) return
+            dropOwed = false
+            // The interrupt has landed by now, in the round or in the sleep
+            // after it; one left standing would cut the fresh director's
+            // first wait.
+            Thread.interrupted()
+            startOwed.also { startOwed = false }
+        }
+        director?.close()
+        director = null
+        Shell.takeOverAt = 0L
+        // The task's name on the plate, which a cut-short turn never took off.
+        Status.update { it.copy(task = null) }
+        HelperLog.line("the task and the chain are dropped; the next start is a fresh one")
+        if (start) MainSwitch.set(true) else Overlay.refresh()
     }
 
     /** One round of the director. Returns the beat until the next, in ms. */
@@ -296,16 +350,46 @@ class CoreService : Service() {
         val dungeon = DungeonSkill(svc, { Stored.dungeon(store()) }, keep = ::keep)
         val summon = SummonSkill(svc, { Stored.summon(store()) }, keep = ::keep)
         val world = WorldSearchSkill(svc, Vision(ApkAssets(this)),
-                                     { Stored.worldSearch() }, keep = ::keep)
+                                     { Stored.worldSearch(store()) }, keep = ::keep)
         val farm = FarmSkill(svc,
             dueAt = { Stored.farmDueAt(store()) },
             remember = { at, grow, why -> Stored.rememberFarm(store(), at, grow, why) },
             knownGrowSeconds = { Stored.farmGrowSeconds(store()) },
-            keep = ::keep)
+            keep = ::keep,
+            // The page's switch, the free ads and the day's ads, all asked
+            // afresh at every question (PLAN_MEAT_FIELD_GIESSEN.md 6.5).
+            settings = { Stored.farm(store()) },
+            adsUsed = { kind -> Stored.farmAdsUsed(store(), kind) },
+            setAdsUsed = { kind, n -> Stored.setFarmAdsUsed(store(), kind, n) })
         // The Beatbreak runner: its one field asked afresh at the start of
         // every pass, and the frames it keeps go where every skill's go.
         val runner = RunnerSkill(svc, { Stored.runner(store()) }, keep = ::keep,
                                  feverCounted = { Stored.addRunnerFever(store()) })
+        // Chef's Special (PLAN_SKEWER.md SK2): its one field and the day's
+        // combos asked afresh at the start of every pass, every combo written
+        // the moment it is counted, and its readers' templates out of the APK.
+        val skewer = SkewerSkill(svc, SkewerIcons(ApkAssets(this)), { Stored.skewer(store()) }, keep = ::keep,
+                                 comboCounted = { Stored.addSkewerCombo(store()) })
+        // Presets: run only by the page's "Switch now" (DirectorLoop.runNow),
+        // with the slots asked afresh at the start of every pass.
+        val preset = PresetSkill(svc, { Stored.preset(store()) }, keep = ::keep)
+        // Idle Rewards is not built since 2026-10-02 (PLAN_BEFUNDE_1_3.md N3 a,
+        // the player's word): no row, no page, no chain step, no round. Its
+        // skill stays in core as TowerSkill does; a comeback was, here,
+        //   IdleSkill(svc, { Stored.idle(store()) }, dueAt = { Stored.idleDueAt(store()) },
+        //             remember = { at -> Stored.rememberIdle(store(), at) },
+        //             adsUsed = { Stored.idleAdsUsed(store()) },
+        //             setAdsUsed = { n -> Stored.setIdleAdsUsed(store(), n) }, keep = ::keep)
+        // counted under "idle", in `skills` and last in `rounds`.
+        // The Lost Sector Tower (PLAN_DAILY_LOST_SECTOR_PRESETS.md 3.2): its
+        // minutes on the Dungeons page and its day at the highest floor
+        // (G16), asked afresh at every question, and the day written the
+        // moment the tower's toast says it is at the top.
+        val lostSector = LostSectorSkill(svc, { Stored.lostSector(store()) }, keep = ::keep,
+                                         retire = { until -> Stored.retireLostSector(store(), until) })
+        // EX Missions (PLAN_EX_MISSIONS.md): no settings and no clock -- the
+        // page's "Claim now", a chain step, or the Missions window open.
+        val exMissions = ExMissionsSkill(svc, keep = ::keep)
         val passive = PassiveSkill(svc, flag = { key, default -> store().bool(key, default) },
                                    keep = ::keep)
         // The quest loop, the last of the stand-ins to go. Its settings are
@@ -316,29 +400,28 @@ class CoreService : Service() {
         // that reached it is not worth keeping.
         //
         // It asks no supporter code since 2026-09-23: the quest loop is
-        // everybody's.
+        // everybody's, and so are its free ads, with the Ad Skip Pass.
         val quest = QuestSkill(svc, { Stored.quest(store()) },
                                saveStep = { step -> Stored.saveQuestStep(store(), step) },
                                // The day's lock, the same way: written the
                                // moment the loop stops for want of tickets,
                                // read back through `Stored.quest` above.
                                lock = { until, why -> Stored.lockQuest(store(), until, why) },
-                               keep = ::keep)
+                               keep = ::keep,
+                               // The bond token's look between two rounds of
+                               // the chain's step (PLAN_BEFUNDE_1_3.md N3 d):
+                               // the director that is running now.
+                               aside = { director?.aside("quest") })
         // The bond tour, the round after the passive helper's and started by
         // it: what it asks is `passive.seen`, so it has to run on the round
         // the helper has just finished, and it walks only where that round
         // collected a token. It is the Bond token row's one box
         // (`passive_all_digimon`), asked in `hasBudget`, so it has no row of
-        // its own in the Skills list -- see [Skills.rowFor].
-        //
-        // `supporter` is the one question core cannot answer: [Unlock]
-        // decides whether a code holds, and whether one is *saved* is the
-        // shell's (Supporter, MainActivity). The Bond token row is
-        // everybody's, the box is a supporter's (2026-09-23), so `included`
-        // cannot say it and the tour asks for itself.
+        // its own in the Skills list -- see [Skills.rowFor]. The box was a
+        // supporter's from 2026-09-23 to 2026-10-02, and the code was passed
+        // in here for it; it is everybody's since (Paywall).
         val bond = BondTourSkill(svc, passive,
                                  flag = { key, default -> store().bool(key, default) },
-                                 supporter = { Supporter.unlocked == true },
                                  keep = ::keep)
 
         fun counted(skill: Skill, counts: () -> Map<String, Int>): Skill =
@@ -353,6 +436,14 @@ class CoreService : Service() {
         val bondCounted = Counted(bond, { bond.lastCounts }) { _, c ->
             SkillStats.add(store(), "passive", c, today())
         }
+        // The tower counts under the Dungeons row's name for the same reason:
+        // it is that row's (Skills.rowFor), and its two lines are on that
+        // card (SkillStats.SHOWN, LostSectorSkill.CARD_RUNS). Its pass clears
+        // its own numbers at the top (notes/director.md, "A counter nothing
+        // clears is counted again at the end of every pass").
+        val lostSectorCounted = Counted(lostSector, { lostSector.lastCounts }) { _, c ->
+            SkillStats.add(store(), "dungeon", c, today())
+        }
 
         val skills: List<Skill> = listOf(
             counted(dungeon) { dungeon.lastCounts },
@@ -360,6 +451,8 @@ class CoreService : Service() {
             counted(world) { world.lastCounts },
             counted(farm) { farm.lastCounts },
             counted(runner) { runner.lastCounts },
+            counted(skewer) { skewer.lastCounts },
+            counted(preset) { preset.lastCounts },
             // The quest loop is a chain step of its own ("run until it
             // stops", chain.WAITING) and a round on the main screen: the same
             // skill in both lists, as app.py has it. One counter over both,
@@ -367,6 +460,12 @@ class CoreService : Service() {
             // whole wait as a chain step -- and QuestSkill clears its own at
             // the start of each.
             questCounted,
+            // A chain step of its own (lost_sector), and the Crests page's
+            // task in the semi-automatic mode (Director.LOST_SECTOR).
+            lostSectorCounted,
+            // Not a round: no clock (the player's answer to question 2). The
+            // page's button, the chain, and the Missions window are its ways in.
+            counted(exMissions) { exMissions.lastCounts },
         )
         // The order is the order of the evidence: the helper's round decides
         // whether there was a token, the tour reads that, and the quest loop
@@ -380,13 +479,19 @@ class CoreService : Service() {
 
         HelperLog.line("director: chain " +
             (if (chain.steps.isEmpty()) "empty" else chain.steps.joinToString(" -> ") { it.key }) +
-            (if (chain.repeat) ", repeating" else "") + " -- read now; a change takes effect at the next start")
+            (if (chain.repeat) ", repeating" else "") + " -- read now, and again before every step")
         val d = DirectorLoop(
             cap = svc, skills = skills, rounds = rounds,
             game = { svc.gamePackage },
             mode = { Stored.mode(store()) },
             chain = chain,
+            // The order the page has now, before every step: one changed
+            // while the core runs is the one played next (2026-10-01).
+            order = { store().let { Stored.chainSteps(it) to Stored.chainRepeat(it) } },
             included = { skill -> Skills.included(Skills.rowFor(skill.key), store(), Supporter.unlocked) },
+            offWhy = { skill ->
+                Skills.offWhy(Skills.rowFor(skill.key), store(), Supporter.unlocked) ?: "not included"
+            },
             keep = ::keep,
             // The overlay's status line, at once: a round is as long as the
             // skill inside it, and `show` below runs only when it is over.
@@ -401,8 +506,15 @@ class CoreService : Service() {
         return d
     }
 
-    /** A frame the director wants looked at afterwards, named by the clock, never over an older one. */
+    /**
+     * A frame the director wants looked at afterwards, named by the clock,
+     * never over an older one -- and only with the developer's switch: on a
+     * player's phone nothing is written since 1.3's fourth candidate
+     * ([KeptFrames]). The seam stays in core as it is; the tasks call it in
+     * forty places and the flow tests hold it.
+     */
     private fun keep(frame: Mat, tag: String) {
+        if (!KeptFrames.on(this)) return
         val dir = Paths.debugDir(this, "director")
         val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.ROOT).format(Date())
         val png = File(dir, "${tag}_$stamp.png")
@@ -473,10 +585,59 @@ class CoreService : Service() {
         /** How often the running core asks whether the phone is counted for today yet ([census]). */
         const val CENSUS_EVERY_MS = 60 * 60 * 1000L
 
-        /** The director, while the loop runs: the shell's "Try again" reaches it here. */
+        /** The director, while the loop runs: the supporter code's late answer reaches it here. */
         @Volatile
         var director: DirectorLoop? = null
             private set
+
+        private val logicLock = Any()
+
+        /** The dot's Stop is owed to the loop: drop the director at its next turn ([letGo]). */
+        private var dropOwed = false
+
+        /** A Start came before the stopped round had let go: given by [letGo]. */
+        private var startOwed = false
+
+        /**
+         * Stop the logic and leave the dot (PLAN_BEFUNDE_1_3.md N5 b, the
+         * player's question of 2026-10-01: "nur die Bot-Logik stoppen, damit
+         * man schneller neustarten kann"). The switch goes off -- every
+         * gesture is held from this moment, and every skill asks it between
+         * two actions -- and the loop's thread is interrupted, so that a
+         * task inside a wait (a battle of a minute, the Meat Field's clock)
+         * lets go now rather than at the end of it, as it does when the
+         * service is turned off. What it carried is dropped by the loop
+         * ([letGo]); the service, its notification and the dot stay.
+         */
+        fun stopLogic(from: String) {
+            HelperLog.line("stopped from $from -- the task and the chain end, the dot stays")
+            MainSwitch.set(false)
+            synchronized(logicLock) {
+                dropOwed = true
+                startOwed = false
+                // Inside the lock, so that [letGo] -- which takes it -- never
+                // clears the drop and leaves this interrupt for the fresh
+                // director's first wait.
+                live?.thread?.interrupt()
+            }
+        }
+
+        /**
+         * The Start after [stopLogic]: the switch on over a fresh director --
+         * or, while the stopped round is still letting go, as soon as it has.
+         */
+        fun startLogic(from: String) {
+            synchronized(logicLock) {
+                if (dropOwed && live != null) {
+                    startOwed = true
+                    HelperLog.line("started from $from -- once the stopped task has let go")
+                    return
+                }
+            }
+            if (MainSwitch.on) return
+            HelperLog.line("started from $from")
+            MainSwitch.set(true)
+        }
 
         fun channel(c: Context) {
             val ch = NotificationChannel(CHANNEL, "DigiAutotap", NotificationManager.IMPORTANCE_LOW)
@@ -487,10 +648,12 @@ class CoreService : Service() {
         /**
          * "DigiAutotap · <state>", the pill's own sentence under it, and the
          * three actions (PLAN_ANDROID_DESIGN.md 2.7, 4.1). The first one
-         * carries the same word as a tap on the dot does -- Pause, Resume,
-         * Try again -- and the second the same as the app's big button
-         * while it runs, Stop, so that the notification, the pill and the log
-         * never call one thing by two names.
+         * carries the same word as a tap on the dot does -- Stop, Start --
+         * and the second the same as the app's big button while it runs,
+         * Turn off, so that the notification, the pill and the log never
+         * call one thing by two names. The second was "Stop" until
+         * 2026-10-02, when that word went to the dot's tap and would have
+         * stood twice side by side.
          */
         fun notification(c: Context): Notification {
             val state = Shell.state()
@@ -511,7 +674,7 @@ class CoreService : Service() {
                 .addAction(Notification.Action.Builder(
                     null, state.action, broadcast(1, ActionReceiver.PRESS)).build())
                 .addAction(Notification.Action.Builder(
-                    null, "Stop", broadcast(2, ActionReceiver.STOP)).build())
+                    null, ActionReceiver.TURN_OFF, broadcast(2, ActionReceiver.STOP)).build())
                 .addAction(Notification.Action.Builder(null, "Open", open).build())
                 .build()
         }
@@ -534,7 +697,7 @@ class CoreService : Service() {
 class ActionReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         when (intent.action) {
-            PRESS -> press(context)
+            PRESS -> press(context, "the notification")
             STOP -> stop(context, "the notification")
         }
     }
@@ -543,14 +706,17 @@ class ActionReceiver : BroadcastReceiver() {
         const val PRESS = "io.github.digipr1me.digiautotap.PRESS"
         const val STOP = "io.github.digipr1me.digiautotap.STOP"
 
+        /** The word for [stop] on the app's big button and in the notification. */
+        const val TURN_OFF = "Turn off"
+
         /**
-         * The service ended by the player -- from the notification's Stop or
-         * the app's big button -- and kept ended: [CoreService.stoppedByPlayer]
+         * The service ended by the player -- from the notification's Turn off
+         * or the app's big button -- and kept ended: [CoreService.stoppedByPlayer]
          * is what stops the next rebind from undoing it.
          */
         fun stop(c: Context, from: String) {
             CoreService.stoppedByPlayer = true
-            HelperLog.line("stopped from $from")
+            HelperLog.line("turned off from $from")
             c.stopService(Intent(c, CoreService::class.java))
         }
 
@@ -558,30 +724,39 @@ class ActionReceiver : BroadcastReceiver() {
          * The one thing the dot's tap and the notification's first action
          * do, in one place and against one state -- and the app's big
          * button while it says Start.
+         *
+         * Stop and Start since 2026-10-02 (PLAN_BEFUNDE_1_3.md N5 b), where
+         * it was Pause and Resume, and Try again on a park: in every state
+         * that runs -- Parked included -- the tap ends the task and the
+         * chain ([CoreService.stopLogic]), and the tap after it starts as
+         * the app's Start does, from nothing. The dot stays for that one
+         * tap; the app's Turn off still takes it away.
+         *
+         * Returns why nothing started, or null: the app says it, where a
+         * line in the log alone was all the player got ("Start anyway"
+         * on the Poco, 2026-10-01 20:24, twice).
          */
-        fun press(c: Context) {
+        fun press(c: Context, from: String = "the dot"): String? {
+            var refused: String? = null
             when (Shell.state()) {
                 HelperState.STOPPED ->
                     if (DigiAutotapService.instance == null) {
-                        HelperLog.line("start: the accessibility service is not running -- " +
-                            "switch it on first")
+                        refused = "the accessibility service is not running"
+                        HelperLog.line("start: $refused -- switch it on first")
                     } else {
                         CoreService.stoppedByPlayer = false
-                        // Start means running: a core stopped while it was
-                        // paused would otherwise come back paused, and the
-                        // app's button would say Stop over a DigiAutotap
-                        // that does nothing.
+                        // Start means running: a core turned off while it
+                        // was stopped would otherwise come back stopped, and
+                        // the app's button would say Turn off over a
+                        // DigiAutotap that does nothing.
                         MainSwitch.set(true)
                         DigiAutotapService.startCore(c, "start pressed", force = true)
                     }
-                HelperState.PAUSED -> MainSwitch.set(true)
-                HelperState.PARKED -> {
-                    CoreService.director?.retry()
-                    MainSwitch.set(true)
-                }
-                else -> MainSwitch.set(false)
+                HelperState.PAUSED -> CoreService.startLogic(from)
+                else -> CoreService.stopLogic(from)
             }
             CoreService.refresh(c)
+            return refused
         }
     }
 }

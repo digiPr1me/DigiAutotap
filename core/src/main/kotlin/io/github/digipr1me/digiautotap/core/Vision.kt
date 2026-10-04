@@ -85,11 +85,11 @@ class Figure(
  * `read_number`, `read_counters`). The skill's loop is not here; it comes
  * with its own session, under the director.
  *
- * Every constant keeps its Python name and value, and the sentence that says
- * where it came from. A number here is changed in vision.py first, with a
- * measurement, then the oracle is written again, then this file follows --
- * never the other way round (NOTES.md, "Two implementations, one
- * direction"). The frame is BGR, uint8, as `cv2.imread` gives it.
+ * Every constant came over with its Python name and value, and the sentence
+ * that says where it came from; a number is changed in this file, with a
+ * measurement and its sentence, and then `writeOracle` writes the oracle
+ * (NOTES.md, "One project"). The frame is BGR, uint8, as `cv2.imread`
+ * gives it.
  *
  * Unlike the other families this one reads images of its own: the object
  * templates from `templates/` and the digit references from `digits/shared/`.
@@ -119,6 +119,29 @@ class Vision(private val assets: AssetSource) {
         const val ASPECT = 1.220
         const val ASPECT_TOL = 0.03
 
+        // The cell width the column fit may find, as a share of the card's
+        // width. vision.py searched 0.17 to 0.20; on every board of the corpus
+        // the cell is 0.1847 to 0.1857 of the card (61 frames, every format and
+        // window; PLAN_WORLD_SEARCH_FORMATE.md F3). The top of 0.20 was a trap:
+        // five cells of 0.20 are the card's whole width, and where the card
+        // fills the picture its edge against the dark beside it stands at both
+        // ends of the band. On 1644 x 3840 that edge is two pixels wide, 376 and
+        // 379 in the column profile against 38 to 188 on the grid's own lines,
+        // and the fit laid its first and last line on it: cell 328.0 (0.1995 of
+        // the card) where the grid's is 303.7, so every template was scaled 8 %
+        // too large, every cell read 8 % too wide, and the meter label, which
+        // hangs off the grid's bottom, was looked for 113 px under it. The
+        // grid's own fit loses that race only there: on five other boards
+        // whose card fills the picture, 720 to 1440 wide, the edge-to-edge fit
+        // scores 67 to 121 against the grid's 124 to 183, on 1644 x 3840 128.6
+        // against 122.5, because at a scale of 1.86 the grid's lines spread
+        // and the edge does not. The top is the middle between 0.1857 and
+        // 0.1995 now -- a deliberate departure from vision.py, and on every
+        // other frame of the corpus the fit's answer is the same, because its
+        // best cell was always under it.
+        const val CELL_W_MIN = 0.17
+        const val CELL_W_MAX = 0.1926
+
         // Order matters, the specific templates come first.
         val OBJECT_TYPES = listOf("ticket_orange", "ticket_green", "ticket_pink", "claw",
                                   "paw", "fireball", "pyramid", "figure")
@@ -135,6 +158,111 @@ class Vision(private val assets: AssetSource) {
         // needs a higher bar than the high-contrast power-ups.
         val THRESHOLDS = mapOf("pyramid" to 0.74, "figure" to 0.60, "arrow" to 0.55)
         const val DEFAULT_THRESHOLD = 0.62
+
+        // In the bottom row the pyramid is matched with the upper two thirds of
+        // its template only (23 of its 34 rows), because the wall ledge covers
+        // the pyramid's lower part there -- what read_grid's docstring always
+        // said and the search patch never did. Against the whole template the
+        // score of what is left rode on the pyramids' glow, which pulses: the
+        // 59 bottom pyramids of the corpus's 61 boards scored 0.472 to 0.919
+        // against the row's bar of 0.68, so 33 of them read as empty, and one
+        // board read three pyramids on one take at 1080 x 2340 and none on the
+        // next (PLAN_WORLD_SEARCH_FORMATE.md F2). With the upper two thirds the
+        // same 59 score 0.791 to 0.972 and every other bottom cell (246,
+        // power-ups, the arrow and the figure among them) 0.427 at most: the
+        // widest gap of any cut from 17 rows to 34 (0.364; 21 to 26 rows are
+        // all 0.32 or more), and the bar, unchanged, 0.11 under the lowest
+        // pyramid and 0.25 over the highest other cell. The score this row
+        // reports for a pyramid is the upper part's. Only the pyramid: cut the
+        // same way the bottom row's orange tickets read pink on three boards of
+        // six; the power-ups have a cut of their own, next. A deliberate
+        // departure from vision.py.
+        const val PYRAMID_BOTTOM_SHARE = 2.0 / 3.0
+
+        // In the bottom row a power-up is matched with the upper half of its
+        // template, the orange SP Training Chip's without the 17 columns left
+        // of the chip, and against a bar of its own. The ledge covers the lower
+        // part of whatever stands there (its top at 0.58 of the cell on the
+        // median plain bottom cell), and with the whole template the corpus's
+        // six bottom chips -- all of them orange, on three window sizes --
+        // scored 0.578 to 0.716 against the row's bar of 0.56. The upper half,
+        // not the pyramid's two thirds: at 2/3 the cut still reaches rows the
+        // ledge covers, and three of the six read pink (B2); at 1/2 every name
+        // holds. The crop: the orange template carries a corner of the chip
+        // next to it and floor in its columns 0 to 16, and on a highlighted
+        // cell -- the one the figure steps to next, whose floor is light --
+        // the whole template read the corpus's three such chips, laid under
+        // the ledge, from 0.528 up, three of their 13 composites under 0.56:
+        // a chip the figure walks up to leaves the reading at the last step,
+        // and any upper part without the crop reads them lower still. Measured
+        // over the corpus's 61 boards (`boardProbe --args=objects`,
+        // PLAN_WORLD_SEARCH_FORMATE.md F10), with every power-up of the upper
+        // rows laid under the ledge of each plain bottom cell of its frame as
+        // well (440 composites): the six real chips 0.858 and up, the orange
+        // composites 0.791 and up, the paw's 0.767, the claw's 0.852, the
+        // fireball's 0.927, no name another power-up's (margin 0.166);
+        // everything coloured that is none -- the figure's wings, feet and
+        // shield, the arrow, the meter label, two real bottom cells and 393
+        // composites -- 0.593 at most (a shield read as a paw). The bar is the
+        // middle between the lowest power-up and that, 0.68. No board has a
+        // green or a pink ticket, in any row: theirs is inferred from the
+        // other four. A deliberate departure from vision.py.
+        const val POWERUP_BOTTOM_SHARE = 0.5
+        const val ORANGE_BOTTOM_LEFT = 17
+        const val POWERUP_BOTTOM_MIN = 0.68
+
+        // In rows 0 to 3 whatever stands in front of an object covers its
+        // lower part as the ledge does in the bottom row: the tip of the
+        // pyramid in the cell under it -- the board stacks pyramids in a
+        // column -- the figure's head and wings, a claw falling on the cell
+        // beside it. Against its whole template such a pyramid scored 0.53 to
+        // 0.70 against 0.74 and read as empty, and the planner walked the
+        // figure into it: the game smashes it with a claw and the figure
+        // stays where it was (notes/world-search.md, "What stands in front of
+        // an object covers it in every row"; PLAN_WORLD_SEARCH_FORMATE.md
+        // F12, F14, F16, F17). So where
+        // no template reads a cell of rows 0-3 it is looked at a second time,
+        // with the bottom row's parts: the pyramid's upper two thirds
+        // ([upperPart]) against a bar of its own, and in a coloured cell every
+        // power-up's upper half ([bottomPart]) against [POWERUP_BOTTOM_MIN].
+        // A second look, not a second race: every cell the whole templates
+        // read keeps its name and its score, and every cell that reads nothing
+        // keeps the score it had, so what moves is exactly the cells that were
+        // missed. Measured over 158 frames, the corpus's 61 boards and the 97
+        // of the B4 and B7 tours, every cell looked at (`coverProbe`): of the
+        // 2866 cells of rows 0-3 not over the figure, every pyramid scores
+        // 0.684 and up with its upper two thirds -- 0.789 and up but on three
+        // frames kept after a claw had fallen, whose debris covers them -- and
+        // every other cell 0.521 at most (the top-left cell, where the wall
+        // meets the ledge); the figure's own cell 0.425. The bar is the middle,
+        // 0.60. The power-ups' parts: a chip beside the figure over the tip of
+        // a pyramid, with the arrow or the highlighted floor around it, read
+        // 0.57 to 0.61 whole against 0.62 on four frames and 0.71 to 0.89 with
+        // its upper half, a paw under a falling claw 0.45 and 0.93; every
+        // power-up the whole templates read scores 0.750 and up with its part,
+        // and every part names what the whole named; every coloured cell that
+        // is none 0.610 at most, a coloured pyramid 0.577, the figure's own
+        // cell 0.648 (a claw falling on it; not asked, below) -- so the bottom
+        // row's bar holds here too. The two looks moved 92 cells of those
+        // frames, 75 pyramids and 17 power-ups, and not one of them was
+        // anything else. Over the figure's head (F16) they read what shows
+        // above the wings -- 9 of 28 pyramids (0.656 to 0.958 with the part)
+        // and 12 of the 25 chips no whole template read there (0.696 to
+        // 0.894) -- and cannot read the rest: those pyramids score 0.33 to
+        // 0.59 and an empty cell there 0.378, those chips 0.45 to 0.63 and an
+        // empty cell 0.579. A deliberate departure from vision.py.
+        const val PYRAMID_COVERED_MIN = 0.60
+
+        // What the second look costs: one match more on every cell it asks,
+        // six more on a coloured one, and asked everywhere it nearly doubled
+        // readGrid's time (the 1080 boards' median 80 -> 145 ms on the JVM).
+        // So the pyramid's part is asked only where the whole template scored
+        // 0.30 or more -- every pyramid the second look read scored 0.378 and
+        // up there (behind the figure's wings), one with a pyramid under it
+        // 0.631 and up, and 1406 of the 2510 cells it would otherwise ask
+        // score under it -- and neither part on the figure's own cell, which
+        // the World skips anyway: 109 ms, and the same 92 cells.
+        const val PYRAMID_COVERED_FLOOR = 0.30
 
         // Share of strongly coloured pixels, in per cent, from which a cell
         // counts as a possible power-up. Measured over the example pictures:
@@ -191,6 +319,41 @@ class Vision(private val assets: AssetSource) {
             "roi_fireballs" to "dark",
             "roi_meters" to "bright",
         )
+
+        // Two digits of a bright counter that touch are cut apart again at
+        // their neck. The metre label is white on a plate the board shows
+        // through, and where the plate stands over something bright -- a
+        // pyramid's lit face, the ledge's slope -- the gaps between its digits
+        // are brighter too: over the 585 gaps that stayed open on the metre
+        // labels of the corpus and of the live run of F25, a gap's brightest
+        // crossing (the lowest of its columns' brightest pixel, at scale 3) is
+        // 60 on the median and 163 at most, and the bar is 175; on the six
+        // frames that read short the gaps left open cross at 101 to 133. Past
+        // the bar two digits join into one component, too wide for a digit,
+        // which the ratio rule drops, and the number reads short: 47,764m as
+        // 477, 47,799m as 477, 47,800m and 47,834m as 478 on six frames of the
+        // live run of 2026-09-29, at 720 x 1280 and on the landscape's 608 px
+        // canvas, with the label whole to the eye (notes/world-search.md, "Two
+        // digits that touch are one glyph too wide";
+        // PLAN_WORLD_SEARCH_FORMATE.md F25). A join is a neck: the thinnest
+        // column of the pair, within a quarter of a digit of where an even cut
+        // would fall, holds 1 to 4 pixels, 0.031 to 0.143 of the component's
+        // height, its brightest pixel 176 to 223 -- the halos of two glyphs,
+        // not a stroke. Of everything else as tall as a digit and too wide for
+        // one, over the corpus's 151 frames that calibrate and the live run's
+        // ten, the thinnest such column is 0.227 (an icon in the pink box of a
+        // Special Summon page, where nothing reads it) and then 0.38 to 1.0
+        // (the top counters' cut digits on the two frames stored without their
+        // headroom). The bar is the middle, 0.185. The metre's 'm' has necks
+        // from 0.17 but stands at 0.69 to 0.77 of a digit's height on 149
+        // labels, and a component and each of its pieces are held to the
+        // digits' 0.80 as every digit is. Only the bright counters: the dark
+        // ones stand on the opaque card, where a gap's darkest crossing is
+        // grey 193 at the least against their bar of 140, and no component
+        // there is as tall as a digit and too wide. On the corpus no reading
+        // moves, and six of the live run's seven whole labels read whole; the
+        // seventh is the box's (F26). A deliberate departure from vision.py.
+        const val SPLIT_NECK_MAX = 0.185
 
         // Comparison by bitmap coverage instead of correlation. With two
         // coloured glyphs that is far more stable, one noisy reference image
@@ -401,7 +564,7 @@ class Vision(private val assets: AssetSource) {
         val band = Py.crop(gray, Py.int(0.40 * chh), Py.int(0.68 * chh), 0, gray.cols())
             ?: throw IllegalStateException("empty column band")
         val profCol = smooth(meanAxis0(absSobel(band, 1, 0), band.rows(), band.cols()))
-        val (_, x0, cellW) = fitPeriodic(profCol, 0.17 * cw, 0.20 * cw, COLS, 0.0, 0.10 * cw)
+        val (_, x0, cellW) = fitPeriodic(profCol, CELL_W_MIN * cw, CELL_W_MAX * cw, COLS, 0.0, 0.10 * cw)
 
         // Rows, the cell height tied to the measured aspect
         val band2 = Py.crop(gray, 0, gray.rows(), Py.int(0.06 * cw), Py.int(0.85 * cw))
@@ -445,14 +608,40 @@ class Vision(private val assets: AssetSource) {
         rois["roi_claws"] = box(0.235, 0.892, 0.245, 0.038)
         rois["roi_fireballs"] = box(0.235, 0.932, 0.245, 0.038)
         // The meter label sticks to the bottom edge of the board in column 3,
-        // so it is tied to the grid and not to the card.
-        val bottom = gridY0 + ROWS * cellH
+        // so it is tied to the grid and not to the card. Its box hangs from
+        // five rows of the height the aspect gives the cell width, not from
+        // five fitted rows, and reaches down to that bottom: the fitted row
+        // height scatters by up to 3 % from frame to frame of one window
+        // (cellH 76.5 to 77.8 on the laboratory's 625 x 1150, 75.3 to 75.8 on
+        // the landscape's 608 px canvas) while the label stands still to the
+        // pixel, and five rows multiply it. Measured with `boardProbe
+        // --args="meters hang calibrated"` over the 140 frames whose label the
+        // probe finds clean in a wide band: the digits' bottom stands -0.0205
+        // to 0.0590 of a cell width over the fitted bottom (-6.5 to +2.9 px)
+        // and 0.0296 to 0.0519 over this one (-2.2 to +2.7 px), their top at
+        // most 0.1665 over it. The old box ended 0.025 of a row over the
+        // fitted bottom and cut the digits' lowest row where the fit ran
+        // short: "32,329m" and "32,330m" read nothing on two laboratory frames
+        // of the corpus, "47,844m" nothing on a frame of the live run of
+        // 2026-09-29 (notes/world-search.md, "The metre box hangs from the
+        // grid's rows, and the label does not"; PLAN_WORLD_SEARCH_FORMATE.md
+        // F26). Over 161 frames (the corpus's 151 that calibrate and ten of
+        // the live run): the old box 0.025 of a row taller reads the live
+        // frame and not the two laboratory ones; hung from the aspect's rows
+        // alone it reads all three with the digits' lowest row on the box's
+        // last (0 rows of margin at scale 3); hung from them and reaching down
+        // to their bottom, as here, it reads all three with 6 rows of margin
+        // at the least and 16 on the median, and on no frame reads anything
+        // else than before. The label's top keeps its share, 0.325 of a row
+        // over the bottom. A deliberate departure from vision.py.
+        val rowH = cellW / ASPECT
+        val bottom = gridY0 + ROWS * rowH
         val midX = gridX0 + 2.5 * cellW
         rois["roi_meters"] = intArrayOf(
             Py.int(midX - 0.85 * cellW),
-            Py.int(bottom - 0.325 * cellH),
+            Py.int(bottom - 0.325 * rowH),
             Py.int(1.70 * cellW),
-            Py.int(0.30 * cellH),
+            Py.int(0.325 * rowH),
         )
         // The skill button, the big round one at the bottom right
         val skillButton = intArrayOf(Py.int(cx + 0.655 * cw), Py.int(cy + 0.905 * ch))
@@ -611,8 +800,16 @@ class Vision(private val assets: AssetSource) {
     /**
      * The 5 x 5 matrix of object names. An empty cell is null, an unknown
      * object is '?'. An object in the bottom row is partly hidden by the wall
-     * ledge and the meter label, so only the upper part of the cell is
-     * checked. Returns the names and, beside them, the scores.
+     * ledge and the meter label, so a pyramid there is matched with the upper
+     * two thirds of its template ([PYRAMID_BOTTOM_SHARE]) against a bar 0.06
+     * lower, and a power-up with its template's upper half ([bottomPart])
+     * against [POWERUP_BOTTOM_MIN]. In rows 0-3 an object's lower part can be
+     * covered too, by what stands in front of it, so a cell no whole template
+     * reads there is looked at again with the same parts
+     * ([PYRAMID_COVERED_MIN]); and a pyramid that reads is never dropped as
+     * the arrow. Returns the names and, beside them, the scores -- in the
+     * bottom row, and where the second look named a cell, the scores of
+     * those parts.
      */
     fun readGrid(img: Mat, calib: Calib, templates: Map<String, Mat>, refCellW: Double = 87.5,
                  threshold: Double? = null, figure: Figure? = null):
@@ -638,25 +835,65 @@ class Vision(private val assets: AssetSource) {
                 var bestName: String? = null
                 var bestVal = 0.0
                 var bestMargin = -9.0
+                var pyramidVal: Double? = null
+                val bottom = r == ROWS - 1
                 for (name in names) {
-                    val tpl = templates[name] ?: continue
+                    val whole = templates[name] ?: continue
+                    val tpl = when {
+                        bottom && name == "pyramid" -> upperPart(whole)
+                        bottom && name in POWERUPS -> bottomPart(name, whole)
+                        else -> whole
+                    }
                     val tplS = scaled(tpl, calib.cellW, refCellW)
                     if (tplS.rows() > patch.rows() || tplS.cols() > patch.cols()) continue
                     val value = matchMax(patch, tplS)
+                    if (name == "pyramid") pyramidVal = value
                     var need = THRESHOLDS[name]
                         ?: (if (threshold != null && threshold != 0.0) threshold else DEFAULT_THRESHOLD)
-                    if (r == ROWS - 1) {
-                        need -= 0.06  // the bottom row is covered by ledge and meter label
+                    if (bottom) {
+                        // the bottom row is covered by ledge and meter label; a
+                        // power-up there is its template's upper half, with a bar of its own
+                        need = if (name in POWERUPS) POWERUP_BOTTOM_MIN else need - 0.06
                     }
                     val margin = value - need  // makes types with another bar comparable
                     if (margin > bestMargin) {
                         bestName = name; bestVal = value; bestMargin = margin
                     }
                 }
-                if (bestName == "arrow" && bestMargin >= 0) continue  // direction arrow, no object
+                if (bestName == "arrow" && bestMargin >= 0) {
+                    // The arrow template is a patch of pyramid, not the arrow
+                    // (look at templates/arrow.png): on the 705 coloured cells
+                    // of rows 0-3 of those 158 frames it reached its bar (0.55)
+                    // on 25 pyramids, 0.64 to 0.96, and on no other cell -- not
+                    // on one cell of the yellow arrow itself; in the bottom row
+                    // it reached 0.40 at most. With a bar 0.19 under the
+                    // pyramid's it won the race on every coloured pyramid that
+                    // read -- 21 of 21 at 0.74 and up, a pyramid beside the
+                    // figure whose wings, lance or arrow colour the cell -- and
+                    // the pyramid was dropped as "direction arrow" (F17). So a
+                    // pyramid that reads is a pyramid, whatever the arrow says,
+                    // and only a cell where it does not is dropped. A
+                    // deliberate departure from vision.py.
+                    val pyr = pyramidRead(patch, calib, templates, refCellW, bottom, pyramidVal) ?: continue
+                    grid[r][c] = "pyramid"
+                    scores[r][c] = pyr
+                    continue
+                }
                 if (bestName != null && bestMargin >= 0) {
                     grid[r][c] = bestName
                     scores[r][c] = bestVal
+                    continue
+                }
+                // Rows 0-3 only: the second look at a covered object
+                // ([PYRAMID_COVERED_MIN]); the bottom row's race already asked
+                // the parts. Not on the figure's own cell, which the World
+                // skips and on which a falling claw scores 0.648 as a chip.
+                val onFigure = figure != null && figure.row == r && figure.col == c
+                val covered = if (bottom || onFigure) null
+                    else coveredLook(patch, calib, templates, refCellW, colourful, pyramidVal)
+                if (covered != null) {
+                    grid[r][c] = covered.first
+                    scores[r][c] = covered.second
                 } else if (colourful && figureBodyFraction(img, calib, r, c) < FIGURE_BODY_MIN) {
                     // Coloured, but no template fits. Two exceptions. First
                     // the figure itself, which has coloured eyes. Second the
@@ -672,6 +909,92 @@ class Vision(private val assets: AssetSource) {
             }
         }
         return grid.map { it.toList() } to scores.map { it.toList() }
+    }
+
+    // The upper part of a template, kept beside the template it was cut from:
+    // one Mat per source, so that [scaled]'s cache, which is keyed on the Mat
+    // itself, finds it again on the next cell and the next frame.
+    private val upperCache = IdentityHashMap<Mat, Mat>()
+    private val bottomCache = IdentityHashMap<Mat, Mat>()
+
+    /** The upper [PYRAMID_BOTTOM_SHARE] of [tpl], its rows from the top, cut before it is scaled. */
+    fun upperPart(tpl: Mat): Mat = upperCache.getOrPut(tpl) {
+        val rows = Py.roundInt(tpl.rows() * PYRAMID_BOTTOM_SHARE)
+        tpl.submat(0, rows, 0, tpl.cols()).clone()
+    }
+
+    /**
+     * What a power-up [name] is matched with in the bottom row: the upper
+     * [POWERUP_BOTTOM_SHARE] of its template's rows, and for the orange chip
+     * its columns from [ORANGE_BOTTOM_LEFT] on; cut before it is scaled.
+     */
+    fun bottomPart(name: String, tpl: Mat): Mat = bottomCache.getOrPut(tpl) {
+        val rows = Py.roundInt(tpl.rows() * POWERUP_BOTTOM_SHARE)
+        val x0 = if (name == "ticket_orange") ORANGE_BOTTOM_LEFT else 0
+        tpl.submat(0, rows, x0, tpl.cols()).clone()
+    }
+
+    /** `matchMax` of [tpl] scaled to the cell, or null where it does not fit the patch. */
+    private fun partScore(patch: Mat, tpl: Mat, calib: Calib, refCellW: Double): Double? {
+        val tplS = scaled(tpl, calib.cellW, refCellW)
+        if (tplS.rows() > patch.rows() || tplS.cols() > patch.cols()) return null
+        return matchMax(patch, tplS)
+    }
+
+    /**
+     * The pyramid's score where it reads, else null: in the bottom row its
+     * upper two thirds ([pyramidVal], what the race asked) against the row's
+     * bar, in rows 0-3 the whole template ([pyramidVal]) against its bar and,
+     * where that misses, the upper two thirds against [PYRAMID_COVERED_MIN].
+     */
+    private fun pyramidRead(patch: Mat, calib: Calib, templates: Map<String, Mat>, refCellW: Double,
+                            bottom: Boolean, pyramidVal: Double?): Double? {
+        val bar = THRESHOLDS.getValue("pyramid")
+        if (bottom) return pyramidVal?.takeIf { it - (bar - 0.06) >= 0 }
+        if (pyramidVal != null && pyramidVal - bar >= 0) return pyramidVal
+        return coveredPyramid(patch, calib, templates, refCellW, pyramidVal)
+    }
+
+    /**
+     * The pyramid's upper two thirds where it reaches [PYRAMID_COVERED_MIN],
+     * else null; asked only where the whole template ([pyramidVal]) scored
+     * [PYRAMID_COVERED_FLOOR] or more.
+     */
+    private fun coveredPyramid(patch: Mat, calib: Calib, templates: Map<String, Mat>, refCellW: Double,
+                               pyramidVal: Double?): Double? {
+        if (pyramidVal == null || pyramidVal < PYRAMID_COVERED_FLOOR) return null
+        val whole = templates["pyramid"] ?: return null
+        return partScore(patch, upperPart(whole), calib, refCellW)?.takeIf { it - PYRAMID_COVERED_MIN >= 0 }
+    }
+
+    /**
+     * The second look at a cell of rows 0-3 no whole template read
+     * ([PYRAMID_COVERED_MIN]): the pyramid's upper two thirds, and in a
+     * coloured cell each power-up's upper half, each against its bar; the
+     * best margin names the cell, in the race's order on a tie. Null where
+     * none reaches its bar.
+     */
+    private fun coveredLook(patch: Mat, calib: Calib, templates: Map<String, Mat>, refCellW: Double,
+                            colourful: Boolean, pyramidVal: Double?): Pair<String, Double>? {
+        var bestName: String? = null
+        var bestVal = 0.0
+        var bestMargin = 0.0
+        if (colourful) {
+            for (name in templates.keys.filter { it in POWERUPS }) {
+                val value = partScore(patch, bottomPart(name, templates.getValue(name)), calib, refCellW) ?: continue
+                val margin = value - POWERUP_BOTTOM_MIN
+                if (margin >= 0 && (bestName == null || margin > bestMargin)) {
+                    bestName = name; bestVal = value; bestMargin = margin
+                }
+            }
+        }
+        coveredPyramid(patch, calib, templates, refCellW, pyramidVal)?.let { value ->
+            val margin = value - PYRAMID_COVERED_MIN
+            if (bestName == null || margin > bestMargin) {
+                bestName = "pyramid"; bestVal = value
+            }
+        }
+        return bestName?.let { it to bestVal }
     }
 
     /** Is the cell directly above, below, left or right of the figure? */
@@ -1062,7 +1385,9 @@ class Vision(private val assets: AssetSource) {
      * Splits a counter area into single digit images.
      *
      * Commas, the 'm' of the meter counter and frame parts are thrown out by
-     * size, aspect ratio and height.
+     * size, aspect ratio and height; two digits of a bright counter that
+     * touch across their gap are cut apart again at their neck
+     * ([SPLIT_NECK_MAX], [splitJoined]).
      */
     fun segmentDigits(img: Mat, roi: IntArray, polarity: String, scale: Int = 3): List<Mat> {
         val (x, y, w, h) = roi
@@ -1097,6 +1422,8 @@ class Vision(private val assets: AssetSource) {
         colour.get(0, 0, colourData)
 
         val boxes = ArrayList<IntArray>()
+        // Too wide for one digit, on a bright counter: kept aside for [splitJoined].
+        val wide = ArrayList<IntArray>()
         for (i in 1 until n) {
             val s = IntArray(5).also { stats.get(i, 0, it) }
             val gx = s[0]; val gy = s[1]; val gw = s[2]; val gh = s[3]; val area = s[4]
@@ -1104,7 +1431,10 @@ class Vision(private val assets: AssetSource) {
             if (gx <= 1) continue  // symbol at the left edge of the area
             if (gh > 0.95 * binary.rows()) continue
             val ratio = gw / gh.toDouble()
-            if (ratio < 0.28 || ratio > 0.98) continue  // comma, 'm', frame, tile noise
+            val tooWide = ratio > 0.98
+            // comma, 'm', frame, tile noise; too wide on a bright counter is
+            // kept aside below, for two digits joined
+            if (ratio < 0.28 || (tooWide && polarity != "bright")) continue
             // Top bar only. There the digits are white and the currency
             // symbols strongly coloured, so a symbol reaching in is thrown
             // out. Below, the digits themselves are navy and thus highly
@@ -1124,6 +1454,10 @@ class Vision(private val assets: AssetSource) {
                 }
                 if (count > 0 && sum.toDouble() / count > 90) continue
             }
+            if (tooWide) {
+                wide.add(intArrayOf(gx, gy, gw, gh, i))
+                continue
+            }
             boxes.add(intArrayOf(gx, gy, gw, gh))
         }
         labels.release(); stats.release(); centroids.release()
@@ -1136,13 +1470,94 @@ class Vision(private val assets: AssetSource) {
         val refH = if (heights.size % 2 == 1) heights[heights.size / 2].toDouble()
                    else (heights[heights.size / 2 - 1] + heights[heights.size / 2]) / 2.0
         val glyphs = ArrayList<Pair<Int, Mat>>()
+        val widths = ArrayList<Int>()
         for ((gx, gy, gw, gh) in boxes) {
             if (gh < 0.80 * refH || gh > 1.25 * refH) continue
             glyphs.add(gx to binary.submat(gy, gy + gh, gx, gx + gw).clone())
+            widths.add(gw)
+        }
+        if (wide.isNotEmpty() && widths.isNotEmpty()) {
+            widths.sort()
+            val digitW = if (widths.size % 2 == 1) widths[widths.size / 2].toDouble()
+                         else (widths[widths.size / 2 - 1] + widths[widths.size / 2]) / 2.0
+            for (c in wide) glyphs.addAll(splitJoined(binary, labelData, c, refH, digitW))
         }
         binary.release()
         // list.sort is stable, and so is sortedBy.
         return glyphs.sortedBy { it.first }.map { it.second }
+    }
+
+    /**
+     * A digit of a bright counter that touches its neighbour across the gap,
+     * cut apart again: one [component] `(x, y, w, h, label)` of [binary], as
+     * tall as a digit and too wide for one, cut at every neck
+     * ([SPLIT_NECK_MAX]) and each piece judged as any component is -- the
+     * digits among them, each with its x. A component without a neck is one
+     * piece, too wide, and stays dropped.
+     */
+    private fun splitJoined(binary: Mat, labelData: IntArray, component: IntArray, refH: Double,
+                            digitW: Double): List<Pair<Int, Mat>> {
+        val (gx, gy, gw, gh) = component
+        val label = component[4]
+        if (gh < 0.80 * refH || gh > 1.25 * refH) return emptyList()
+        val count = Math.round(gw / digitW).toInt()
+        if (count < 2) return emptyList()
+        val width = binary.cols()
+        val profile = IntArray(gw) { dx ->
+            var k = 0
+            for (yy in gy until gy + gh) if (labelData[yy * width + gx + dx] == label) k += 1
+            k
+        }
+        // A neck is looked for within a quarter of a digit of where each even
+        // cut into digits of the counter's own width would fall -- the
+        // counter's digits are all of one width, 0.875 to 1.19 of their
+        // median over the 736 digits of the metre labels, so a pair's gap
+        // stands at most 0.16 of a digit off the even cut; the live joins'
+        // necks stood 0.02 to 0.13 off it. A third reached the thin base of
+        // a '1' beside the gap. Where the thinnest column there is thicker
+        // than a neck, no cut.
+        val cuts = ArrayList<Int>()
+        var from = 0
+        for (k in 1 until count) {
+            val centre = k * gw / count.toDouble()
+            val lo = maxOf(from + 1, Math.ceil(centre - digitW / 4).toInt())
+            val hi = minOf(gw - 2, Math.floor(centre + digitW / 4).toInt())
+            if (lo > hi) continue
+            var best = lo
+            for (dx in lo..hi) if (profile[dx] < profile[best]) best = dx
+            if (profile[best] > SPLIT_NECK_MAX * gh) continue
+            cuts.add(best)
+            from = best + 1
+        }
+        if (cuts.isEmpty()) return emptyList()
+        val ink = ByteArray(binary.rows() * width).also { binary.get(0, 0, it) }
+        val pieces = ArrayList<Pair<Int, Mat>>()
+        var start = 0
+        for (cut in cuts + gw) {
+            // The neck's own column goes to neither side.
+            val x0 = gx + start
+            val x1 = gx + cut
+            start = cut + 1
+            var top = -1
+            var bottom = -1
+            for (yy in gy until gy + gh) {
+                for (xx in x0 until x1) {
+                    if (ink[yy * width + xx].toInt() != 0) {
+                        if (top < 0) top = yy
+                        bottom = yy + 1
+                        break
+                    }
+                }
+            }
+            if (top < 0) continue
+            // Each piece as any component: the ratio rule and the digits'
+            // height, so that an 'm' cut off a digit is dropped as it always is.
+            val ph = bottom - top
+            val ratio = (x1 - x0) / ph.toDouble()
+            if (ratio < 0.28 || ratio > 0.98 || ph < 0.80 * refH || ph > 1.25 * refH) continue
+            pieces.add(x0 to binary.submat(top, bottom, x0, x1).clone())
+        }
+        return pieces
     }
 
     /** The best digit and its score; the score is the bitmap coverage, 1.0 is equal. */
@@ -1199,6 +1614,14 @@ class Vision(private val assets: AssetSource) {
         }
         check(out.length <= 18) { "a counter of ${out.length} digits" }
         return out.toString().toLong() to "ok"
+    }
+
+    /** For diagnosis: every glyph of one counter area, its digit (null where uncertain) and its score. */
+    fun digitScores(img: Mat, roiKey: String, calib: Calib): List<Pair<Char?, Double>> {
+        val table = digitTemplates()
+        return segmentDigits(img, calib.roi(roiKey), POLARITY.getValue(roiKey)).map { glyph ->
+            classifyGlyph(glyph, table).also { glyph.release() }
+        }
     }
 
     /** Every counter by its short name ("top_orange" ... "meters"), null where unreadable. */

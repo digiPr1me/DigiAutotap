@@ -50,9 +50,7 @@ object PaintQuest {
     fun autoButton(img: Mat): Mat {
         val r = Dungeon.gameRect(img)
         val radius = (0.053 * r.gw / 2).toInt()
-        Imgproc.circle(img, Point((r.x0 + 0.361 * r.gw).toInt().toDouble(),
-                                  (r.y0 + 0.765 * r.gh).toInt().toDouble()),
-                       radius, Scalar(230.0, 140.0, 50.0), -1)
+        Paint.autoDisc(img, (r.x0 + 0.361 * r.gw).toInt(), (r.y0 + 0.765 * r.gh).toInt(), radius)
         return img
     }
 
@@ -128,6 +126,55 @@ object PaintQuest {
         Imgproc.circle(img, Point((r.x0 + fx * r.gw).toInt().toDouble(),
                                   (r.y0 + fy * r.gh).toInt().toDouble()),
                        radius, RED, -1)
+        return img
+    }
+
+    // ---- Idle Rewards (IdleSkillTest) --------------------------------------
+    // The colours measured on corpus/quest/idle_*: the chest's pale blue, the
+    // window's own blue (H 106, S 233, V 139), Extra Rewards' violet, Claim
+    // lit (H 100, S 255, V 209) and dimmed (V 121), the Reward sheet's band.
+
+    private fun box(img: Mat, fx: Double, fy: Double, fw: Double, fh: Double, colour: Scalar) {
+        val r = Dungeon.gameRect(img)
+        Imgproc.rectangle(img, Point(r.x0 + (fx - fw / 2) * r.gw, r.y0 + (fy - fh / 2) * r.gh),
+                          Point(r.x0 + (fx + fw / 2) * r.gw, r.y0 + (fy + fh / 2) * r.gh), colour, -1)
+    }
+
+    /** The main screen with the Rewards chest, or without it (a bright stage swallowed it). */
+    fun idleMain(chest: Boolean = true): Mat {
+        val img = autoButton(Mat(H, W, CvType.CV_8UC3, Scalar(60.0, 30.0, 70.0)))
+        if (chest) box(img, 0.149, 0.700, 0.092, 0.028, Paint.hsv(100, 80, 240))
+        return img
+    }
+
+    /** The Idle Rewards window: Claim [lit] or dimmed, and "[left]/2" in white over Extra Rewards (null: none). */
+    fun idleWindow(lit: Boolean, left: Int?): Mat {
+        val img = Mat(H, W, CvType.CV_8UC3, Scalar(40.0, 20.0, 40.0))
+        box(img, 0.5, 0.50, 0.62, 0.56, Paint.hsv(106, 233, 139))
+        box(img, 0.3514, 0.7437, 0.2214, 0.052, Paint.hsv(125, 177, 210))
+        box(img, 0.6007, 0.7439, 0.2197, 0.0515, Paint.hsv(100, 255, if (lit) 209 else 121))
+        if (left != null) {
+            val r = Dungeon.gameRect(img)
+            val scale = 0.022 * r.gh / 22.0
+            val h = Imgproc.getTextSize("2", FONT, scale, 1, IntArray(1)).height
+            val x = (r.x0 + 0.345 * r.gw).toInt()
+            val y = (r.y0 + (0.7437 - 0.013) * r.gh + h / 2.0).toInt()
+            var cx = drawSpaced(img, left.toString(), x, y, scale, WHITE, 2)
+            // A slash taller than the digits, as the game draws it.
+            val top = (y - h * 1.25).toInt()
+            Imgproc.line(img, Point(cx + h * 0.35, top.toDouble()), Point(cx.toDouble(), y + h * 0.15),
+                         WHITE, maxOf(2, (h / 7.0).toInt()))
+            cx += (h * 0.35).toInt() + 4
+            drawSpaced(img, "2", cx, y, scale, WHITE, 2)
+        }
+        return img
+    }
+
+    /** The Reward sheet: its blue band across the middle and "Tap to close" under it. */
+    fun rewardSheet(): Mat {
+        val img = Mat(H, W, CvType.CV_8UC3, Scalar(40.0, 20.0, 40.0))
+        box(img, 0.5, 0.50, 1.0, 0.40, Paint.hsv(108, 220, 150))
+        box(img, 0.475, 0.820, 0.10, 0.020, WHITE)
         return img
     }
 

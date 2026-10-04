@@ -43,9 +43,22 @@ object Paint {
     fun mainScreen(): Mat {
         val img = blank()
         val radius = (0.053 * W / 2).toInt()
-        Imgproc.circle(img, Point((0.361 * W).toInt().toDouble(), (0.765 * H).toInt().toDouble()),
-                       radius, Scalar(230.0, 140.0, 50.0), -1)
+        autoDisc(img, (0.361 * W).toInt(), (0.765 * H).toInt(), radius)
         return img
+    }
+
+    /**
+     * The auto button at ([cx], [cy]): the blue disc and the white A inside
+     * it, a square of 0.4 of the radius -- 0.04 of the disc's box, where the
+     * real A and its arrows are 0.032 to 0.045 (Dungeon.AUTO_GLYPH_MIN,
+     * which a disc without it no longer passes since 2026-09-30). Every
+     * painter's main screen draws it through here.
+     */
+    fun autoDisc(img: Mat, cx: Int, cy: Int, radius: Int) {
+        Imgproc.circle(img, Point(cx.toDouble(), cy.toDouble()), radius, Scalar(230.0, 140.0, 50.0), -1)
+        val half = maxOf(1, (0.2 * radius).toInt())
+        Imgproc.rectangle(img, Point((cx - half).toDouble(), (cy - half).toDouble()),
+                          Point((cx + half).toDouble(), (cy + half).toDouble()), Scalar(250.0, 250.0, 250.0), -1)
     }
 
     /**
@@ -103,15 +116,26 @@ object Paint {
      * grey is "Exit the game?". Cancel deliberately does not sit where the
      * mirror of OK would put it -- measured 0.34 against a mirror of 0.398.
      */
-    fun prompt(pink: Boolean): Mat {
+    fun prompt(pink: Boolean, lines: Int = 0): Mat {
         val (button, ok) = if (pink) PINK to PINK_OK else GREY to GREY_OK
         val img = blank(20.0)
         rect(img, 0.13, ok.fy - 0.22, 0.87, ok.fy + 0.06, BODY)
         rect(img, 0.25, ok.fy - 0.021, 0.435, ok.fy + 0.020, button)
         rect(img, ok.fx - ok.fw / 2, ok.fy - 0.021, ok.fx + ok.fw / 2, ok.fy + 0.020,
              Scalar(230.0, 150.0, 40.0))
+        // The message, a bar of the letters' grey per line: a line as tall
+        // as one of "Exit the game?" (0.010 here, the real 0.0136 with its
+        // ascenders and descenders), the next one 0.016 lower, as the
+        // download's two lines stand (Dungeon.promptTextH). Two lines are
+        // the game's resource download, one or none "Exit the game?".
+        for (i in 0 until lines) {
+            rect(img, 0.30, ok.fy - 0.140 + 0.016 * i, 0.66, ok.fy - 0.130 + 0.016 * i, LETTERS)
+        }
         return img
     }
+
+    /** The prompts' letters, near white (234 at their brightest on the real frames). */
+    val LETTERS = Scalar(234.0, 234.0, 234.0)
 
     /**
      * The Stage Failed banner over the main screen (test_wake_flow): white
@@ -133,6 +157,36 @@ object Paint {
                             Imgproc.FONT_HERSHEY_SIMPLEX, 2.0, Scalar(40.0, 40.0, 220.0), 6)
         }
         return img
+    }
+
+    /**
+     * [main] with the hologram device lit, a copy: the cyan light the device
+     * throws around its own Auto when Auto Spend pulls with the Super
+     * Hologram Device (K2 of PLAN_ABSCHLUSS_1_3.md; the Poco's
+     * not_main_screen_00_20261002-191419, staging/k2/device_flash_*). The
+     * disc and its A stay; the ground around them goes the disc's blue, so
+     * that the disc is one blob with its ground, far wider than a button
+     * (Dungeon.AUTO_W), and [Dungeon.autoButton] says null -- as on the real
+     * frames, where the button is still drawn and plainly there. Painted
+     * where the reader finds the button on [main], on a corpus frame as on a
+     * painted one.
+     */
+    fun holoLight(main: Mat): Mat {
+        val b = requireNotNull(Dungeon.autoButton(main)) { "no auto button to light around" }
+        val r = Dungeon.gameRect(main)
+        val cx = r.x0 + b.fx * r.gw
+        val cy = r.y0 + b.fy * r.gh
+        val radius = b.fw * r.gw / 2
+        val lit = copy(main)
+        Imgproc.rectangle(lit, Point(cx - 2.6 * radius, cy - 1.8 * radius),
+                          Point(cx + 2.6 * radius, cy + 1.8 * radius), hsv(100, 190, 235), -1)
+        // The disc and its A back over the light, a little inside the disc's
+        // edge, so that the light reaches the disc's own blue all round.
+        val disc = Mat.zeros(main.rows(), main.cols(), CvType.CV_8UC1)
+        Imgproc.circle(disc, Point(cx, cy), (0.85 * radius).toInt(), Scalar(255.0), -1)
+        main.copyTo(lit, disc)
+        disc.release()
+        return lit
     }
 
     /** A copy the caller owns, as `grab` hands one out. */

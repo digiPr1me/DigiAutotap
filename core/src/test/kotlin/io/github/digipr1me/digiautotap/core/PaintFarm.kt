@@ -14,7 +14,7 @@ import org.opencv.imgproc.Imgproc
  * readers together rather than the loop against a stub of itself.
  *
  * Every colour and place below is farm.py's own measurement, quoted where it
- * is used. Nothing here is a game image (NOTES.md, and release.py's
+ * is used. Nothing here is a game image (notes/publishing.md, and release.py's
  * EXCLUDED_FILES): these are rectangles in the hues the readers measure.
  *
  * One honest limit, the same one test_passive_flow.py writes down: the digits
@@ -78,6 +78,24 @@ object PaintFarm {
     private val VEG = Paint.hsv(45, 200, 200)
     // The X's blue mark: Summon.EXIT_MARK, H 98-118, S 110-220, V >= 140.
     private val X_MARK = Paint.hsv(108, 165, 200)
+    // The watering-can dialog's four yellow keys (MIN, -, +, MAX):
+    // Farm.BOOST_KEY_HUE, H 15-32, S >= 150, V >= 190, measured H 17 to 30.
+    // Painted at H 25, outside the bracket's 8-22 and the dirt's 0-20, so
+    // that neither of those readers counts a key and no key reader counts
+    // them -- in the game they are apart by place as well.
+    private val KEY = Paint.hsv(25, 220, 230)
+    // "Time Remaining" in the water popup: Farm.POPUP_TIMER_HUE, H 35-60,
+    // S >= 80, V >= 160, the digits measured H 38 to 55, S 90 to 236, V 177
+    // to 196. Under SELECT_HUE's own V floor it is not, so the digits are
+    // painted small enough (share) that no button reader takes them.
+    private val TIME_GREEN = Paint.hsv(45, 160, 190)
+    // The violet "Ad (n/2)" in Select's place: Dungeon.VIOLET, H 117-145,
+    // S >= 100, V >= 120 (measured H 122 to 130).
+    private val VIOLET = Paint.hsv(126, 180, 200)
+    // The Reward sheet's darker blue: Dungeon.SHEET_BLUE, H 100-118,
+    // S >= 180, V 130-165 -- PaintRunner.rewardSheet's box.
+    private val SHEET = Paint.hsv(110, 220, 150)
+    private val BLACK = Scalar(0.0, 0.0, 0.0)
 
     // ------------------------------------------------------------------------
     // Where things are
@@ -119,7 +137,7 @@ object PaintFarm {
     // water popup's own button has, so Select is painted at the aspect it was
     // measured at (3.1) and Water at its own (see WATER_*). That difference
     // is the whole of what Farm.waterButton tells them apart by
-    // (WATER_BUTTON_MIN_ASPECT 4.0).
+    // (WATER_BUTTON_MIN_ASPECT, 4.0 until 2026-09-28 and 3.5 since).
     private const val SELECT_HALF_W = 0.122
     private const val SELECT_HALF_H = 0.023
     // The water popup's green button, measured on water_popup_adb.png:
@@ -127,10 +145,78 @@ object PaintFarm {
     // floor, where Select's 5.3 would not be. Painted a shade flatter than
     // the measurement so the two sit either side of that floor as they do in
     // the game.
-    private const val WATER_FX = 0.5
-    private const val WATER_FY = 0.62
+    //
+    // Since 2026-09-28 at the place M1 measured (water_popup_012705.png: fx
+    // 0.476, fy 0.6758) rather than at 0.62: "Time Remaining" is read in the
+    // same green at fy 0.600 to 0.645 (Farm.POPUP_TIMER_BAND), and a button
+    // painted there would be the whole of that band.
+    const val WATER_FX = 0.476
+    const val WATER_FY = 0.6758
     private const val WATER_HALF_W = 0.1605
     private const val WATER_HALF_H = 0.0215
+    // The popup's "Time Remaining", right-aligned to fx 0.6827 at fy 0.6202
+    // to 0.6313 (Farm.POPUP_TIMER_BAND): the text's right edge and its
+    // baseline.
+    private const val POPUP_TIME_RIGHT = 0.6827
+    private const val POPUP_TIME_BASELINE = 0.633
+    private const val POPUP_TIME_PX = 16
+
+    // The header's second row, the green can (Farm.WATER_CANS_BAND, fy
+    // 0.108-0.136, fx 0.500-0.575; the digits measured at fy 0.1182 to
+    // 0.1288, right-aligned to 0.5606) and its pink countdown under it
+    // (Farm.CAN_REFILL_BAND, fy 0.130-0.160, fx 0.470-0.580; measured fx
+    // 0.4996 to 0.5519, fy 0.1364 to 0.1444). The countdown is painted
+    // smaller than the sack's, as it is in the game (16 px against 21), and
+    // a shade smaller again, 14 px, so that "05:00" fits the band's 0.11 of
+    // the width in this font.
+    private const val CANS_RIGHT = 0.5606
+    private const val CANS_BASELINE = 0.1300
+    private const val CANS_PX = 21
+    private const val CAN_REFILL_FX = 0.527
+    private const val CAN_REFILL_BASELINE = 0.1575
+    private const val CAN_REFILL_PX = 14
+
+    // The number under a slot: 0.025 to 0.036 under its centre in both
+    // dialogs (Farm.SLOT_COUNT_DY reads 0.022 to 0.048), 22 px.
+    private const val SLOT_COUNT_BASELINE_DY = 0.043
+    private const val SLOT_COUNT_PX = 22
+
+    // The watering-can dialog, boost_012720.png: the Tiny slot at fx 0.3762
+    // and the Huge one at 0.5759, both at fy 0.4477; the four keys in a row
+    // at fy 0.554 to 0.589; the white box between "-" and "+" (fx 0.36 to
+    // 0.58, the number black at fy 0.5621 to 0.5788); Water at fx 0.476, fy
+    // 0.6616, an aspect of 3.10 -- under Farm.WATER_BUTTON_MIN_ASPECT, which
+    // is what keeps the dialog from reading as the water popup.
+    const val TINY_FX = 0.3762
+    const val HUGE_FX = 0.5759
+    const val CAN_SLOT_FY = 0.4477
+    val KEY_FX = doubleArrayOf(0.22, 0.30, 0.66, 0.74)
+    private const val KEY_FY = 0.571
+    private const val KEY_HALF_W = 0.03
+    private const val KEY_HALF_H = 0.015
+    private val AMOUNT_BOX = doubleArrayOf(0.355, 0.545, 0.585, 0.595)
+    private const val AMOUNT_BASELINE = 0.584
+    private const val AMOUNT_PX = 26
+    private const val AMOUNT_THICK = 1
+    private const val POPUP_THICK = 2
+    const val BOOST_BUTTON_FX = 0.476
+    const val BOOST_BUTTON_FY = 0.6616
+    private const val BOOST_BUTTON_HALF_W = 0.10
+    private const val BOOST_BUTTON_HALF_H = 0.025
+
+    // The seed menu's violet "Ad (n/2)", in Select's place (fx 0.476, fy
+    // 0.5995, ad_dialog_seeds_013423.png).
+    private const val AD_TEXT_PX = 20
+    //
+    // The sizes of the painted numbers above are the ones the readers read
+    // back, measured on these frames 2026-09-28 over 0 to 8 and the counts
+    // the tests paint -- the Hershey font is not the game's (the head of
+    // this file): under a slot 22 and 23 px read every one, 18 to 21 px
+    // read 4 as 7, 2 as 3 or 8 as 9, and 24 px 4 as 7 again; in the can
+    // dialog's box 26 px reads every digit at a stroke of 1; the popup's
+    // green time reads from 14 px at a stroke of 2 and not at all at a
+    // stroke of 1 under 20 px (the crop is brought to 1920's scale first,
+    // Farm.popupTimer); the ad's "n/2" reads from 19 px.
 
     // The free-seed counter on the field's own header: Farm.FREE_SEEDS_BAND
     // is fy 0.060-0.110, fx 0.375-0.455, and the digits measured 21 px tall
@@ -219,17 +305,30 @@ object PaintFarm {
      * the glyph beside it and not against a pixel count.
      */
     private fun text(img: Mat, text: String, fx: Double, fy: Double, px: Int,
-                     colour: Scalar) {
+                     colour: Scalar, right: Boolean = false, thick: Int = 1) {
         if (text.isEmpty()) return
         val font = Imgproc.FONT_HERSHEY_SIMPLEX
         // getTextSize("0") at scale 1 gives the cap height; the font scales
         // linearly, so one measurement is the whole answer.
         val unit = Imgproc.getTextSize("0", font, 1.0, 1, IntArray(1)).height
         val scale = px / unit
-        val size = Imgproc.getTextSize(text, font, scale, 1, IntArray(1))
-        Imgproc.putText(img, text, Point(fx * W - size.width / 2, fy * H), font, scale,
-                        colour, 1)
+        val size = Imgproc.getTextSize(text, font, scale, thick, IntArray(1))
+        // [right]: [fx] is the right edge, for the counters the game aligns
+        // to the right (the can's count, the popup's time).
+        val x = if (right) fx * W - size.width else fx * W - size.width / 2
+        Imgproc.putText(img, text, Point(x, fy * H), font, scale, colour, thick)
     }
+
+    /**
+     * The watering-can dialog as the world wants it: [tiny] under the Tiny
+     * slot ("4", or "0/2" at 0 cans), [amount] in the box. [known] false
+     * paints it without its four keys -- a dialog after Water that
+     * Farm.boostPopup does not know, which the skill must close untouched.
+     */
+    class Boost(val tiny: String, val amount: String, val huge: String = "0",
+                val known: Boolean = true,
+                /** The can in the bracket: 0 the Tiny one, as every real dialog opened; 1 the Huge one. */
+                val chosen: Int = 0)
 
     // ------------------------------------------------------------------------
     /**
@@ -243,9 +342,22 @@ object PaintFarm {
      * (PLAN_MEAT_FIELD 2.2) and what `Farm.seedMenu` is gated on.
      */
     fun field(plots: List<Plot>, seeds: String = "", refill: String = "",
-              menu: Int? = null, popup: Boolean = false): Mat {
+              menu: Int? = null, popup: Boolean = false,
+              /** The green can's count on the header's second row, and its pink countdown. */
+              cans: String = "", canRefill: String = "",
+              /** The numbers under the seed menu's three slots, while [menu] is open. */
+              slotCounts: List<String> = emptyList(),
+              /** "2/2": the menu's violet "Ad (n/2)" stands where Select would. */
+              seedAd: String? = null,
+              /** The water popup's "Time Remaining", H:M:S or M:S. */
+              popupTime: String = "",
+              /** The watering-can dialog. */
+              boost: Boost? = null,
+              /** The Reward sheet over everything. */
+              sheet: Boolean = false): Mat {
+        if (sheet) return rewardSheet()
         val img = Paint.blank()
-        val dialog = menu != null || popup
+        val dialog = menu != null || popup || boost != null
         for (row in 0 until 3) {
             for (col in 0 until 2) {
                 val cx = Farm.PLOT_COLS[col]
@@ -281,6 +393,8 @@ object PaintFarm {
         }
         text(img, seeds, SEEDS_FX, SEEDS_BASELINE, SEEDS_PX, WHITE)
         text(img, refill, REFILL_FX, REFILL_BASELINE, REFILL_PX, PINK)
+        text(img, cans, CANS_RIGHT, CANS_BASELINE, CANS_PX, WHITE, right = true)
+        text(img, canRefill, CAN_REFILL_FX, CAN_REFILL_BASELINE, CAN_REFILL_PX, PINK)
         if (menu != null) {
             for ((i, fx) in SLOT_FX.withIndex()) {
                 rect(img, fx, SLOT_FY, SLOT_HALF_W, SLOT_HALF_H, SLOT)
@@ -291,11 +405,68 @@ object PaintFarm {
                         }
                     }
                 }
+                text(img, slotCounts.getOrElse(i) { "" }, fx, SLOT_FY + SLOT_COUNT_BASELINE_DY,
+                     SLOT_COUNT_PX, WHITE)
             }
-            rect(img, SELECT_FX, SELECT_FY, SELECT_HALF_W, SELECT_HALF_H, GREEN)
+            if (seedAd != null) {
+                rect(img, SELECT_FX, SELECT_FY, SELECT_HALF_W, SELECT_HALF_H, VIOLET)
+                text(img, seedAd, SELECT_FX, SELECT_FY + 0.0075, AD_TEXT_PX, WHITE)
+            } else {
+                rect(img, SELECT_FX, SELECT_FY, SELECT_HALF_W, SELECT_HALF_H, GREEN)
+            }
         }
-        if (popup) rect(img, WATER_FX, WATER_FY, WATER_HALF_W, WATER_HALF_H, GREEN)
+        if (popup) {
+            rect(img, WATER_FX, WATER_FY, WATER_HALF_W, WATER_HALF_H, GREEN)
+            text(img, popupTime, POPUP_TIME_RIGHT, POPUP_TIME_BASELINE, POPUP_TIME_PX, TIME_GREEN,
+                 right = true, thick = POPUP_THICK)
+        }
+        if (boost != null) {
+            for ((fx, count) in listOf(TINY_FX to boost.tiny, HUGE_FX to boost.huge)) {
+                rect(img, fx, CAN_SLOT_FY, SLOT_HALF_W, SLOT_HALF_H, SLOT)
+                text(img, count, fx, CAN_SLOT_FY + SLOT_COUNT_BASELINE_DY, SLOT_COUNT_PX, WHITE)
+            }
+            // The chosen can in the bracket: the Tiny one on every dialog seen.
+            val chosenFx = if (boost.chosen == 1) HUGE_FX else TINY_FX
+            for (dx in listOf(-BRACKET_DX, BRACKET_DX)) {
+                for (dy in listOf(-BRACKET_DY, BRACKET_DY)) {
+                    rect(img, chosenFx + dx, CAN_SLOT_FY + dy, 0.015, 0.01, BRACKET)
+                }
+            }
+            if (boost.known) for (fx in KEY_FX) rect(img, fx, KEY_FY, KEY_HALF_W, KEY_HALF_H, KEY)
+            Imgproc.rectangle(img, Point(AMOUNT_BOX[0] * W, AMOUNT_BOX[1] * H),
+                              Point(AMOUNT_BOX[2] * W, AMOUNT_BOX[3] * H), WHITE, -1)
+            text(img, boost.amount, (AMOUNT_BOX[0] + AMOUNT_BOX[2]) / 2, AMOUNT_BASELINE, AMOUNT_PX,
+                 BLACK, thick = AMOUNT_THICK)
+            rect(img, BOOST_BUTTON_FX, BOOST_BUTTON_FY, BOOST_BUTTON_HALF_W, BOOST_BUTTON_HALF_H,
+                 GREEN)
+        }
         exitX(img)
+        return img
+    }
+
+    /** The Reward sheet, as PaintRunner paints it: the band's darker blue and "Tap to close" along fy 0.82. */
+    fun rewardSheet(): Mat {
+        val img = Paint.blank()
+        Imgproc.rectangle(img, Point(0.005 * W, 0.226 * H), Point(0.947 * W, 0.685 * H), SHEET, -1)
+        Imgproc.rectangle(img, Point(0.42 * W, 0.812 * H), Point(0.53 * W, 0.828 * H), WHITE, -1)
+        return img
+    }
+
+    /**
+     * The game's "Ad viewing limit reached." box as [Farm.adLimit] finds it:
+     * a panel in Dungeon.BLUE 0.66 wide and 0.24 tall (ad_limit_cans_013641.png,
+     * 0.6626 x 0.2384), and in its lower half an OK of 0.20 x 0.042 at fy
+     * 0.60 -- ringed in white so that the two come out as two blobs, as the
+     * game's darker panel and lighter button do. The ring is wider than the
+     * 15 x 5 px closing Dungeon.findButtons gives its mask (24 px across, 14
+     * down at 805 x 1390), or the two would be one.
+     */
+    fun limitBox(): Mat {
+        val img = Paint.blank()
+        val blue = Paint.hsv(105, 200, 200)
+        rect(img, 0.5, 0.514, 0.331, 0.119, blue)
+        rect(img, 0.5, 0.60, 0.128, 0.031, WHITE)
+        rect(img, 0.5, 0.60, 0.098, 0.021, blue)
         return img
     }
 

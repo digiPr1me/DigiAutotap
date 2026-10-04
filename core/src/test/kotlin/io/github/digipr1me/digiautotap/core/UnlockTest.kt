@@ -115,7 +115,7 @@ class UnlockTest {
     }
 
     /**
-     * The recovery from a lost activation key (NOTES.md, "Publishing"): a
+     * The recovery from a lost activation key (notes/publishing.md, "Publishing"): a
      * new pair, its public half appended. A phone that redeemed under the
      * old key still holds, a phone that redeems under the new one holds too,
      * and a third key is nobody's word however long the list grows.

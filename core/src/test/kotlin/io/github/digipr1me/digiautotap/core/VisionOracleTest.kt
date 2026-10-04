@@ -21,9 +21,10 @@ import kotlin.test.fail
  * The minigame readers against oracle/vision.json: every frame it names,
  * every reader of the family, and the answer has to be the one in the file.
  * A frame that answers differently is a reader change to look at, never a
- * reason to edit the oracle by hand (NOTES.md, "The oracle is the seam"):
- * if the change was meant, with a measurement, `gradlew :core:writeOracle`
- * writes the file again and its diff is the list of frames that tipped.
+ * reason to edit the oracle by hand (NOTES.md, "The oracle is the contract, and
+ * `writeOracle` writes it"): if the change was meant, with a measurement,
+ * `gradlew :core:writeOracle` writes the file again and its diff is the list of
+ * frames that tipped.
  *
  * The templates and the digit references come in through the asset source,
  * from the class path here and from the APK in the app: what the first test
@@ -108,7 +109,7 @@ class VisionOracleTest {
 
     @Test
     fun `every reader gives the oracle's answer on every frame`() {
-        val report = OracleFamilies.check(OracleFamilies.VISION, oracle, repo, vision)
+        val report = OracleFamilies.check(OracleFamilies.VISION, oracle, repo)
         report.print()
         if (report.mismatches.isNotEmpty()) fail(report.summary())
 
@@ -144,9 +145,13 @@ class VisionOracleTest {
 
         val odd = vision.medianCalib(listOf(a, b, b)).toOracle()
         val even = vision.medianCalib(listOf(a, b)).toOracle()
+        // roi_meters is not Python's [387, 1267, 278, 40] since F26: the metre box
+        // hangs from five rows of cellW / ASPECT and reaches down to their bottom
+        // (Vision.build; notes/world-search.md, "The metre box hangs from the
+        // grid's rows, and the label does not").
         val boxes = mapOf(
             "roi_claws" to listOf(305, 1697, 216, 72), "roi_fireballs" to listOf(305, 1773, 216, 72),
-            "roi_meters" to listOf(387, 1267, 278, 40), "roi_paws" to listOf(305, 1621, 216, 72),
+            "roi_meters" to listOf(387, 1266, 278, 43), "roi_paws" to listOf(305, 1621, 216, 72),
             "roi_top_green" to listOf(476, 26, 205, 68), "roi_top_orange" to listOf(281, 26, 205, 68),
             "roi_top_pink" to listOf(670, 26, 205, 68))
         val expectedOdd = mapOf("card" to listOf(98, 0, 884, 1903), "cell_h" to 134.6673, "cell_w" to 164.03,

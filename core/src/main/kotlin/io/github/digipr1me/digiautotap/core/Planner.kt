@@ -75,8 +75,10 @@ object PlannerConst {
 
 /**
  * One action the planner decided on. [kind] is step, destroy, skill, wait,
- * stop -- or "unreachable", which never leaves [Planner.nextAction] and only
- * carries a target back to it.
+ * stop, stuck -- or "unreachable", which never leaves [Planner.nextAction]
+ * and only carries a target back to it. "stuck" is the figure walled in
+ * with nothing to get it out, which no wait mends (see [Planner]'s
+ * `unreachable`); it is not in planner.py.
  *
  * [cell] is the visible (row, col) for the click, except on "unreachable",
  * where it is the (global column, row) of the target given up on -- that is
@@ -111,6 +113,15 @@ class Planner(
     private val bitLeftPenalty: Int = PlannerConst.BIT_LEFT_PENALTY,
     private val bitMiddleBias: Int = PlannerConst.BIT_MIDDLE_BIAS,
     private val bitPerAction: Int = PlannerConst.BIT_PER_ACTION,
+    /**
+     * `mini_dash_eager`, the World Search page's one switch (the player's
+     * order of 2026-09-27, PLAN_WORLD_SEARCH_DASH.md, version A): two or more
+     * pyramids in the cells the dash flies over -- or a path on foot that is
+     * blocked -- are dashed through even when something in another row
+     * would scroll off the board, and the reason names what that gives up.
+     * Off, the rule is the one above `BIT_PAW`, unchanged. Not in planner.py.
+     */
+    private val dashEager: Boolean = false,
 ) {
 
     /**
@@ -122,11 +133,22 @@ class Planner(
      */
     private var dashHeld: String? = null
 
+    /**
+     * Whether the last [search] of this decision went round the unseen cell
+     * over the figure, which then goes onto the reason as the dash's hold
+     * does: the one line a report or a live pass can show the rule by.
+     */
+    private var wentRound = false
+
     // ------------------------------------------------------------------------
     fun nextAction(counters: Map<String, Long?>, depth: Int = 0): Action {
         if (depth > 0) return decide(counters, depth)
         dashHeld = null
+        wentRound = false
         val act = decide(counters, 0)
+        if (wentRound && (act.kind == "step" || act.kind == "destroy")) {
+            act.reason += ", round the unseen cell over the figure"
+        }
         dashHeld?.let { if (act.kind != "skill") act.reason += ", dash held: $it" }
         return act
     }
@@ -181,7 +203,7 @@ class Planner(
 
         skillWorthIt(counters)?.let { return it }
 
-        val route = router(counters).search(w.row!! to w.col!!, setOf(row to col))
+        val route = search(counters, setOf(row to col))
         return routeAction(route, counters, "towards $kind", target = gcol to row)
     }
 
@@ -195,7 +217,7 @@ class Planner(
     private fun advance(counters: Map<String, Long?>): Action {
         skillWorthIt(counters)?.let { return it }
         val w = world
-        val route = router(counters).search(w.row!! to w.col!!, emptySet())
+        val route = search(counters, emptySet())
         return routeAction(route, counters, "making progress")
     }
 
@@ -207,7 +229,8 @@ class Planner(
      * That way a calculation decides whether to detour or destroy, instead
      * of an individual rule.
      */
-    private fun router(counters: Map<String, Long?>): Router {
+    private fun router(counters: Map<String, Long?>, keepLeft: Boolean = false,
+                       closed: Pair<Int, Int>? = null): Router {
         val w = world
         val claws = counters["claws"]
         return Router(
@@ -216,12 +239,59 @@ class Planner(
             costDestroy = (bitClaw + bitPerAction - bitPyramidLoot).toDouble(),
             leftPenalty = bitLeftPenalty.toDouble(),
             middleBias = bitMiddleBias.toDouble(),
-            canDestroy = claws == null || claws > 0)
+            figColMax = WorldConst.FIG_COL_MAX,
+            canDestroy = claws == null || claws > 0,
+            keepLeft = keepLeft,
+            closed = closed)
     }
 
-    /** Turn the first action of a found route into an [Action]. */
+    /**
+     * The router's cheapest way from the figure to [goals] (to the furthest
+     * column where empty) -- and where it begins with a step up into the
+     * cell over the figure that the World has never seen clear
+     * ([World.hidden]), the same search with that cell closed, taken where
+     * it finds a way of as many steps and as many pyramids (advancing, to
+     * the same column). A pyramid behind a tall partner's head reads as
+     * nothing, and a step up into it is a claw the player did not want:
+     * three times in the 70 passes of the format and skin tours, twice as
+     * the first action of a pass, where the World had nothing to remember
+     * (PLAN_WORLD_SEARCH_FORMATE.md F16; notes/world-search.md, "The cell
+     * over the figure is not read as empty"). The way round costs the middle
+     * bias and nothing else: `plannerProbe` over the corpus's 151 boards, the
+     * figure on every empty cell of its columns, turned 542 of 4572 first
+     * decisions from that step up into a step right, down or left of as many
+     * steps and pyramids, 0 to 4 Bits dearer, and moved nothing else; 399 of
+     * the 941 step-ups into that cell stay, where no way as short goes round.
+     * A longer way is not bought: a pyramid stood in 28 of the 148 cells over
+     * the figure on the boards measured, and at the player's prices a claw
+     * one time in five is less than two steps every time. The first draft
+     * priced the cell as a pyramid, and turned 95 of those step-ups (claws 3)
+     * into a claw on a pyramid beside the figure. Not in planner.py.
+     */
+    private fun search(counters: Map<String, Long?>, goals: Set<Pair<Int, Int>>,
+                       keepLeft: Boolean = false): Route {
+        val w = world
+        val start = w.row!! to w.col!!
+        wentRound = false
+        val route = router(counters, keepLeft).search(start, goals)
+        val over = w.overFigure() ?: return route
+        if (!route.reachable || route.first != "up" || !w.hidden(over.first, over.second)) return route
+        val round = router(counters, keepLeft, closed = over.second to (over.first - w.scrollOffset))
+            .search(start, goals)
+        val same = round.reachable && round.steps == route.steps && round.destroys == route.destroys &&
+            (goals.isNotEmpty() || round.path.last().second == route.path.last().second)
+        wentRound = same
+        return if (same) round else route
+    }
+
+    /**
+     * Turn the first action of a found route into an [Action]. [fetching]
+     * is the route [fetchLeft] found, which never goes to [fetchLeft] again
+     * -- a belt under the router's keepLeft, which already keeps that
+     * route off the step the safety rule asks about. Not in planner.py.
+     */
     private fun routeAction(route: Route, counters: Map<String, Long?>, reason: String,
-                            target: Pair<Int, Int>? = null): Action {
+                            target: Pair<Int, Int>? = null, fetching: Boolean = false): Action {
         val w = world
         if (!route.reachable || route.first == null) return unreachable(counters, target)
 
@@ -232,9 +302,11 @@ class Planner(
         val gcol = w.scrollOffset + col
 
         // Safety rule. A step right out of the second column scrolls and
-        // would lose everything in the left visible column.
-        if (direction == "right" && w.col!! >= WorldConst.FIG_COL_MAX) {
-            if (wouldLoseItems(1)) return fetchLeft(counters)
+        // would lose everything in the left visible column -- unless all
+        // that is there is given up already, which fetchLeft answers with
+        // null.
+        if (!fetching && direction == "right" && w.col!! >= WorldConst.FIG_COL_MAX) {
+            if (wouldLoseItems(1)) fetchLeft(counters)?.let { return it }
         }
 
         if (w.isPyramid(gcol, row)) {
@@ -249,34 +321,97 @@ class Planner(
     /**
      * Something wanted sits in the left visible column and would be lost on
      * the next scroll. Fetch it first.
+     *
+     * Two deliberate departures from planner.py, one fault
+     * (PLAN_WORLD_SEARCH_FORMATE.md 4.2, F1). planner.py searched the way to
+     * the object with the router as it plans everywhere, and where pyramids
+     * stood below and the cheapest way went round by column 2, that way
+     * began with the very step right the safety rule had refused, and
+     * routeAction sent it here again, without end: a StackOverflowError at
+     * the first decision on 23 positions of the corpus's boards, the format
+     * tour's board on every format. So the search keeps to the two columns
+     * the object stays on the board in (the router's keepLeft), and where no
+     * such way is left the object is unreachable as any other target is --
+     * the skill, or given up (`unreachable`). And an object given up already
+     * is not fetched: it would hold the step right at every decision after
+     * that, and measured without this line, with no claws, all 23 positions
+     * answered "wait (too many unreachable targets)" -- and the same again
+     * at every round, a pass that stands. Null, when all there is in the
+     * left column is given up: the step goes on. planner.py's "safety rule
+     * with no target" wait was never reached; it is this null now.
      */
-    private fun fetchLeft(counters: Map<String, Long?>): Action {
+    private fun fetchLeft(counters: Map<String, Long?>): Action? {
         val w = world
         val leftGcol = w.scrollOffset
         for (row in 0 until Vision.ROWS) {
-            if (!w.isWanted(leftGcol, row)) continue
-            val route = router(counters).search(w.row!! to w.col!!, setOf(row to 0))
+            if (!w.isWanted(leftGcol, row) || (leftGcol to row) in w.unreachable) continue
+            val route = search(counters, setOf(row to 0), keepLeft = true)
             return routeAction(route, counters, "fetching object in the left column",
-                               target = leftGcol to row)
+                               target = leftGcol to row, fetching = true)
         }
-        // Only reached if wouldLoseItems(1) and isWanted disagreed about the
-        // left column, which they cannot: both ask world.isWanted. Kept as
-        // planner.py has it.
-        return Action("wait", reason = "safety rule with no target")
+        return null
     }
 
-    /** No path found. Check the skill first, then give up on the target. */
+    /**
+     * No path found. Check the skill first, then give up on the target.
+     *
+     * With no [target] it was [advance] that found no way: no cell right of
+     * the figure's column can be reached on foot -- with no claws, the one
+     * way the figure can stand still, since with claws every cell can be
+     * entered. That is the figure walled in, and the price in [skillWorthIt]
+     * compares the dash there with a walk that does not exist: `cellCost`
+     * goes round a pyramid by the row above or below it without asking
+     * whether the figure can get into that row. On
+     * corpus/explore/more-skins-FILTER-C-2026-08-25 220501.png, with the
+     * figure put on r5c2 between pyramids left, right and above and no
+     * claws, it priced a detour over r4c3 at 360 Bits against the dash's 375
+     * and held the dash -- "wait (no path found)", and live every round the
+     * same wait, a pass that stands (PLAN_WORLD_SEARCH_FORMATE.md 4.2, F9).
+     * The player's rule of 2026-09-28, which is "a dash when stuck" of
+     * 2026-09-24 made exact: walled in with no claws, the dash comes whenever
+     * there are charges -- an unread counter reads as charges, as everywhere
+     * here, and one that reads 0 still holds it. "Walled in" is the router's
+     * answer and not the four neighbours: of 20,000 random boards (the
+     * plannerProbe's `synthetic=`), the neighbours call 582 walled in and the
+     * router 1,038, and the 456 between them -- a pocket of cells in the two
+     * columns with pyramids all round it -- are stuck just the same. 318 of
+     * the walled ones and 112 of the pockets stood; every one of those 430
+     * dashes now, and no other decision moved. The veto cannot hold the
+     * dash here: advance only runs once no wanted thing in view is left that
+     * is not given up. The prices are not touched. Not in planner.py.
+     *
+     * Walled in with the dash held as well -- which, walled in, is a
+     * fireball counter that reads 0 and nothing else -- nothing can move the
+     * figure, and planner.py answered "wait (no path found)". The skill made
+     * that a round every 1.5 s or more, each counted as a move on the TODAY
+     * card, reading the board again and never the counters, so a claw or a
+     * fireball that recharged was never seen, and the pass -- in the fully
+     * automatic mode the chain with it -- stood until the main switch
+     * (PLAN_WORLD_SEARCH_FORMATE.md 4.2 and 11, F11; notes/world-search.md,
+     * "Walled in with nothing left to get out"). The player's rule of
+     * 2026-09-28: then the bot says so. So the answer is "stuck", a kind of
+     * its own, which the skill takes one more look at and then parks on
+     * (WorldSearchSkill); no other wait changes. Measured with the
+     * plannerProbe, fireballs 0: on the corpus the one F9 position (220501
+     * r5c2, the switch off and on), on 20,000 random boards 1,888 of 40,000
+     * positions -- every "wait (no path found)" there was, and with
+     * fireballs 3 or unread there is none. Not in planner.py.
+     */
     private fun unreachable(counters: Map<String, Long?>, target: Pair<Int, Int>?): Action {
-        val skill = skillWorthIt(counters, minPyramids = 1)
+        val walledIn = target == null
+        val skill = skillWorthIt(counters, minPyramids = 1, walledIn = walledIn)
         if (skill != null) {
-            skill.reason = "no path free, skill clears it" +
+            skill.reason = (if (walledIn) "walled in, no way on foot, skill clears it"
+                            else "no path free, skill clears it") +
                 (if (counters["fireballs"] == null) ", charges unknown" else "")
             return skill
         }
         if (target != null) {
             return Action("unreachable", cell = target, reason = "no path, no claws and no skill")
         }
-        return Action("wait", reason = "no path found")
+        // Why the dash is held follows as the reason's tail ("dash held: no
+        // charges"), as on every other decision.
+        return Action("stuck", reason = "walled in, no way on foot and no claws")
     }
 
     /**
@@ -314,14 +449,17 @@ class Planner(
      * edge of the board?
      *
      * For a step right, [scroll] is 1; for the skill, 2 or 3. Objects in row
-     * [keepRow] are collected by the skill and do not count.
+     * [keepRow] are collected by the skill and do not count. With
+     * [countGivenUp] false, neither do objects the planner has given up
+     * (`world.unreachable`); see the dash's veto in [skillWorthIt].
      */
-    private fun wouldLoseItems(scroll: Int, keepRow: Int? = null): Boolean {
+    private fun wouldLoseItems(scroll: Int, keepRow: Int? = null, countGivenUp: Boolean = true): Boolean {
         val w = world
         for (col in 0 until scroll) {
             val gcol = w.scrollOffset + col
             for (row in 0 until Vision.ROWS) {
                 if (keepRow != null && row == keepRow) continue
+                if (!countGivenUp && (gcol to row) in w.unreachable) continue
                 if (w.isWanted(gcol, row)) return true
             }
         }
@@ -342,9 +480,11 @@ class Planner(
      * It flies over cells without collecting, so never over a wanted
      * power-up. It is compared against the cheapest path on foot over the
      * same columns, i.e. steps plus, per pyramid, either one claw or a
-     * detour.
+     * detour -- except [walledIn], where there is no path on foot to compare
+     * with (see [unreachable]).
      */
-    private fun skillWorthIt(counters: Map<String, Long?>, minPyramids: Int? = null): Action? {
+    private fun skillWorthIt(counters: Map<String, Long?>, minPyramids: Int? = null,
+                             walledIn: Boolean = false): Action? {
         val w = world
         val charges = counters["fireballs"]
         val span = if (w.col!! >= WorldConst.FIG_COL_MAX) 3 else 2
@@ -364,13 +504,50 @@ class Planner(
         // banner, and runLoop sets the counter to 0 after it: a cheap error
         // that corrects itself.
         if (charges == 0L) return held("no charges")
+        // The switch on the page: with two or more pyramids ahead, or a path
+        // on foot that is blocked, the dash comes without the veto below and
+        // without the price -- at two pyramids the price says "dash" anyway
+        // (520 or 440 Bits on foot against 350), so what the switch changes
+        // is the veto alone. What the veto would have kept is lost, so the
+        // reason names it: the player sees what the dash paid.
+        if (dashEager && pyramids > 0) {
+            val blocked = cells.any { (gcol, row) -> cellCost(gcol, row, counters).first == null }
+            if (pyramids >= 2 || blocked) {
+                val lost = ArrayList<String>()
+                for (col in 0 until span) {
+                    val gcol = w.scrollOffset + col
+                    for (row in 0 until Vision.ROWS) {
+                        if (row == w.row || !w.isWanted(gcol, row)) continue
+                        lost += "%s in r%dc%d".format(w.at(gcol, row), row + 1, col + 1)
+                    }
+                }
+                return Action("skill", reason = "eager: %d pyramid(s) ahead%s, %s%s".format(
+                    pyramids, if (blocked) ", path on foot blocked" else "",
+                    if (lost.isEmpty()) "nothing given up" else "giving up " + lost.joinToString(", "),
+                    if (charges == null) ", charges unknown" else ""))
+            }
+        }
         // The skill also picks up from the ground, so it is allowed to fly
         // over items. But it scrolls by span columns, and that pushes
         // objects off the left edge of the board. In its own row they get
         // collected; in every other row they would be lost.
-        if (wouldLoseItems(span, keepRow = w.row)) return held("an item in another row would scroll off")
+        //
+        // What the planner has given up already (`world.unreachable`) is not
+        // lost by the dash: it was lost when it was given up. planner.py
+        // counted it, and a token walled off without claws then held every
+        // dash for as long as it stood in those columns. The player's rule
+        // of 2026-09-28 (PLAN_WORLD_SEARCH_FORMATE.md F8): a thing given up
+        // holds no dash. Not in planner.py. The step right asks the same
+        // through fetchLeft, which answers null for what is given up.
+        if (wouldLoseItems(span, keepRow = w.row, countGivenUp = false)) {
+            return held("an item in another row would scroll off")
+        }
         if (pyramids < (minPyramids ?: 1)) return null
         val unknown = if (charges == null) ", charges unknown" else ""
+        // Walled in (F9, the player's rule of 2026-09-28): no price, because
+        // the walk it would be weighed against is not there. Not in
+        // planner.py.
+        if (walledIn) return Action("skill", reason = "walled in, %d pyramid(s)%s".format(pyramids, unknown))
 
         var walkBits: Int? = 0
         var walkActs = 0

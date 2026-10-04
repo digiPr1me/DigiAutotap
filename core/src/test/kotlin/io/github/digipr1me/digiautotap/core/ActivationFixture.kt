@@ -54,7 +54,7 @@ object ActivationFixture {
     /**
      * [GOOD]'s payload, signed with the second throwaway pair (`test2.*`):
      * the key that replaces a lost one, appended after [PUBLIC_KEY] in
-     * [Unlock.ACTIVATION_PUBLIC_KEYS] (NOTES.md, "Publishing").
+     * [Unlock.ACTIVATION_PUBLIC_KEYS] (notes/publishing.md, "Publishing").
      */
     const val SECOND_KEY = "eyJ2IjoxLCJkaWdlc3QiOiI5NDM1MTNjNzg2M2UwMmY0ZTY1OGExOWIzZWY4YzAxNDA3ODMxYjhjN2JkY2ZjOGY2YjNkNDZhYzk4YjdkODc2IiwiaW5zdGFsbCI6IjdmM2MxYTkyLTViNGUtNGQwYS05YzIxLTBlOGY2YjJkNGE3NyIsInNsb3QiOjEsImF0IjoxNjk1NDAwMDAwfQ.PdSyqHYw2Z1Z9aAjc6MFdpS7ypp8tZYLhGfaZyz5U6vsljtR5uShNGObZtW5PSVeJJcwuJ-n-dYwwiAJJoMkkg"
 

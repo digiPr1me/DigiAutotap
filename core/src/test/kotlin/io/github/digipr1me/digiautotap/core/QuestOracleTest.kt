@@ -16,9 +16,10 @@ import kotlin.test.fail
  * The quest readers against oracle/quest.json: every frame it names, every
  * reader of the family, and the answer has to be the one in the file.
  * A frame that answers differently is a reader change to look at, never a
- * reason to edit the oracle by hand (NOTES.md, "The oracle is the seam"):
- * if the change was meant, with a measurement, `gradlew :core:writeOracle`
- * writes the file again and its diff is the list of frames that tipped.
+ * reason to edit the oracle by hand (NOTES.md, "The oracle is the contract, and
+ * `writeOracle` writes it"): if the change was meant, with a measurement,
+ * `gradlew :core:writeOracle` writes the file again and its diff is the list of
+ * frames that tipped.
  */
 @Tag(OracleFamilies.CORPUS_TAG)
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
@@ -37,7 +38,7 @@ class QuestOracleTest {
 
     @Test
     fun `every reader gives the oracle's answer on every frame`() {
-        val report = OracleFamilies.check(OracleFamilies.QUEST, oracle, repo, Vision(ClassPathAssets))
+        val report = OracleFamilies.check(OracleFamilies.QUEST, oracle, repo)
         report.print()
         if (report.mismatches.isNotEmpty()) fail(report.summary())
     }

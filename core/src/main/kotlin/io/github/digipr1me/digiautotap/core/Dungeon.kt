@@ -17,11 +17,11 @@ import kotlin.math.abs
  * `card_budget`, `card_has_attempts` and the digit reader under them), and
  * beside them `popup_ok`, `stage_failed`, `auto_button` and `home_button`.
  *
- * Every constant keeps its Python name and value, and the sentence that says
- * where it came from. A number here is changed in dungeon.py first, with a
- * measurement, then the oracle is written again, then this file follows --
- * never the other way round (NOTES.md, "Two implementations, one
- * direction"). The frame is BGR, uint8, as `cv2.imread` gives it.
+ * Every constant came over with its Python name and value, and the sentence
+ * that says where it came from; a number is changed in this file, with a
+ * measurement and its sentence, and then `writeOracle` writes the oracle
+ * (NOTES.md, "One project"). The frame is BGR, uint8, as `cv2.imread`
+ * gives it.
  */
 object Dungeon {
 
@@ -222,6 +222,8 @@ object Dungeon {
     // a font does.
     const val SLASH_MIN_RATIO = 1.12
     const val SLASH_MAX_WH = 0.60
+    // Characters right of the slash: the daily allowance, "2" (counterDigits).
+    const val SLASH_RIGHT_GLYPHS = 1
 
     // A counter is made of digits and a slash, and neither is square. The
     // ticket icon in front of the counter is, and on the Digifactory card it
@@ -285,6 +287,26 @@ object Dungeon {
     // wrongly.
     val DIGIT_GRID = intArrayOf(12, 16)
     const val D4_BOTTOM_MAX = 0.35        // 4 against 0, 6, 9
+    // ...and a 4 is open under its bar. A 0 of 13 to 19 px rounds its foot
+    // to a nub two pixels wide, and on the grid its last two rows came to
+    // 0.333 -- under the line above -- on the Meat Field's plates at 1080,
+    // its harvest ("x1,200" read 1240) and the seed menu's counts at 900 x
+    // 1600, where the free bag's 0 read 4 and Good's 100 read 144
+    // (PLAN_ABSCHLUSS_1_3.md K10). What a 4 has and that 0 has not is
+    // nothing under its bar on the left: its bar stands at rows 10 to 12,
+    // and under it there is only the stem, right of the middle. Measured on
+    // 2026-10-03 over every glyph the readers hand this function on the
+    // corpus (1868 frames, 15785 calls): of the one-hole glyphs of a
+    // digit's shape (0.4 to 0.9 wide per tall) with a foot under
+    // D4_BOTTOM_MAX, the last three rows' left four columns hold no ink at
+    // all on 702 calls -- every 4 among them -- and 0.167 to 1.0 on 74:
+    // those zeros, a 9 of a Reward sheet, a 6, and letters of the preset
+    // pages. So the line is the middle of 0 and 0.167, and a thin foot with
+    // ink at its left goes on to where its hole sits. writeOracle moved 14
+    // plates and 4 harvests of the field to what their pictures say.
+    const val D4_FOOT_ROWS = 3
+    const val D4_FOOT_COLS = 4
+    const val D4_FOOT_LEFT_MAX = 0.08
     const val D9_HOLE_MAX = 0.40          // 9 against 4 and 0
     const val D6_HOLE_MIN = 0.55          // 6 against 0
     const val D7_BOTTOM_MAX = 0.35        // 7, the only holeless digit with an empty foot
@@ -311,6 +333,23 @@ object Dungeon {
     const val D1_RIGHT_COLS = 3
     const val D1_UPPER_RIGHT_MAX = 0.15
     const val D2_BOTTOM_MIN = 0.85        // 2 against 3 and 5
+    // ...and a 2 is open on its lower right: its stroke runs from the
+    // shoulder to the bottom left, and under the shoulder the right-hand
+    // columns are empty. The Meat Field's pink seed timer at 900 x 1600 is
+    // 13 px tall, and there a 3's and a 5's round foot filled the grid's
+    // last two rows to 0.917 and 0.958: "38:26" read 28:26 and "58:39" read
+    // 28:29 (PLAN_ABSCHLUSS_1_3.md K10, gradlew :core:seedDigitProbe).
+    // Measured on 2026-10-03 over every glyph the readers hand this function
+    // on the corpus: of the glyphs of a digit's shape read as 2, rows 9 to
+    // 12's right four columns hold 0.0 to 0.44 on every real 2 -- the
+    // plates' 8 x 13 ones the most, where the stroke leaves the right edge
+    // in row 9 -- and 0.81 on that 3 and that 5, whose lower bowl stands
+    // there; what lay between or above were no digits (bars and edges of
+    // the HUD, specks of 2 x 3 px). So the line is the middle, and a full
+    // foot with a bowl on its right goes on to the 5-or-3 test below.
+    val D2_OPEN_ROWS = intArrayOf(9, 13)
+    const val D2_OPEN_COLS = 4
+    const val D2_OPEN_RIGHT_MAX = 0.625
 
     // 5 against 3, and this one was learned the hard way. It went by the top
     // band first, on the reasoning that the 5 opens with a solid bar while
@@ -477,7 +516,61 @@ object Dungeon {
     // between 16:9 and 17.5:9, which this would take for a window, is one
     // nobody has made since 2017; the size alone cannot tell the two apart
     // any closer than that, and the app never sees a window at all.
-    const val COVER_GAP = 0.05
+    //
+    // Somebody had: the Pixel Fold's outer display, 1080 x 2092, is 17.4:9,
+    // 0.0463 under, and on LDPlayer at that size (2026-09-27, PLAN_FORMATE.md
+    // 9) the game covers it like any long display, s 1.0891 / tx -48.4 / ty
+    // 0.6 against the model's 1.0896 / -48.4 / 0; at 0.05 it was read as a
+    // window and its dungeon list's first card stood at fy 0.2503 against
+    // 0.2813. So the gap is 0.0415, the middle between the narrowest window
+    // frame of the corpus that belongs to the fitted model (730 x 1389,
+    // 0.0369) and that display -- 11 % to either side, which is thin; every
+    // other window frame of the corpus sits at 0.012 to 0.034, and no frame
+    // of the corpus changed its branch.
+    const val COVER_GAP = 0.0415
+
+    // A display wider than the game -- a tablet, a Fold's inner display --
+    // is the other side of the cover: the game draws its 9:16 canvas the full
+    // height of the display, centres it, and fills the sides with its own
+    // background (the landscape, the nav bar's blue, on the main screen the
+    // battle), with black beyond 1.6 canvas widths. Measured on LDPlayer
+    // 2026-09-27 on eight such displays from 800 x 1340 to 2076 x 2152 at the
+    // devices' densities (PLAN_FORMATE.md 9): scale H / 1920 and tx (W - H *
+    // 9/16) / 2 to 1.5 px on every window and the HUD (1200 x 1920: 0.9994 /
+    // 60.1 / 0.4 against 1.0 / 60 / 0), and the same picture at 240 and 420
+    // dpi, so no tablet layout. Every LDPlayer window frame that is wider
+    // than the game carries the chrome (0.576 to 0.585) and is taken by the
+    // chrome's own test first; a frame wider than DEVICE_ASPECT_TOL without it
+    // was read as a letterboxed window until then, 40 px too low and 2 %
+    // too small. That is [pillaredGame].
+
+    // The cover has a ceiling: the game's canvas is never taller than 19.5:9
+    // of the display's width. Measured on LDPlayer 2026-09-26 by fitting scale
+    // and offset of the dungeon list against its 1080 x 1920 twin
+    // (PLAN_FORMATE.md V3): at 1080 wide the canvas is 2340 tall on every
+    // height from 2370 to 2640 (scale 1.2185 to 1.2195) and stands at the
+    // bottom, the rows above it background -- ty 30.5, 58.5, 119.5, 179.2,
+    // 300.8 against H - 2340 = 30, 60, 120, 180, 300, residue under 0.6 px.
+    // 1440 x 3200 gave 3120 (scale 1.6250, ty 79.6) and 720 x 1600 gave
+    // 1558 (0.8115, ty 41.4): a ratio of the width, 13/6, and not a number
+    // of pixels. Under it the canvas is what the cutout leaves: 1080 x 2400
+    // with LDPlayer's 136 px hole drew 2264 from y 136, and the Poco's 2320
+    // and the S26's 2235 were the same rule on a phone. So a 20:9 phone with
+    // no cutout, or with one smaller than the band, had 60 rows over the
+    // canvas that nobody cut, and its dungeon list was an unknown screen.
+    const val CANVAS_MAX_H_OF_W = 13.0 / 6.0
+
+    /**
+     * Rows at the top of a portrait display of [w] x [h] that are not the
+     * game's canvas: the cutout's [inset], or the band the canvas ceiling
+     * leaves (CANVAS_MAX_H_OF_W), whichever is more. A landscape display has
+     * no such strip.
+     */
+    fun canvasTop(w: Int, h: Int, inset: Int): Int {
+        if (w <= 0 || w >= h) return 0
+        val band = h - Py.roundInt(w * CANVAS_MAX_H_OF_W)
+        return maxOf(inset, band, 0)
+    }
 
     // The "Stage Failed..." banner: big red letters across the upper third.
     // It appears when the character dies, the stage restarts by itself, and
@@ -563,6 +656,34 @@ object Dungeon {
     val AUTO_W = doubleArrayOf(0.040, 0.068)
     val AUTO_ASPECT = doubleArrayOf(0.80, 1.25)
     const val AUTO_FILL_MIN = 0.65
+
+    // And the A. The game's title changed with resources 1.4.0.D7X0146
+    // (PLAN_RELEASE_1_3.md B10, 2026-09-30): at night a boy sits at the well
+    // in a blue shirt, and the shirt is a blue blob of the button's size and
+    // roundness in this band -- 51 x 55 px at 1080 x 1920, aspect 0.93, fill
+    // 0.807, fx 0.3152 fy 0.7326 -- so the title read as the main screen
+    // (corpus/startup/title_night_203943, "Paused · main" on its plate).
+    // What the shirt does not have is the white A between two arrows, which
+    // the disc encloses: the white pixels of the blob's box that it does not
+    // cover and a flood from outside the box cannot reach ([glyphWhite],
+    // white as the home globe's HOME_WHITE). Measured with `gradlew
+    // :core:titleProbe --args="auto corpus"` over the 1796 frames the corpus
+    // had and the three new titles (R2's two, and the director's own kept
+    // frame of the night title with its loading bar, title_night_loading_
+    // 205737, which had read "Watching · main" live for a minute; all three
+    // in corpus/startup since): the 450 answers that are the button
+    // hold 0.032 to 0.045 of their box in white; the five that are not hold
+    // none -- the shirt on both night frames, and three blobs the band's
+    // right and bottom edges had cut out of other artwork 0.063 to 0.069
+    // right of the button and 0.040 to 0.044 below it (the two Gekkomon Run
+    // frames Missions.kt names, and the summon machine's glass on a main
+    // screen whose button had merged with the machine's teal glow). 0.016 is
+    // the middle of the gap. Holes of any colour would not do: the shirt's
+    // shading left 0.015 of its box enclosed on the loading frame, against
+    // 0.041 at the least for the button. Nor would the band's edges, though
+    // all five touch one: the shirt touches only the top, which cuts 4 of
+    // its 55 rows, and the same shirt 4 px lower stands whole in the band.
+    const val AUTO_GLYPH_MIN = 0.016
 
     // The home button: the globe in the middle of the bottom nav bar, and the
     // way back to the main screen from every screen that bar is drawn on.
@@ -725,6 +846,10 @@ object Dungeon {
             val covered = coveredGame(w, h)
             return windowSpace(covered[0], covered[1], covered[2], covered[3])
         }
+        if (pillared(w, h)) {
+            val pillared = pillaredGame(w, h)
+            return windowSpace(pillared[0], pillared[1], pillared[2], pillared[3])
+        }
         val fitted = fittedGame(w, h)
         if (fitted != null) {
             return windowSpace(fitted[0], fitted[1], fitted[2], fitted[3])
@@ -743,12 +868,100 @@ object Dungeon {
     }
 
     /**
+     * The game's canvas on a display wider than it (the note under
+     * COVER_GAP): the full height, centred, narrower than the
+     * picture. At 1200 x 1920 that is 60, 0, 1080 x 1920 -- the same
+     * arithmetic as [coveredGame], with the sides in the picture.
+     */
+    private fun pillaredGame(w: Int, h: Int): IntArray = coveredGame(w, h)
+
+    /** Is a frame of [w] x [h] a display wider than the game, the canvas in its middle ([pillaredGame])? */
+    fun pillared(w: Int, h: Int): Boolean {
+        if (h <= 0 || w / h.toDouble() - DEVICE_ASPECT <= DEVICE_ASPECT_TOL) return false
+        val gw = w - WINDOW_CHROME[0] - WINDOW_CHROME[2]
+        val gh = h - WINDOW_CHROME[1] - WINDOW_CHROME[3]
+        return !(gw > 0 && gh > 0 && abs(gw / gh.toDouble() - DEVICE_ASPECT) <= CHROME_ASPECT_TOL)
+    }
+
+    /**
+     * Does a fraction [fx] of the rectangle stand in the game's canvas, and
+     * not in the columns beside it? On a display wider than the game those
+     * columns are the game's background (the note under COVER_GAP), and on
+     * a 1200 x 1920 tablet its purple cliffs made a magenta clump of 4673 px
+     * at fx -0.02 that out-voted the World Search card (13656 px, ratio 2.9
+     * against CARD_RATIO_MIN 3.0), so the Explore menu read as unknown. On
+     * every other frame the whole picture is canvas or LDPlayer's chrome, and
+     * nothing stands out here.
+     */
+    fun inCanvasFx(fx: Double): Boolean =
+        fx >= GAME_IN_WINDOW[0] && fx <= GAME_IN_WINDOW[0] + GAME_IN_WINDOW[2]
+
+    /**
      * Reference rect for every fraction in this file, in this frame's pixels.
      *
      * See gameRectWh: everything here needs only the frame's width and
      * height, and this is the caller that has a picture to take them from.
      */
-    fun gameRect(img: Mat): GameRect = gameRectWh(img.cols(), img.rows())
+    fun gameRect(img: Mat): GameRect = gameRect(img, Anchor.BOTTOM)
+
+    /**
+     * Where a window stands on a display taller than the canvas ceiling
+     * (PLAN_FORMATE.md V4). Measured 2026-09-27 by fitting every V3 frame
+     * against its 1920 twin: every screen has the canvas's scale, 13/6 of
+     * the width over 1920, and differs only in where it stands in the rows
+     * between the cutout and the canvas -- the [headroom]. The HUD stands at
+     * the bottom, which is what [canvasTop] cuts to; the World Search
+     * board, the Partner window, the popups and the Runner's dialogs in the
+     * middle; the Special Summon pages and the dungeon panel at the top.
+     * The fits: ty -N/2 and -N at 1080 x 2520 (N 180), -100 and -200 at
+     * 1080 x 2540 (the app cut 200), -138 at 1644 x 3840 (278), -20/-40 at
+     * 720 x 1600 and -40/-80 at 1440 x 3200. On any display under the
+     * ceiling the headroom is 0 and the three anchors are one.
+     */
+    enum class Anchor(val share: Double) { BOTTOM(0.0), MIDDLE(0.5), TOP(1.0) }
+
+    /**
+     * A frame that knows its [headroom]: the rows of the display between
+     * the cutout and the canvas, which the HUD does not use (canvasTop) and
+     * a window at the middle or the top does -- and how many of them it
+     * holds [above] the canvas. `DigiAutotapService.grab` keeps them all
+     * since V4's fifth group (the player's decision of 2026-09-27: a window
+     * that stands higher than the cut is then whole in the frame, the World
+     * Search board's three counters and the Digivice bar among them); the
+     * corpus's V3 frames were stored cut and hold none. Only `grab` and the
+     * corpus's loaders make one; any other Mat has neither, and reads as it
+     * always did.
+     */
+    class CanvasFrame(val headroom: Int, val above: Int = 0) : Mat()
+
+    /** [CanvasFrame.headroom] of this frame, 0 for any other Mat. */
+    fun headroom(img: Mat): Int = (img as? CanvasFrame)?.headroom ?: 0
+
+    /** [CanvasFrame.above] of this frame: rows of headroom it holds over the canvas, 0 for any other Mat. */
+    fun above(img: Mat): Int = (img as? CanvasFrame)?.above ?: 0
+
+    /**
+     * [gameRect] for a window at [anchor]: the same scale and the same
+     * sides, its top [Anchor.share] of the headroom higher. Identical to
+     * [gameRect] on every frame without headroom.
+     */
+    fun gameRect(img: Mat, anchor: Anchor): GameRect {
+        // The canvas is the frame less the rows it holds above it, and a
+        // window at [anchor] stands its share of the headroom higher.
+        val above = above(img)
+        val r = gameRectWh(img.cols(), img.rows() - above)
+        val shift = above - Py.roundInt(headroom(img) * anchor.share)
+        return if (shift == 0) r else r.copy(y0 = r.y0 + shift)
+    }
+
+    /**
+     * [fy] of a window at [anchor] as a fraction of the bottom's rectangle
+     * ([gameRect]), for a caller that speaks the HUD's fractions -- the
+     * overlay, which is placed on the HUD's canvas (`Capture.overlayClear`).
+     * [room] is the frame's headroom and [gh] the rectangle's height.
+     */
+    fun bottomFy(fy: Double, anchor: Anchor, room: Int, gh: Int): Double =
+        if (gh <= 0) fy else fy - Py.roundInt(room * anchor.share) / gh.toDouble()
 
     /**
      * The game area in a window that has no sidebar, or null.
@@ -841,8 +1054,9 @@ object Dungeon {
      * marked "left" or "right" under [Button.cut].
      */
     fun findButtons(img: Mat, colour: Hsv, minArea: Double = 0.004,
-                    minY: Double = BUTTON_MIN_Y, edge: Boolean = true): List<Button> {
-        val (x0, y0, gw, gh) = gameRect(img)
+                    minY: Double = BUTTON_MIN_Y, edge: Boolean = true,
+                    anchor: Anchor = Anchor.BOTTOM): List<Button> {
+        val (x0, y0, gw, gh) = gameRect(img, anchor)
         val hsv = hsv(img)
         val raw = inRange(hsv, colour)
         val mask = Mat()
@@ -902,9 +1116,9 @@ object Dungeon {
      * the first entry is a taller banner and a fixed offset from the centre
      * would not hold for it.
      */
-    fun listCardsWithSize(img: Mat): List<Pair<Double, Double>> {
+    fun listCardsWithSize(img: Mat, anchor: Anchor = Anchor.BOTTOM): List<Pair<Double, Double>> {
         val out = ArrayList<Pair<Double, Double>>()
-        for (b in findButtons(img, BLUE, minArea = 0.002, minY = 0.0)) {
+        for (b in findButtons(img, BLUE, minArea = 0.002, minY = 0.0, anchor = anchor)) {
             if (!near(b.fx, CARD_X, CARD_X_TOL)) continue
             if (!(CARD_W_MIN <= b.fw && b.fw <= CARD_W_MAX)) continue
             if (b.fh > CARD_H_MAX) continue
@@ -915,7 +1129,8 @@ object Dungeon {
     }
 
     /** `list_cards(img)`: the vertical centres alone. */
-    fun listCards(img: Mat): List<Double> = listCardsWithSize(img).map { it.first }
+    fun listCards(img: Mat, anchor: Anchor = Anchor.BOTTOM): List<Double> =
+        listCardsWithSize(img, anchor).map { it.first }
 
     /**
      * Is the list scrolled to its top? True when the first card is the
@@ -924,7 +1139,7 @@ object Dungeon {
      * blob of 0.17 in corpus/passive is not one). The skill asks it after
      * every swipe, because a swipe sent into the list's opening animation is
      * swallowed and a count taken on the wrong half plays every bottom card
-     * one off (NOTES.md, "A swipe is proved, not assumed").
+     * one off (notes/dungeons.md, "A swipe is proved, not assumed").
      */
     fun listAtTop(cards: List<Pair<Double, Double>>): Boolean? =
         if (cards.size < LIST_MIN_CARDS) null else cards[0].second >= CARD_BANNER_H_MIN
@@ -1043,6 +1258,16 @@ object Dungeon {
         val median = others.sorted()[others.size / 2]
         if (tallest[3] < SLASH_MIN_RATIO * median) return null
         if (tallest[2] / maxOf(tallest[3], 1).toDouble() > SLASH_MAX_WH) return null
+        // The allowance stands right of the slash, one digit, always: on all
+        // 469 counters of the corpus (PLAN_FORMATE.md V16, 2026-09-27). The
+        // one group with nothing there was the name of the ranking's leader
+        // beside Apocalymon's counter on 2000 x 2800, "FJZombr" cut by the
+        // crop's edge: its F, J, Z and b stood 245 px from the counter
+        // against a gap rule of 249 and joined it, and the cut r, 0.315 of
+        // the crop against letters of 0.22 to 0.24, passed for a slash --
+        // 7326 ads read off a name. The name changes with the ranking, so
+        // any format can meet it; the counter's shape does not.
+        if (group.count { it[0] >= tallest[0] + tallest[2] } != SLASH_RIGHT_GLYPHS) return null
         val left = group.filter { it[0] + it[2] <= tallest[0] }
         return left.ifEmpty { null }
     }
@@ -1157,7 +1382,10 @@ object Dungeon {
 
         if (holes.size >= 2) return 8
         if (holes.size == 1) {
-            if (bottom < D4_BOTTOM_MAX) return 4
+            if (bottom < D4_BOTTOM_MAX &&
+                mean(bits, -D4_FOOT_ROWS, rows, 0, D4_FOOT_COLS) < D4_FOOT_LEFT_MAX) {
+                return 4
+            }
             if (holes[0] < D9_HOLE_MAX) return 9
             if (holes[0] > D6_HOLE_MIN) return 6
             return 0
@@ -1167,7 +1395,10 @@ object Dungeon {
             mean(bits, D1_ROWS[0], D1_ROWS[1], -D1_RIGHT_COLS, cols) < D1_UPPER_RIGHT_MAX) {
             return 1
         }
-        if (bottom >= D2_BOTTOM_MIN) return 2
+        if (bottom >= D2_BOTTOM_MIN &&
+            mean(bits, D2_OPEN_ROWS[0], D2_OPEN_ROWS[1], -D2_OPEN_COLS, cols) < D2_OPEN_RIGHT_MAX) {
+            return 2
+        }
         // band = bits[D53_ROWS[0]:D53_ROWS[1]]
         val left = mean(bits, D53_ROWS[0], D53_ROWS[1], 0, 4)
         val rightFlank = mean(bits, D53_ROWS[0], D53_ROWS[1], -4, cols)
@@ -1328,8 +1559,9 @@ object Dungeon {
     const val PANEL_GLYPH_MIN_H = 0.15
 
     /** The panel counter's characters, left to right. See PANEL_COUNTER_TOP. */
-    fun panelGlyphs(img: Mat, button: Button, scale: Int = 4): Glyphs {
-        val (x0, y0, gw, gh) = gameRect(img)
+    fun panelGlyphs(img: Mat, button: Button, scale: Int = 4,
+                    anchor: Anchor = Anchor.BOTTOM): Glyphs {
+        val (x0, y0, gw, gh) = gameRect(img, anchor)
         val y = Py.int(y0 + (button.fy - PANEL_COUNTER_TOP) * gh)
         val h = Py.int((PANEL_COUNTER_TOP - PANEL_COUNTER_BOTTOM) * gh)
         val x = Py.int(x0 + PANEL_COUNTER_X[0] * gw)
@@ -1349,8 +1581,8 @@ object Dungeon {
      * nothing in the battle, on the loading screens or under the Reward
      * sheet.
      */
-    fun panelTickets(img: Mat, button: Button): Int? {
-        val found = panelGlyphs(img, button)
+    fun panelTickets(img: Mat, button: Button, anchor: Anchor = Anchor.BOTTOM): Int? {
+        val found = panelGlyphs(img, button, anchor = anchor)
         return firstCounter(found)
     }
 
@@ -1376,9 +1608,13 @@ object Dungeon {
     // list (DungeonSkill.listCounter), and nothing on the panel.
     val HEADER_COUNTER = doubleArrayOf(0.74, 0.86, 0.150, 0.190)
 
-    /** The party panel's counter, above the panel, or null. See HEADER_COUNTER. */
+    /**
+     * The party panel's counter, above the panel, or null. See
+     * HEADER_COUNTER. Part of the panel, so read where the panel stands
+     * ([PANEL]); no V3 frame of the party panel exists to measure it on.
+     */
     fun headerTickets(img: Mat): Int? {
-        val (x0, y0, gw, gh) = gameRect(img)
+        val (x0, y0, gw, gh) = gameRect(img, PANEL)
         val b = HEADER_COUNTER
         val crop = Py.crop(img, maxOf(0, Py.int(y0 + b[2] * gh)), Py.int(y0 + b[3] * gh),
                            maxOf(0, Py.int(x0 + b[0] * gw)), Py.int(x0 + b[1] * gw)) ?: return null
@@ -1438,16 +1674,58 @@ object Dungeon {
     // nearest thing under it with words), and it moves no other frame of the
     // corpus. A sheet with a third row would stand lower still and is the
     // next thing to measure if one is seen.
-    val SHEET_BLUE = Hsv(intArrayOf(100, 180, 130), intArrayOf(118, 255, 165))
+    //
+    // The sheet over a bright stage was seen on 2026-09-30 (PLAN_RELEASE_1_3.md
+    // B11): the daily dungeon's won run, "VS. SP-Type Digimon! 100" on its
+    // sand and sky, read unknown, and the run was booked as lost. The band is
+    // translucent, and over sand it is a paler blue, not a brighter one: its
+    // saturation runs 145 / 155 / 191 at the band's quartiles against 197 to
+    // 243 over the dark stages, its value 146 / 151 / 160 as everywhere --
+    // the floor of 180 (Runner.REWARD_BLUE's) was the stage's, not the sheet's.
+    // The same band already stood in the corpus unread: Network Defense Ops'
+    // sheet over its white fair (quest/no-x-to-get-out-with_121828, _204219),
+    // the Lost Sector Tower's under floors 90 and 114 (passive/unclear_210619,
+    // _134316 to _135817), the quest's over the main screen
+    // (quest/quest-loop-finished-quest, quest/bug-rewards), the Meat Field's
+    // as it comes in over the seed menu (farm/ad_reward_seeds_in_013441).
+    // Over every frame of the corpus with the words, the band's share with
+    // the saturation's floor lowered (RunProbe.kt, `sheetS`):
+    //
+    //                                           S >= 180   S >= 86
+    //   the sheets read until now               0.406 -    0.478 -
+    //   the daily dungeon's won sheet           0.222      0.748
+    //   Network Defense Ops' (and live 09-29)   0.196 - 0.208   0.791 - 0.799
+    //   the tower's, the quest's                0.196 - 0.324   0.648 - 0.871
+    //   the Meat Field's coming in              0.131      0.472
+    //   the idle sheet with 20 rewards          0.260 - 0.367   0.263 - 0.372
+    //   the Overdrive and Tactical Memory pages 0.312 - 0.317   0.315 - 0.320
+    //   a main screen's grey cobbles, "Cancel"  0.003      0.137
+    //   a battle with a word on that line       0.000      0.229
+    //
+    // The floor and the share are one gap in two numbers. The cobbles reach
+    // 0.42 at a floor of 64 and not at 66; the Meat Field's sheet coming in
+    // falls under it at 108 and not at 106: the floor is 86, the middle of 66
+    // and 106 (the daily dungeon's sheet holds to 140). There the highest
+    // thing that is not a sheet this reader names is the idle sheet whose
+    // twenty icons cover its band, 0.372 at 720 x 1280, and the lowest sheet
+    // the Meat Field's, 0.472: SHEET_SHARE_MIN is 0.42, the middle. The idle
+    // sheet with twenty rewards stays unread, as it was at 0.37 by a hair
+    // (0.365 to 0.367 at 1920), and so do the two pages. The band and the
+    // words lie under neither the dot nor its plate at any place of the strip.
+    val SHEET_BLUE = Hsv(intArrayOf(100, 86, 130), intArrayOf(118, 255, 165))
     val SHEET_BAND = doubleArrayOf(0.05, 0.95, 0.34, 0.66)
-    const val SHEET_SHARE_MIN = 0.37
+    const val SHEET_SHARE_MIN = 0.42
     val SHEET_CLOSE_LINE = doubleArrayOf(0.39, 0.56, 0.808, 0.832)
     const val SHEET_CLOSE_GREY = 200.0
     const val SHEET_CLOSE_MIN = 0.02
 
-    /** Is the Reward sheet up? See SHEET_BLUE. */
-    fun rewardSheet(img: Mat): Boolean {
-        val (x0, y0, gw, gh) = gameRect(img)
+    /**
+     * Is the Reward sheet up? See SHEET_BLUE. A popup, read in the middle on
+     * a display with headroom ([POPUP]): the fits of V4 put the idle rewards'
+     * sheet there, and no dungeon sheet at a V3 height is in the corpus yet.
+     */
+    fun rewardSheet(img: Mat, anchor: Anchor = POPUP): Boolean {
+        val (x0, y0, gw, gh) = gameRect(img, anchor)
         fun box(b: DoubleArray): Mat? = Py.crop(img,
             maxOf(0, Py.int(y0 + b[2] * gh)), Py.int(y0 + b[3] * gh),
             maxOf(0, Py.int(x0 + b[0] * gw)), Py.int(x0 + b[1] * gw))
@@ -1465,8 +1743,190 @@ object Dungeon {
         return words >= SHEET_CLOSE_MIN
     }
 
+    // A run's own transitions, which no reader above names and the waits
+    // after Attempt used to tap high up once they had stood UNKNOWN_HOLD
+    // (PLAN_RELEASE_1_3.md B6; PLAN_DAILY_LOST_SECTOR_PRESETS.md G8 and
+    // G17). A run goes: the tap, black, the VS screen, the battle, black,
+    // "Now Loading", the panel. Live on LDPlayer on 2026-09-29 (09:04:54) the
+    // black after a lost run stood 4 s, the tap went out on it, and it landed
+    // on the panel coming back and closed it; VS stands as long again and
+    // more (G8). A tap belongs on neither: the screen after them is the run's
+    // end, and it gets the hold of its own.
+    //
+    // **Black.** The share of the canvas at grey 16 and over -- the black's
+    // own pixels are 0 to 3 -- over every frame of the corpus and the four
+    // frames of that pass (RunProbe.kt, `dark`):
+    //
+    //   the black frame of 09:04:54, the dot's plate on it   0.0043   (mean grey 0.88)
+    //   the darkest screen with anything on it               0.4077   (passive/unclear_115928)
+    //   a PvP result over a dark arena                       0.4368   (mean grey 22.7)
+    //
+    // BLACK_LIT_MAX is 0.21, the middle. On the canvas only (GAME_IN_WINDOW
+    // of the bottom's rectangle): the headroom and the columns beside a
+    // canvas that does not fill the display are not the game's picture.
+    const val BLACK_GREY = 16.0
+    const val BLACK_LIT_MAX = 0.21
+
+    /** Is the canvas black -- a run's transition, between the tap and VS or after the battle? See BLACK_LIT_MAX. */
+    fun blackFrame(img: Mat): Boolean = canvasLit(img) < BLACK_LIT_MAX
+
+    /** The share of the canvas at [BLACK_GREY] and over; 1.0 where the picture holds no canvas. */
+    fun canvasLit(img: Mat): Double {
+        val canvas = canvasCrop(img) ?: return 1.0
+        val grey = Cv.gray(canvas)
+        val lit = Mat()
+        Core.compare(grey, Scalar(BLACK_GREY), lit, Core.CMP_GE)
+        val share = Cv.share(lit)
+        grey.release(); lit.release()
+        return share
+    }
+
+    // **VS.** The VS screen before every battle: the party on saturated blue
+    // on the left, the boss on saturated red on the right, split by a
+    // diagonal from about fx 0.70 at the top to 0.30 at the bottom -- the
+    // daily dungeon's (corpus/dungeon/daily_vs_053118) and Network Defense
+    // Ops' (the live pass of 2026-09-29, 09:04:43 and 09:18:13), the same
+    // picture. The share of blue (H 100 to 125, S 150 and over) in a strip
+    // down the canvas's left edge and of red (H 172 to 8) in one down its
+    // right, between 0.10 and 0.90 of its height, and the smaller of the two:
+    //
+    //   the three VS frames                          0.974 - 0.989
+    //   the highest of every other frame             0.159   (passive/bond-not-the-middle_144220)
+    //   a main screen with the blue nav bar           0.122 - 0.143
+    //
+    // VS_MIN is 0.57, the middle. The strips are fractions of game_rect, the
+    // canvas's 0.02 to 0.22 and 0.78 to 0.98; at the bottom's anchor, which
+    // nobody measured against a display with headroom -- the picture fills
+    // the display, and the canvas is part of it wherever it stands. The
+    // plate lies on the right strip's top rows at the strip's lowest places,
+    // and the mask fills it with the red around it.
+    val VS_LEFT = doubleArrayOf(0.0238, 0.2121, 0.1258, 0.9016)
+    val VS_RIGHT = doubleArrayOf(0.7394, 0.9278, 0.1258, 0.9016)
+    val VS_BLUE = Hsv(intArrayOf(100, 150, 60), intArrayOf(125, 255, 255))
+    val VS_RED = arrayOf(Hsv(intArrayOf(0, 150, 60), intArrayOf(8, 255, 255)),
+                         Hsv(intArrayOf(172, 150, 60), intArrayOf(179, 255, 255)))
+    const val VS_MIN = 0.57
+
+    /** Is the VS screen up -- blue left, red right? See VS_MIN. */
+    fun vsScreen(img: Mat): Boolean = vsShare(img) >= VS_MIN
+
+    /** The smaller of the left strip's blue and the right strip's red, as shares of the strips. */
+    fun vsShare(img: Mat): Double {
+        val (x0, y0, gw, gh) = gameRect(img)
+        fun share(b: DoubleArray, colours: List<Hsv>): Double {
+            val crop = Py.crop(img, maxOf(0, Py.int(y0 + b[2] * gh)), minOf(img.rows(), Py.int(y0 + b[3] * gh)),
+                               maxOf(0, Py.int(x0 + b[0] * gw)), minOf(img.cols(), Py.int(x0 + b[1] * gw)))
+                ?: return 0.0
+            val hsv = hsv(crop)
+            val all = Mat.zeros(hsv.size(), CvType.CV_8U)
+            for (c in colours) {
+                val one = inRange(hsv, c)
+                Core.bitwise_or(all, one, all)
+                one.release()
+            }
+            hsv.release()
+            return Cv.share(all).also { all.release() }
+        }
+        return minOf(share(VS_LEFT, listOf(VS_BLUE)), share(VS_RIGHT, VS_RED.toList()))
+    }
+
     /**
-     * Which confirmation dialog is this, "beenden" (exit) or "party".
+     * A run's own transition in front, by the name the skills' logs give it
+     * -- [blackFrame], [vsScreen] -- or null. What DungeonSkill and
+     * LostSectorSkill wait on and never tap (PLAN_RELEASE_1_3.md B6).
+     */
+    fun runTransition(img: Mat): String? = when {
+        blackFrame(img) -> "a black frame"
+        vsScreen(img) -> "the VS screen"
+        else -> null
+    }
+
+    /** The canvas of [img]: GAME_IN_WINDOW of the bottom's rectangle, cut to the picture; null where none is left. */
+    private fun canvasCrop(img: Mat): Mat? {
+        val (x0, y0, gw, gh) = gameRect(img)
+        val g = GAME_IN_WINDOW
+        return Py.crop(img, maxOf(0, Py.int(y0 + g[1] * gh)), minOf(img.rows(), Py.int(y0 + (g[1] + g[3]) * gh)),
+                       maxOf(0, Py.int(x0 + g[0] * gw)), minOf(img.cols(), Py.int(x0 + (g[0] + g[2]) * gw)))
+    }
+
+    // A fourth dialog wears the grey face: the game's resource download,
+    // "Resource download required. (158,000 MB)", on the loading screen after
+    // an update ("Checking data..." under it). Grey Cancel, blue OK, and the
+    // buttons to the pixel of "Exit the game?" -- OK at fx 0.561 fy 0.6525,
+    // 0.1526 x 0.0323, on every frame of both. And Cancel ends the game there
+    // as well: the director answered it Cancel on LDPlayer instance 1 on
+    // 2026-09-29 at 12:50:18, and the game closed (PLAN_RELEASE_1_3.md B1).
+    // The player's call of 2026-09-30 is OK (notes/director.md, "The game's
+    // download dialog wears the exit prompt's face, and only its message is
+    // two lines").
+    //
+    // Only the message tells them apart, and not by reading it: by its
+    // height. "Exit the game?" is one line, the download is two, the size in
+    // MB on a line of its own. Measured over every grey prompt of the corpus
+    // (`prompt_text_h`), first to last row brighter than PROMPT_TEXT_GREY in
+    // PROMPT_TEXT_BAND, as a fraction of game_rect's height:
+    //
+    //   "Exit the game?"   0.0137 on dungeon/beenden (the 805 x 1390
+    //                      window) and 0.0136 on confirm_beenden_01 to _03
+    //                      (1080 x 1920)
+    //   the download       0.0288 on all five: startup/no_title_00,
+    //                      quest/no-x-to-get-out-with_113000 and _183113
+    //                      (kept by the quest loop, and read as the exit
+    //                      prompt until this day), and the two frames the
+    //                      director kept at 12:50:18 and 12:53:44
+    //
+    // So DOWNLOAD_TEXT_H_MIN is 0.021, the middle of 0.0137 and 0.0288, and a
+    // grey prompt whose message is shorter is "Exit the game?" as before.
+    // Wrong either way ends the session -- OK on the exit prompt, Cancel on
+    // the download -- which is why the number stands in the middle of a gap
+    // of more than a line's height, and why the director taps OK here twice
+    // at the most (Director.DOWNLOAD_OKS).
+    //
+    // The band is the dialog's message panel, measured at 1080 x 1920 from
+    // x 235 to 843 and y 828 to 1178 around an OK at 638, 1235 -- fx -0.351
+    // to +0.179 and fy -0.2055 to -0.0287 of OK in game_rect -- and taken a
+    // little inside it, so that neither the panel's rounded edge nor the
+    // dimmed screen behind the dialog is in it. PROMPT_TEXT_GREY is the
+    // middle of the panel's grey (37, the median of the band on all nine
+    // frames) and the letters' (234 at their brightest).
+    const val KIND_DOWNLOAD = "download"
+    val PROMPT_TEXT_BAND = doubleArrayOf(-0.33, 0.16, -0.19, -0.045)
+    const val PROMPT_TEXT_GREY = 135
+    const val DOWNLOAD_TEXT_H_MIN = 0.021
+
+    /**
+     * How tall the message of the prompt whose OK is [okButton] is: the
+     * first to the last row with a letter in [PROMPT_TEXT_BAND], as a
+     * fraction of game_rect's height at [anchor]; 0.0 where the band holds
+     * no letter. One line of "Exit the game?" is 0.0136, the download's two
+     * are 0.0288 (DOWNLOAD_TEXT_H_MIN).
+     */
+    fun promptTextH(img: Mat, okButton: Button, anchor: Anchor = Anchor.BOTTOM): Double {
+        val (x0, y0, gw, gh) = gameRect(img, anchor)
+        val (dx0, dx1, dy0, dy1) = PROMPT_TEXT_BAND.toList()
+        val patch = Py.crop(img,
+            maxOf(0, Py.int(y0 + (okButton.fy + dy0) * gh)), Py.int(y0 + (okButton.fy + dy1) * gh),
+            maxOf(0, Py.int(x0 + (okButton.fx + dx0) * gw)), Py.int(x0 + (okButton.fx + dx1) * gw))
+            ?: return 0.0
+        val grey = Cv.gray(patch)
+        val letters = Mat()
+        Core.compare(grey, Scalar(PROMPT_TEXT_GREY.toDouble()), letters, Core.CMP_GE)
+        // Each row's brightest: one column, 255 where the row holds a letter.
+        val rows = Mat()
+        Core.reduce(letters, rows, 1, Core.REDUCE_MAX)
+        val lit = ByteArray(rows.rows())
+        rows.get(0, 0, lit)
+        grey.release(); letters.release(); rows.release()
+        val first = lit.indexOfFirst { it.toInt() != 0 }
+        if (first < 0) return 0.0
+        val last = lit.indexOfLast { it.toInt() != 0 }
+        return (last - first + 1) / gh.toDouble()
+    }
+
+    /**
+     * Which confirmation dialog is this, "beenden" (exit), "party", or
+     * [KIND_DOWNLOAD] (the game's resource download, a grey prompt whose
+     * message is two lines, [promptTextH]).
      *
      * Told apart by the left button: grey for the exit dialog, where OK
      * closes the game, pink for the party dialog, where OK is the correct
@@ -1484,8 +1944,8 @@ object Dungeon {
      * way costs a Cancel that was not needed; being wrong the other way ends
      * the session.
      */
-    fun confirmKind(img: Mat, okButton: Button): String {
-        val (x0, y0, gw, gh) = gameRect(img)
+    fun confirmKind(img: Mat, okButton: Button, anchor: Anchor = Anchor.BOTTOM): String {
+        val (x0, y0, gw, gh) = gameRect(img, anchor)
         val left = 1.0 - okButton.fx
         // Wide enough to cover the button even when the mirror is off by the
         // measured 0.056, which is what happens on a dialog that is not
@@ -1504,12 +1964,19 @@ object Dungeon {
             Scalar(PARTY_PINK_HUE[1].toDouble(), 255.0, 255.0), pink)
         val share = Core.countNonZero(pink).toDouble() / (pink.rows() * pink.cols())
         hsv.release(); pink.release()
-        return if (share >= 0.15) "party" else "beenden"
+        if (share >= 0.15) return "party"
+        // Grey: the exit prompt, unless its message is two lines tall.
+        return if (promptTextH(img, okButton, anchor) >= DOWNLOAD_TEXT_H_MIN) KIND_DOWNLOAD else "beenden"
     }
 
-    /** How many party slots are filled. Returns a count from 0 to 3. */
-    fun partySlotsFilled(img: Mat): Int {
-        val (x0, y0, gw, gh) = gameRect(img)
+    /**
+     * How many party slots are filled. Returns a count from 0 to 3. The slots
+     * are the panel's, so read where the panel stands ([PANEL]): on the V3
+     * panels of the corpus (Bakemon, no party) the crops read 3 as the twin
+     * does at the top and 2 at the bottom on three formats of five.
+     */
+    fun partySlotsFilled(img: Mat, anchor: Anchor = PANEL): Int {
+        val (x0, y0, gw, gh) = gameRect(img, anchor)
         var filled = 0
         for (fx in PARTY_SLOTS) {
             val x = Py.int(x0 + (fx - PARTY_SLOT_HALF_W) * gw)
@@ -1585,14 +2052,14 @@ object Dungeon {
      * same band -- see CLAIM_PAIR_GAP for the two clusters and why neither
      * number is carrying this alone.
      */
-    fun claimButton(img: Mat): Button? {
+    fun claimButton(img: Mat, anchor: Anchor = POPUP): Button? {
         fun inBand(b: Button) = POS_CLAIM_Y[0] <= b.fy && b.fy <= POS_CLAIM_Y[1]
 
-        val blue = findButtons(img, BLUE, minY = POS_CLAIM_Y[0]).filter { b ->
+        val blue = findButtons(img, BLUE, minY = POS_CLAIM_Y[0], anchor = anchor).filter { b ->
             inBand(b) && b.fw >= POS_CLAIM_MIN_W && b.fh >= CLAIM_BUTTON_FH &&
                 POS_CLAIM_FX[0] <= b.fx && b.fx <= POS_CLAIM_FX[1]
         }
-        val violet = findButtons(img, VIOLET, minY = POS_CLAIM_Y[0]).filter { inBand(it) }
+        val violet = findButtons(img, VIOLET, minY = POS_CLAIM_Y[0], anchor = anchor).filter { inBand(it) }
         for (b in blue) {
             for (v in violet) {
                 if (abs(v.fy - b.fy) > CLAIM_PAIR_DY || v.fx >= b.fx) continue
@@ -1662,21 +2129,55 @@ object Dungeon {
             ?: return null
         val hsv = hsv(sub)
         val mask = inRange(hsv, AUTO_BLUE)
-        val (count, stats) = components(mask)
-        hsv.release(); mask.release()
-        for (i in 1 until count) {
-            val (x, y, w, h, area) = stats[i].toList()
-            if (h == 0) continue
-            val fw = w / gw.toDouble()
-            if (!(AUTO_W[0] <= fw && fw <= AUTO_W[1])) continue
-            val aspect = w / h.toDouble()
-            if (!(AUTO_ASPECT[0] <= aspect && aspect <= AUTO_ASPECT[1])) continue
-            if (area / (w * h).toDouble() < AUTO_FILL_MIN) continue
-            return Button((left + x + w / 2.0 - x0) / gw,
-                          (top + y + h / 2.0 - y0) / gh,
-                          fw, h / gh.toDouble())
+        val white = inRange(hsv, HOME_WHITE)
+        val labels = Mat()
+        val table = Mat()
+        val centroids = Mat()
+        val count = Imgproc.connectedComponentsWithStats(mask, labels, table, centroids, 8)
+        val stats = Array(count) { i -> IntArray(5).also { table.get(i, 0, it) } }
+        hsv.release(); mask.release(); table.release(); centroids.release()
+        try {
+            for (i in 1 until count) {
+                val (x, y, w, h, area) = stats[i].toList()
+                if (h == 0) continue
+                val fw = w / gw.toDouble()
+                if (!(AUTO_W[0] <= fw && fw <= AUTO_W[1])) continue
+                val aspect = w / h.toDouble()
+                if (!(AUTO_ASPECT[0] <= aspect && aspect <= AUTO_ASPECT[1])) continue
+                if (area / (w * h).toDouble() < AUTO_FILL_MIN) continue
+                if (glyphWhite(labels, white, i, x, y, w, h) < AUTO_GLYPH_MIN) continue
+                return Button((left + x + w / 2.0 - x0) / gw,
+                              (top + y + h / 2.0 - y0) / gh,
+                              fw, h / gh.toDouble())
+            }
+            return null
+        } finally {
+            labels.release(); white.release()
         }
-        return null
+    }
+
+    /**
+     * The share of component [label]'s box that it encloses, does not
+     * cover, and is white ([white], HOME_WHITE): the pixels of its box a
+     * flood from outside the box cannot reach (4-connected, as the
+     * background of an 8-connected blob is) and that are white. The auto
+     * button's A and its two arrows (AUTO_GLYPH_MIN).
+     */
+    internal fun glyphWhite(labels: Mat, white: Mat, label: Int, x: Int, y: Int, w: Int, h: Int): Double {
+        val roi = labels.submat(y, y + h, x, x + w)
+        // Everything but the blob, in a frame of one pixel that is not the
+        // blob either, so that the flood from its corner goes round the box.
+        val other = Mat(h + 2, w + 2, CvType.CV_8U, Scalar(255.0))
+        val inner = other.submat(1, h + 1, 1, w + 1)
+        Core.compare(roi, Scalar(label.toDouble()), inner, Core.CMP_NE)
+        val seen = Mat.zeros(h + 4, w + 4, CvType.CV_8U)
+        Imgproc.floodFill(other, seen, org.opencv.core.Point(0.0, 0.0), Scalar(0.0))
+        val lit = white.submat(y, y + h, x, x + w)
+        val both = Mat()
+        Core.bitwise_and(inner, lit, both)
+        val glyph = Core.countNonZero(both)
+        roi.release(); other.release(); inner.release(); seen.release(); lit.release(); both.release()
+        return glyph / (w * h).toDouble()
     }
 
     /**
@@ -1739,6 +2240,8 @@ object Dungeon {
         val giveup: Button?,
         val partyVoll: Int? = null,
         val exitOk: Button? = null, val exitKind: String? = null,
+        /** The rectangle every fraction above was read in (Anchor); not in the oracle's dict. */
+        val anchor: Anchor = Anchor.BOTTOM,
     ) {
         fun toOracle(): Map<String, Any?> {
             val out = linkedMapOf<String, Any?>(
@@ -1757,11 +2260,149 @@ object Dungeon {
         }
     }
 
-    /** Which screen is visible and where clicking is allowed. */
+    /**
+     * Where the dungeon's windows stand on a display taller than the canvas
+     * ceiling (Anchor, PLAN_FORMATE.md V4). Measured 2026-09-27 with
+     * [recogniseAt] at every anchor over the V3 rows of the corpus (1080 x
+     * 2520, 1080 x 2540, 1644 x 3840, 720 x 1600, 1440 x 3200) against the
+     * 1920 twin of each screen:
+     *
+     *   the panel, Attempt fy       twin 0.7083   TOP 0.7079-0.7086   BOTTOM 0.6254-0.6837
+     *   the exit prompt, OK         twin 0.5997   MIDDLE 0.5997-0.6001
+     *   the idle popup, Claim       twin 0.7452   MIDDLE 0.7449-0.7454
+     *   the Partner window, Move    twin 0.7341   MIDDLE 0.7337-0.7342
+     *   the list, top and bottom    4 and 5 cards at BOTTOM; at TOP the nav
+     *                               bar of the bottom list reads as a Give Up
+     *                               on three of the five formats
+     *
+     * So the panel is a window at the top, the prompts and popups stand in
+     * the middle -- the exit prompt too, which the fits of V4 had put at the
+     * bottom -- and the list and the battle are the HUD's. The Reward sheet
+     * has no V3 frame of its own; it is a popup, and the fits put the idle
+     * rewards' sheet in the middle.
+     */
+    val PANEL = Anchor.TOP
+    val POPUP = Anchor.MIDDLE
+
+    // ------------------------------------------------------------------------
+    // The daily dungeon's panel
+    // ------------------------------------------------------------------------
+    // The seventh card, the one that changes every day (PLAN_DAILY_LOST_
+    // SECTOR_PRESETS.md 2.1, 4.1 point 3), opens a panel of its own, not the
+    // tickets' one: its name as the title ("Defense Type" on 2026-09-28/29,
+    // "Attack Type" on the corpus's frame of another day), a level box, the
+    // rewards, and two buttons -- **Reset** (violet, left) and **Attempt**
+    // (blue, right) -- where the tickets' panel has Clear Previous Difficulty
+    // and Attempt. No counter on the card; with the panel open a "0" beside
+    // a devil on a green ring stands over the list's head, top right, whose
+    // meaning is the player's to say (question 17) and which nothing reads --
+    // three lost runs left it at 0 and the level at 100.
+    // recognise names it a dialog with that Attempt and the Reset as its
+    // `clear`, and **Reset is never tapped** (the player's rule, question 17).
+    //
+    // Measured with the app stopped, the pair at the middle's rectangle:
+    //
+    //   Reset     fx 0.3366-0.3374   fw 0.2520-0.2523
+    //   Attempt   fx 0.6153-0.6170   fw 0.2523-0.2532
+    //   both      fy 0.7934-0.7935   fh 0.0394-0.0398
+    //
+    // over the four 1920 panels of 2026-09-28/29, the seven format rows
+    // (1080 x 2235, 2340, the whole 2520, 720 x 1600, 1200 x 1920,
+    // landscape) and corpus/quest/no-x-to-get-out-with_094514 (level 89). It
+    // stands in the middle -- not at the top like the tickets' panel
+    // (PANEL): at the whole 2520 the row is 90 rows under its 2340 place, at
+    // 720 x 1600 20 -- half the headroom each time. The pair is flatter than
+    // every other pair of the kind: the Partner and Buddy windows are 0.0452
+    // to 0.0466 tall and 0.229 to 0.2333 wide (Passive.PARTNER_H_MIN), the
+    // tickets' panel's Attempt 0.052 tall beside a Clear 0.2842 wide.
+    //
+    // For about a second before it, the game shows the panel's prefab over
+    // the main screen: "Title", a level "99" with arrows, "New Text", and
+    // three buttons Clear, Reset, Attempt -- two of them violet at fy 0.7548,
+    // 0.034 tall, no blue at all (corpus/dungeon/daily_panel_prefab_053129).
+    // recognise calls that one DIALOG_AD; this reader null. A tap belongs
+    // on the panel this reader names, on two frames running.
+    val DAILY = Anchor.MIDDLE
+    const val DAILY_RESET_FX = 0.337
+    const val DAILY_ATTEMPT_FX = 0.616
+    const val DAILY_ROW_FY = 0.7934
+    const val DAILY_TOL = 0.03
+    val DAILY_W = doubleArrayOf(0.24, 0.265)
+    val DAILY_H = doubleArrayOf(0.035, 0.0425)
+
+    /**
+     * The daily dungeon's panel: its Attempt, read at [anchor]; null on any
+     * other screen, the prefab before it included. Its Reset, beside it, is
+     * never an answer.
+     */
+    fun dailyPanel(img: Mat, anchor: Anchor = DAILY): Button? {
+        fun shaped(b: Button) = b.fw in DAILY_W[0]..DAILY_W[1] && b.fh in DAILY_H[0]..DAILY_H[1] &&
+            near(b.fy, DAILY_ROW_FY, DAILY_TOL)
+        val reset = findButtons(img, VIOLET, minY = 0.0, anchor = anchor)
+            .filter { shaped(it) && near(it.fx, DAILY_RESET_FX, DAILY_TOL) }
+        if (reset.size != 1) return null
+        val attempt = findButtons(img, BLUE, minY = 0.0, anchor = anchor)
+            .filter { shaped(it) && near(it.fx, DAILY_ATTEMPT_FX, DAILY_TOL) }
+        if (attempt.size != 1) return null
+        return if (abs(attempt[0].fy - reset[0].fy) <= CLAIM_PAIR_DY) attempt[0] else null
+    }
+
+    /**
+     * Which screen is visible and where clicking is allowed.
+     *
+     * On a display with headroom (Anchor) the windows this reader knows stand
+     * at three places, so it asks at each in an order (PANEL, POPUP above):
+     * the HUD's screens first, at the bottom, where [canvasTop] cut; then the
+     * middle, taken when it is a prompt, the Reward sheet, the idle popup,
+     * the Partner window, the daily dungeon's panel (DAILY) or the Lost
+     * Sector Tower's (LostSector.PAGE) there; then the top, the panel's, taken for any
+     * dialog. The answer carries the anchor it was read at
+     * ([Recognition.anchor]), and a tap on one of its buttons goes to that
+     * rectangle. On every other frame the three are one rectangle and the
+     * answer is the bottom's, as it always was.
+     */
     fun recognise(img: Mat): Recognition {
-        val blue = findButtons(img, BLUE, minY = 0.0)
-        val violet = findButtons(img, VIOLET, minY = 0.0)
-        val cards = listCards(img)
+        val bottom = recogniseAt(img, Anchor.BOTTOM)
+        if (headroom(img) == 0) return bottom
+        if (bottom.state == LIST || bottom.state == BATTLE) return bottom
+        val middle = recogniseAt(img, POPUP)
+        // The daily dungeon's panel stands in the middle too (DAILY), where
+        // the tickets' panel stands at the top; until 2026-09-29 the Partner
+        // window's reader took its pair for its own and so read it here. So
+        // does the Lost Sector Tower's panel (LostSector.PAGE).
+        if (middle.state == EXIT || middle.state == REWARD ||
+            claimButton(img, POPUP) != null || Passive.partnerMenu(img, POPUP) != null ||
+            dailyPanel(img, POPUP) != null || LostSector.subjugate(img) != null) {
+            return middle
+        }
+        val top = recogniseAt(img, PANEL)
+        if (bottom.state in PANEL_STATES) return top
+        if (top.state in PANEL_STATES && panelShaped(top)) return top
+        return bottom
+    }
+
+    /** The states [recognise] gives a panel. */
+    private val PANEL_STATES = setOf(DIALOG, DIALOG_PARTY, DIALOG_AD)
+
+    /**
+     * Does a dialog read at the top have a panel's buttons: Clear Previous
+     * Difficulty, the ad button, Find a Party, or a lone Attempt in the
+     * middle (POS_ATTEMPT)? Asked only where the bottom saw no dialog at all,
+     * which a panel does when the headroom lifts its buttons out of the
+     * bands. The Explore menu at 1644 x 3840 is why: at the top one of its
+     * blue blobs enters the band as a lone "Attempt" at fx 0.656, where the
+     * panel's Attempt stands only beside Clear Previous Difficulty; its 1920
+     * twin reads unknown.
+     */
+    private fun panelShaped(r: Recognition): Boolean =
+        r.clear != null || r.ad != null || r.party != null ||
+            (r.attempt != null && near(r.attempt.fx, POS_CENTER))
+
+    /** [recognise] with every window read at [anchor]. */
+    fun recogniseAt(img: Mat, anchor: Anchor): Recognition {
+        val blue = findButtons(img, BLUE, minY = 0.0, anchor = anchor)
+        val violet = findButtons(img, VIOLET, minY = 0.0, anchor = anchor)
+        val cards = listCards(img, anchor)
 
         // A crisp auto button rules every dialog out. The game dims what is
         // behind a dialog and the dimmed disc falls under the fill floor --
@@ -1799,10 +2440,11 @@ object Dungeon {
         // draws a narrower Attempt, 0.214 against the loaded 0.251, which
         // slips inside EXIT_W -- and the mirrored Cancel then lands on Clear
         // Previous Difficulty. That happened four times in one live dungeon.
-        if (exitOk != null && cards.size < LIST_MIN_CARDS && claimButton(img) == null &&
+        if (exitOk != null && cards.size < LIST_MIN_CARDS && claimButton(img, anchor) == null &&
             !violetBeside(exitOk, violet)) {
             return Recognition(EXIT, null, null, null, null, blue, violet, cards, null,
-                               exitOk = exitOk, exitKind = confirmKind(img, exitOk))
+                               exitOk = exitOk, exitKind = confirmKind(img, exitOk, anchor),
+                               anchor = anchor)
         }
 
         // The Reward sheet, before the battle and before the panel. Under the
@@ -1811,9 +2453,9 @@ object Dungeon {
         // is the dimming's doing, not a proof, and a sheet read as the panel
         // would be tapped on as one, or waited on as a battle for as long as
         // it stands. Not a dialog either: nothing on it but "Tap to close".
-        if (rewardSheet(img)) {
+        if (rewardSheet(img, anchor)) {
             return Recognition(REWARD, null, null, null, null, blue, violet, cards, null,
-                               partyVoll = 0)
+                               partyVoll = 0, anchor = anchor)
         }
 
         // Check for battle next. During a battle there is game artwork that
@@ -1821,7 +2463,8 @@ object Dungeon {
         // very bottom, is unambiguous by contrast.
         val giveup = blue.firstOrNull { b -> near(b.fx, POS_CENTER) && b.fy > POS_GIVEUP_Y }
         if (giveup != null) {
-            return Recognition(BATTLE, null, null, null, null, blue, violet, cards, giveup)
+            return Recognition(BATTLE, null, null, null, null, blue, violet, cards, giveup,
+                               anchor = anchor)
         }
 
         // Only buttons at one of the known positions. Without this
@@ -1847,6 +2490,16 @@ object Dungeon {
         } else if (usable.size == 1) {
             attempt = usable[0]
         }
+        // The idle popup's Claim stands on the edge of the Attempt band, not
+        // in it: fx 0.5985 to 0.6055 over its 31 frames (PLAN_FORMATE.md
+        // V17, 2026-09-27), against POS_ATTEMPT - POS_TOLERANCE = 0.60 and a
+        // real Attempt at 0.6155 to 0.6285. So the same popup was a dialog
+        // with Claim as its Attempt on 25 frames and unknown on six -- five
+        // formats, 720 x 1280 among them, and a frame of 2026-09-19 -- by
+        // the fourth decimal. The pair [claimButton] names is the popup's own
+        // proof, so its Claim is the Attempt wherever the band missed it; no
+        // panel carries that pair.
+        if (attempt == null) attempt = claimButton(img, anchor)
 
         // Clear Previous Difficulty does not count as evidence of a dialog.
         // The failure screen has violet areas at the same position, and a
@@ -1864,8 +2517,8 @@ object Dungeon {
             UNKNOWN
         }
 
-        val partyVoll = if (state == DIALOG_PARTY) partySlotsFilled(img) else 0
+        val partyVoll = if (state == DIALOG_PARTY) partySlotsFilled(img, anchor) else 0
         return Recognition(state, attempt, party, ad, clear, blue, violet, cards, null,
-                           partyVoll = partyVoll)
+                           partyVoll = partyVoll, anchor = anchor)
     }
 }

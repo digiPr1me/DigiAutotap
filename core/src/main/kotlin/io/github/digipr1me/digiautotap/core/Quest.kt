@@ -16,11 +16,11 @@ import kotlin.math.floor
  * `Explore.closeButton`. The loop itself -- the routine, the ticks, the
  * claim -- is not here; it comes with its own session, under the director.
  *
- * Every constant keeps its Python name and value, and the sentence that says
- * where it came from. A number here is changed in quest.py first, with a
- * measurement, then the oracle is written again, then this file follows --
- * never the other way round (NOTES.md, "Two implementations, one
- * direction"). The frame is BGR, uint8, as `cv2.imread` gives it.
+ * Every constant came over with its Python name and value, and the sentence
+ * that says where it came from; a number is changed in this file, with a
+ * measurement and its sentence, and then `writeOracle` writes the oracle
+ * (NOTES.md, "One project"). The frame is BGR, uint8, as `cv2.imread`
+ * gives it.
  */
 object Quest {
 
@@ -359,18 +359,68 @@ object Quest {
         val red = Mat()
         Core.bitwise_or(redLow, redHigh, red)
         val green = Cv.inRange(hsv, QUEST_GREEN)
+        val tightLow = Cv.inRange(hsv, QUEST_RED_TIGHT_LOW)
+        val tightHigh = Cv.inRange(hsv, QUEST_RED_TIGHT_HIGH)
+        val redTight = Mat()
+        Core.bitwise_or(tightLow, tightHigh, redTight)
         val value = Mat()
         Core.extractChannel(hsv, value, 2)
         big.release(); gray.release(); hsv.release(); redLow.release(); redHigh.release()
+        tightLow.release(); tightHigh.release()
         try {
-            return questRowOf(white, red, green, value, left, top, x0, y0, gw, gh)
+            return questRowOf(white, red, green, value, left, top, x0, y0, gw, gh, redTight)
         } finally {
-            white.release(); red.release(); green.release(); value.release()
+            white.release(); red.release(); green.release(); value.release(); redTight.release()
+        }
+    }
+
+    // The red ist digit on the smallest canvas there is, and why it gets a
+    // second look (PLAN_FORMATE.md V19, measured 2026-09-27). On a landscape
+    // display the game stands upright in a canvas 646 px wide, and the red
+    // "1" of "1/2" is 11 px tall there: its anti-aliased rim, V 131 at the
+    // tenth percentile against 150 at 1920 (median 187 against 237), is
+    // still inside QUEST_RED's V floor of 120, so the glyph grows to 0.98 of
+    // the slash, fails QUEST_DIGIT_H_MAX, and the card reads nothing -- and
+    // the same glyph, let through, reads as a 5. Raising the floor for every
+    // glyph was measured first and refused: at 160 the landscape card reads
+    // 1/2, but the red 0 of corpus/passive/bond-3.png (497 x 914, the
+    // narrowest window there is) loses its side and reads 4 -- 4/2, a
+    // finished quest on a card that had not started -- and 293 cards move
+    // their row by 0.0001. So only a red glyph too tall for a digit is
+    // looked at again, through a mask with the floor at 160: the landscape
+    // "1" comes back 27 x 41 at 4x against a slash of 46, 0.89, and reads 1;
+    // the 1920 and 720 x 1280 cards' "1" pass the band already and never get
+    // here. What does not pass the band either way stays out, and the card
+    // reads nothing: a missing number is waited out, a wrong one is claimed.
+    val QUEST_RED_TIGHT_LOW = Dungeon.Hsv(intArrayOf(0, 120, 160), intArrayOf(8, 255, 255))
+    val QUEST_RED_TIGHT_HIGH = Dungeon.Hsv(intArrayOf(158, 120, 160), intArrayOf(179, 255, 255))
+
+    /**
+     * [g], a red glyph too tall to be a digit beside [slash], read again
+     * through [tight]: its largest component inside the same box, if that
+     * one fits the band. Null otherwise. See QUEST_RED_TIGHT_LOW.
+     */
+    private fun tighter(g: Glyph, slash: IntArray, tight: Mat): Glyph? {
+        val (x, y, w, h) = g.s
+        val roi = Py.crop(tight, y, y + h, x, x + w) ?: return null
+        val box = roi.clone()
+        try {
+            val (n, stats) = Cv.components(box)
+            val best = (1 until n).maxByOrNull { stats[it][4] } ?: return null
+            val s = stats[best]
+            val shifted = intArrayOf(s[0] + x, s[1] + y, s[2], s[3], s[4])
+            if (!(QUEST_DIGIT_H_MIN * slash[3] <= s[3] && s[3] <= QUEST_DIGIT_H_MAX * slash[3])) return null
+            val aspect = s[2] / maxOf(s[3], 1).toDouble()
+            if (!(QUEST_ASPECT[0] <= aspect && aspect <= QUEST_ASPECT[1])) return null
+            return Glyph(shifted, tight, true)
+        } finally {
+            box.release()
         }
     }
 
     private fun questRowOf(white: Mat, red: Mat, green: Mat, value: Mat,
-                           left: Int, top: Int, x0: Int, y0: Int, gw: Int, gh: Int): Row? {
+                           left: Int, top: Int, x0: Int, y0: Int, gw: Int, gh: Int,
+                           redTight: Mat? = null): Row? {
         // Kept as two masks, not merged into one. A red glyph's anti-aliased
         // edge brushes the white threshold too, and OR-ing the two together
         // left a second, thinner ring just outside the real one with a gap of
@@ -415,8 +465,12 @@ object Quest {
             val middle = slash[1] + slash[3] / 2.0
             val leftG = ArrayList<Glyph>()
             val rightG = ArrayList<Glyph>()
-            for (g in glyphs) {
-                if (g === slashG) continue
+            for (g0 in glyphs) {
+                if (g0 === slashG) continue
+                // A red glyph too tall for a digit gets its second look here
+                // (QUEST_RED_TIGHT_LOW); every other glyph is what it was.
+                val g = if (redTight != null && g0.mask === red && g0.s[3] > QUEST_DIGIT_H_MAX * slash[3])
+                    tighter(g0, slash, redTight) ?: continue else g0
                 val s = g.s
                 if (!(QUEST_DIGIT_H_MIN * slash[3] <= s[3] && s[3] <= QUEST_DIGIT_H_MAX * slash[3])) continue
                 if (abs((s[1] + s[3] / 2.0) - middle) > QUEST_ROW_TOL * slash[3]) continue
@@ -663,7 +717,9 @@ object Quest {
 
     /** `close_x`'s dict: the X's answer from whichever recogniser found it, and which. */
     data class CloseX(val fx: Double, val fy: Double, val plate: Double, val mark: Double,
-                      val which: String) {
+                      val which: String,
+                      /** The rectangle the X was read in (Dungeon.Anchor); not in the oracle's dict. */
+                      val anchor: Dungeon.Anchor = Dungeon.Anchor.BOTTOM) {
         fun toOracle(): Map<String, Any?> =
             mapOf("fx" to fx, "fy" to fy, "plate" to plate, "mark" to mark, "which" to which)
     }
@@ -680,9 +736,186 @@ object Quest {
         Summon.exitButton(img)?.let {
             return CloseX(it.fx, it.fy, it.plate, it.mark, "the white X")
         }
+        // Two anchors in one reader (PLAN_FORMATE.md V4): the white X is the
+        // page's own close and stands at the bottom on every page that has
+        // one; the violet X is the World Search board's, which stands in the
+        // middle (Explore.BOARD).
         Explore.closeButton(img)?.let {
-            return CloseX(it.fx, it.fy, it.plate, it.mark, "the violet X")
+            return CloseX(it.fx, it.fy, it.plate, it.mark, "the violet X", it.anchor)
         }
         return null
+    }
+
+    // ------------------------------------------------------------------------
+    // Idle Rewards (PLAN_WERBUNG.md 11, the task of 2026-09-28)
+    // ------------------------------------------------------------------------
+    // The way in is the chest labelled "Rewards", left over the card tray,
+    // on the plain main screen. It is part of the HUD and stands in the same
+    // place on every format: measured 2026-09-28 over the corpus (the pale
+    // blue-white of the box, CHEST_PALE, its components in CHEST_BAND), the
+    // box's front measures fx 0.146 to 0.156, fy 0.692 to 0.703, fw 0.090 to
+    // 0.106 and fh 0.024 to 0.044 on 389 of the 425 main screens, from 720 x
+    // 1280 to 2136 x 3200 and the landscape display -- full or emptied by a
+    // claim alike (corpus/quest/idle_main_*). The Poco's uncut frames of
+    // 2026-09-22 stand at 0.159 / 0.706 (the canvas under the cutout,
+    // notes/formats.md), inside the window below. On the other 36 the box touches a
+    // pale sky or a bright attack behind it and the blob grows out of every
+    // window; those frames read null, and the task looks again a round later
+    // -- the battle moves. What passes the window off a main screen is a main
+    // screen with the auto button dimmed (22 `unclear` frames) and one
+    // dialog over a main screen; the task asks only on a frame the director
+    // called `main`.
+    val CHEST_BAND = doubleArrayOf(0.02, 0.26, 0.62, 0.715)
+    val CHEST_PALE = Dungeon.Hsv(intArrayOf(90, 15, 165), intArrayOf(115, 140, 255))
+    val CHEST_FX = doubleArrayOf(0.13, 0.17)
+    val CHEST_FY = doubleArrayOf(0.685, 0.715)
+    val CHEST_FW = doubleArrayOf(0.075, 0.115)
+    val CHEST_FH = doubleArrayOf(0.012, 0.05)
+    const val CHEST_MID_FX = 0.149
+    const val CHEST_MID_FY = 0.700
+
+    /**
+     * The Idle Rewards chest on the main screen, or null. See CHEST_BAND:
+     * the component of the box's pale blue that has the box's place and
+     * size, the one nearest the measured middle where two do.
+     */
+    fun rewardsChest(img: Mat): Explore.Target? {
+        val (x0, y0, gw, gh) = Dungeon.gameRect(img)
+        val b = CHEST_BAND
+        val left = maxOf(0, Py.int(x0 + b[0] * gw))
+        val top = maxOf(0, Py.int(y0 + b[2] * gh))
+        val crop = Py.crop(img, top, Py.int(y0 + b[3] * gh), left, Py.int(x0 + b[1] * gw)) ?: return null
+        val mask = Cv.hsvMask(crop, CHEST_PALE)
+        val closed = Mat()
+        val kernel = Mat.ones(5, 5, org.opencv.core.CvType.CV_8U)
+        Imgproc.morphologyEx(mask, closed, Imgproc.MORPH_CLOSE, kernel)
+        val (n, stats) = Cv.components(closed)
+        mask.release(); closed.release(); kernel.release()
+        fun inside(v: Double, r: DoubleArray) = r[0] <= v && v <= r[1]
+        var best: Explore.Target? = null
+        var bestD = Double.MAX_VALUE
+        for (i in 1 until n) {
+            val s = stats[i]
+            val fx = (left + s[0] + s[2] / 2.0 - x0) / gw
+            val fy = (top + s[1] + s[3] / 2.0 - y0) / gh
+            if (!inside(fx, CHEST_FX) || !inside(fy, CHEST_FY) ||
+                !inside(s[2] / gw.toDouble(), CHEST_FW) || !inside(s[3] / gh.toDouble(), CHEST_FH)) continue
+            val d = abs(fx - CHEST_MID_FX) + abs(fy - CHEST_MID_FY)
+            if (d < bestD) {
+                bestD = d
+                best = Explore.Target(fx, fy)
+            }
+        }
+        return best
+    }
+
+    // The Idle Rewards window: "Idle Time", what it has gathered, and two
+    // buttons in a row -- the violet "Extra Rewards" with its film icon and
+    // "n/2", and the blue Claim. `Dungeon.claimButton` has named it since the
+    // passive helper's days by that pair, measured there (CLAIM_PAIR_GAP),
+    // and it still does -- but only while Claim is lit. Once claimed the
+    // button stays and is dimmed: V 121 against 209 at the same hue (H 100,
+    // S 255; corpus/quest/idle_window_claimed_*), under BLUE's floor of
+    // 150, and the window read `unknown`. A wider V alone does not find it:
+    // the window's own blue is H 106, S 233, V 139, brighter than the dimmed
+    // button and one blob with it. What the button has and the window has
+    // not is its hue and its saturation, H 100 to 101 and S 255 lit or
+    // dimmed, so IDLE_CLAIM_ANY is H 97 to 103, S from 245, V from 90 --
+    // the one blob of Claim's size on both states and on the corpus's lit
+    // windows from 720 x 1280 up. Whether Claim is lit is claimButton's
+    // own answer. The pair's gap and height are
+    // claimButton's, so the Partner and Buddy windows stay out as they do
+    // there.
+    val IDLE_CLAIM_ANY = Dungeon.Hsv(intArrayOf(97, 245, 90), intArrayOf(103, 255, 255))
+
+    /** The Idle Rewards window's two buttons, and whether Claim is lit. */
+    data class IdleWindow(val extra: Dungeon.Button, val claim: Dungeon.Button, val lit: Boolean,
+                          val anchor: Dungeon.Anchor = Dungeon.POPUP) {
+        fun toOracle(): Map<String, Any?> =
+            mapOf("extra" to extra.toOracle(), "claim" to claim.toOracle(), "lit" to lit)
+    }
+
+    /** The Idle Rewards window, Claim lit or not, or null. See IDLE_CLAIM_ANY. */
+    fun idleWindow(img: Mat, anchor: Dungeon.Anchor = Dungeon.POPUP): IdleWindow? {
+        val band = Dungeon.POS_CLAIM_Y
+        fun inBand(b: Dungeon.Button) = band[0] <= b.fy && b.fy <= band[1]
+        val blue = Dungeon.findButtons(img, IDLE_CLAIM_ANY, minY = band[0], anchor = anchor).filter { b ->
+            inBand(b) && b.fw >= Dungeon.POS_CLAIM_MIN_W && b.fh >= Dungeon.CLAIM_BUTTON_FH &&
+                Dungeon.POS_CLAIM_FX[0] <= b.fx && b.fx <= Dungeon.POS_CLAIM_FX[1]
+        }
+        if (blue.isEmpty()) return null
+        val violet = Dungeon.findButtons(img, Dungeon.VIOLET, minY = band[0], anchor = anchor).filter { inBand(it) }
+        for (b in blue) {
+            for (v in violet) {
+                if (abs(v.fy - b.fy) > Dungeon.CLAIM_PAIR_DY || v.fx >= b.fx) continue
+                val gap = b.fx - v.fx
+                if (!(Dungeon.CLAIM_PAIR_GAP[0] <= gap && gap <= Dungeon.CLAIM_PAIR_GAP[1])) continue
+                return IdleWindow(v, b, Dungeon.claimButton(img, anchor) != null, anchor)
+            }
+        }
+        return null
+    }
+
+    // "n/2" over "Extra Rewards": the ads the day still has, counting down
+    // like every counter of this game (Summon.adsLeft). White while any are
+    // left (corpus/passive/unclear_092755, 2/2) and red at 0/2 -- the whole
+    // button dimmed then, violet V 137, the red V 149 at most
+    // (corpus/quest/idle_window_zero_*) -- so the characters are the white
+    // OR the red of the crop. The crop is the button's upper half, from a
+    // third of its width left of the centre to its right edge: the film icon
+    // stands left of the digits and is square, which IDLE_EXTRA_ASPECT keeps
+    // out of the groups as ADS_ASPECT does on Summon's.
+    val IDLE_EXTRA_ROWS = doubleArrayOf(0.0, 0.5)
+    val IDLE_EXTRA_COLS = doubleArrayOf(-0.30, 0.50)
+    const val IDLE_EXTRA_SCALE = 4
+    val IDLE_EXTRA_RED_LOW = Dungeon.Hsv(intArrayOf(0, 120, 110), intArrayOf(8, 255, 255))
+    val IDLE_EXTRA_RED_HIGH = Dungeon.Hsv(intArrayOf(158, 120, 110), intArrayOf(179, 255, 255))
+    const val IDLE_EXTRA_WHITE = 200.0
+    val IDLE_EXTRA_ASPECT = doubleArrayOf(0.15, 0.85)
+    const val IDLE_EXTRA_MIN_H = 0.25
+
+    /** The Extra Rewards still to be had today, read off [window]'s violet button, or null. */
+    fun idleExtraLeft(img: Mat, window: IdleWindow): Int? {
+        val (x0, y0, gw, gh) = Dungeon.gameRect(img, window.anchor)
+        val e = window.extra
+        val bx = x0 + e.fx * gw
+        val bw = e.fw * gw
+        val btop = y0 + (e.fy - e.fh / 2.0) * gh
+        val bh = e.fh * gh
+        val crop = Py.crop(img, maxOf(0, Py.int(btop + IDLE_EXTRA_ROWS[0] * bh)), Py.int(btop + IDLE_EXTRA_ROWS[1] * bh),
+                           maxOf(0, Py.int(bx + IDLE_EXTRA_COLS[0] * bw)), Py.int(bx + IDLE_EXTRA_COLS[1] * bw))
+            ?: return null
+        if (crop.rows() < 2 || crop.cols() < 2) return null
+        val big = Mat()
+        Imgproc.resize(crop, big, Size((crop.cols() * IDLE_EXTRA_SCALE).toDouble(),
+                                       (crop.rows() * IDLE_EXTRA_SCALE).toDouble()),
+                       0.0, 0.0, Imgproc.INTER_CUBIC)
+        val gray = Cv.gray(big)
+        val white = Mat()
+        Core.compare(gray, Scalar(IDLE_EXTRA_WHITE), white, Core.CMP_GE)
+        val redLow = Cv.hsvMask(big, IDLE_EXTRA_RED_LOW)
+        val redHigh = Cv.hsvMask(big, IDLE_EXTRA_RED_HIGH)
+        val mask = Mat()
+        Core.bitwise_or(white, redLow, mask)
+        Core.bitwise_or(mask, redHigh, mask)
+        big.release(); gray.release(); white.release(); redLow.release(); redHigh.release()
+        try {
+            val (n, stats) = Cv.components(mask)
+            val glyphs = ArrayList<IntArray>()
+            for (i in 1 until n) {
+                val (_, _, w, h, _) = stats[i].toList()
+                if (h < IDLE_EXTRA_MIN_H * mask.rows()) continue
+                val aspect = w / maxOf(h, 1).toDouble()
+                if (!(IDLE_EXTRA_ASPECT[0] <= aspect && aspect <= IDLE_EXTRA_ASPECT[1])) continue
+                glyphs.add(stats[i])
+            }
+            for (group in Dungeon.groupGlyphs(glyphs.sortedBy { it[0] })) {
+                val digits = Dungeon.counterDigits(group)
+                if (!digits.isNullOrEmpty()) return Dungeon.readCounter(mask, digits)
+            }
+            return null
+        } finally {
+            mask.release()
+        }
     }
 }

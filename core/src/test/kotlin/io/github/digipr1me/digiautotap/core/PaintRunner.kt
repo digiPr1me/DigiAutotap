@@ -138,17 +138,50 @@ object PaintRunner {
     fun mainScreen(events: Boolean = true): Mat =
         PaintFarm.mainScreen().also { if (events) eventsTile(it) }
 
-    // The Gekkomon Run card in the Events window: lighter than the box and
-    // outside Runner.EVENT_BLUE (S 120 against its floor of 180), from just
-    // under the title bar down, the width of the box less its margins.
-    private val CARD = Paint.hsv(100, 120, 230)
+    // The Events window's rims (Events.RIM, measured H 103 S 198 V 239): one
+    // around the window, fx 0.156-0.796 fy 0.2035-0.776, and one around each
+    // card, fx 0.177-0.773 fy 0.2545-0.4045, as the 44 corpus frames have
+    // them; 3 px, the 4 to 5 px of 1080 wide at this window's 805.
+    private val RIM = Paint.hsv(103, 198, 239)
+    private const val RIM_PX = 3
+    // The card's art, by what Events.name reads it by: the share of its
+    // saturated pixels that is sky blue (H 90-115) or leaf green (H 35-85).
+    // Gekkomon Run is a city under a blue sky, Chef's Special a camp in a
+    // green wood; a third minigame is painted red, which is neither. None of
+    // the three is Runner.EVENT_BLUE (V 230 and 180 over its ceiling of 190,
+    // or another hue) nor Events.RIM (another hue).
+    private val ART = mapOf(Events.GEKKOMON_RUN to Paint.hsv(100, 200, 230),
+                            Events.CHEFS_SPECIAL to Paint.hsv(60, 200, 180),
+                            Events.UNKNOWN to Paint.hsv(0, 200, 200))
     val EVENT_CARD = doubleArrayOf(0.180, 0.265, 0.773, 0.400)
+    private val CARD_RIM = doubleArrayOf(0.177, 0.2545, 0.773, 0.4045)
+    // A second card under the first, one card and a gap lower. The game has
+    // not been seen with two (PLAN_SKEWER.md 7, question 12: one minigame at
+    // a time); the place is the painter's, and what the readers say of such
+    // a window is RunnerSkillTest's case of two cards (4.2 point 4).
+    val EVENT_CARD_2 = doubleArrayOf(0.180, 0.425, 0.773, 0.560)
+    private val CARD_RIM_2 = doubleArrayOf(0.177, 0.4145, 0.773, 0.5645)
+    private val WINDOW_RIM = doubleArrayOf(0.156, 0.2035, 0.796, 0.776)
 
-    /** The Events window: one solid box of the event's blue, fx 0.160-0.793 fy 0.245-0.782, the card in it. */
-    fun eventsDialog(): Mat {
+    private fun ring(img: Mat, r: DoubleArray, colour: Scalar) {
+        Imgproc.rectangle(img, Point(r[0] * W, r[1] * H), Point(r[2] * W, r[3] * H), colour, RIM_PX)
+    }
+
+    /**
+     * The Events window: one solid box of the event's blue, fx 0.160-0.793
+     * fy 0.245-0.782, its rim, and one card of [kind] in it with its rim --
+     * and a second card of [below] under it, where one is asked for.
+     */
+    fun eventsDialog(kind: String = Events.GEKKOMON_RUN, below: String? = null): Mat {
         val img = Paint.blank()
         rect(img, 0.160, 0.245, 0.793, 0.782, EVENT_BOX)
-        rect(img, EVENT_CARD[0], EVENT_CARD[1], EVENT_CARD[2], EVENT_CARD[3], CARD)
+        ring(img, WINDOW_RIM, RIM)
+        rect(img, EVENT_CARD[0], EVENT_CARD[1], EVENT_CARD[2], EVENT_CARD[3], ART.getValue(kind))
+        ring(img, CARD_RIM, RIM)
+        if (below != null) {
+            rect(img, EVENT_CARD_2[0], EVENT_CARD_2[1], EVENT_CARD_2[2], EVENT_CARD_2[3], ART.getValue(below))
+            ring(img, CARD_RIM_2, RIM)
+        }
         return img
     }
 

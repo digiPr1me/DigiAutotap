@@ -84,6 +84,13 @@ class World(isSelected: Collection<String>? = null) {
      */
     val unreachable = LinkedHashSet<Pair<Int, Int>>()
 
+    /**
+     * Every cell read from where the figure could not cover it, and every
+     * cell the figure stood on or cleared: what the World has seen clear
+     * (PLAN_WORLD_SEARCH_FORMATE.md F16; [hidden]). Not in world.py.
+     */
+    private val seen = HashSet<Pair<Int, Int>>()
+
     // ------------------------------------------------------------------------
     // Coordinates
     // ------------------------------------------------------------------------
@@ -130,11 +137,16 @@ class World(isSelected: Collection<String>? = null) {
         unreachable.add(gcol to row)
     }
 
-    /** Forget an object at once, a destroyed pyramid for instance. */
+    /**
+     * Forget an object at once, a destroyed pyramid for instance. The cell
+     * is clear afterwards -- a claw, a step or the dash went through it --
+     * and counts as seen ([hidden]).
+     */
     fun forget(gcol: Int, row: Int) {
         val key = gcol to row
         cells.remove(key)
         hits.remove(key)
+        seen.add(key)
     }
 
     // ------------------------------------------------------------------------
@@ -153,6 +165,7 @@ class World(isSelected: Collection<String>? = null) {
             col = minOf(figure.col, WorldConst.FIG_COL_MAX)
         }
 
+        val over = overFigure()
         for (c in 0 until Vision.COLS) {
             val gcol = toGlobal(c)
             for (r in 0 until Vision.ROWS) {
@@ -162,8 +175,34 @@ class World(isSelected: Collection<String>? = null) {
                 // The figure's cell is skipped. The figure is colourful
                 // itself and would otherwise be reported as an unknown
                 // object, and something can be hidden underneath it too.
-                if (cell == "figure" || (r == row && c == col)) continue
+                // It is clear, though: the figure stands on it.
+                if (cell == "figure" || (r == row && c == col)) {
+                    seen.add(key)
+                    continue
+                }
                 if (key in collected) continue
+
+                // The cell over the figure: an empty reading there is no
+                // reading. A tall partner's head and wings cover its lower
+                // half, and behind them a pyramid scores 0.33 to 0.59 with
+                // the second look where an empty cell scores up to 0.378,
+                // a chip 0.45 to 0.63 against 0.579 -- no bar tells covered
+                // from empty (PLAN_WORLD_SEARCH_FORMATE.md F16, 148 cells over
+                // the figure on 158 boards). So what the World saw there
+                // before stays for as long as the figure stands under it, as
+                // the figure's own cell is left alone, and the cell is not
+                // counted as seen ([hidden]). What shows over the head still
+                // counts, with two sightings running as everywhere: nothing
+                // empty read as an object there on those boards. Not in
+                // world.py.
+                if (key == over) {
+                    if (cell == null) {
+                        hits.remove(key)
+                        continue
+                    }
+                } else {
+                    seen.add(key)
+                }
 
                 if (cell == null) {
                     hits.remove(key)
@@ -197,6 +236,27 @@ class World(isSelected: Collection<String>? = null) {
     fun isPyramid(gcol: Int, row: Int): Boolean = at(gcol, row) == "pyramid"
 
     fun isWanted(gcol: Int, row: Int): Boolean = at(gcol, row) in isSelected
+
+    /** The cell directly over the figure, in global coordinates; null in the top row or before it is found. */
+    fun overFigure(): Pair<Int, Int>? {
+        val r = row ?: return null
+        val c = col ?: return null
+        return if (r > 0) toGlobal(c) to r - 1 else null
+    }
+
+    /**
+     * The cell over the figure, never seen clear: no object there, and never
+     * read from where the figure could not cover it (see [observe]). That is
+     * the cell over the figure at the start of a pass, and after a move there
+     * is none: the cell over the figure's new place was read before from
+     * clear of it -- up and beside, two over, or ahead of a dash -- or is the
+     * cell the figure came from. The planner goes round it where that costs
+     * nothing (Planner.search). Not in world.py.
+     */
+    fun hidden(gcol: Int, row: Int): Boolean {
+        val key = gcol to row
+        return key == overFigure() && key !in seen && key !in cells && key !in collected
+    }
 
     /**
      * Every wanted power-up in the visible area, sorted by global column.

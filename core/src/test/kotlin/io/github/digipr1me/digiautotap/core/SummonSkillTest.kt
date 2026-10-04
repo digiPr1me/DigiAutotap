@@ -234,7 +234,39 @@ class SummonSkillTest {
         val done = r.skill.spam(SummonSkill.SKILL)
         assertEquals(1, done)
         assertEquals(1, r.count("summon"))
-        assertTrue(r.log.any { it.contains("the price above the button is red") }, r.log.toString())
+        // No counter is painted, so the line leaves the tickets out.
+        assertTrue(r.log.contains("  the price above the yellow button is red -- Skill Card Summon done, " +
+                                  "about 1 summon (the task taps only the yellow draw)"), r.log.toString())
+    }
+
+    /**
+     * R5 of PLAN_REPORT_RAUS.md, live on instance 1 on 2026-10-04: with 15
+     * Skill Card tickets the mode ended "the price above the button is red
+     * -- Skill Card Summon done, about 0 summons", and the player took the
+     * reader for wrong. It was not: the price is the yellow 35x's 30, and
+     * the blue 15x beside it is a draw this skill never taps. The line says
+     * so now, with the tickets left off the same frame. The frame is the
+     * corpus's 28-ticket General page, on which the readers answer as on the
+     * R5 screencap (35x at fx 0.7084, the price red); two passes, so that
+     * nothing a first one leaves changes the second.
+     */
+    @org.junit.jupiter.api.Tag(OracleFamilies.CORPUS_TAG)
+    @Test
+    fun `a red price says how many tickets it leaves, and that only the yellow draw is tapped`() {
+        val repo = java.io.File(System.getProperty("digiautotap.repo") ?: "..")
+        val file = java.io.File(repo, "corpus/summon/tab_general_163639.png")
+        org.junit.jupiter.api.Assumptions.assumeTrue(file.exists(), "the General page is not in the corpus")
+        val page = OracleFamilies.read(file)
+        val r = rig(page)
+        for (pass in 0 until 2) {
+            assertEquals(0, r.skill.spam(SummonSkill.SKILL), "pass $pass")
+            assertTrue(r.cap.taps.isEmpty(), "pass $pass: ${r.taps()}")
+            assertEquals(pass + 1, r.log.count {
+                it == "  the price above the yellow button is red, 28 tickets left -- " +
+                      "Skill Card Summon done, about 0 summons (the task taps only the yellow draw)"
+            }, r.log.toString())
+        }
+        page.release()
     }
 
     @Test
@@ -358,18 +390,123 @@ class SummonSkillTest {
     }
 
     @Test
-    fun `a stopped run that did spend still walks back to the main screen`() {
-        // leave_summons must not consult the switch: by the time it runs the
-        // switch is often already off -- that is one of the ways a run ends --
-        // and walking out is the one step that still has to happen. It is
-        // asked of a run that found General and therefore had something to
-        // walk out of; a run that never spent has nothing open of its own and
-        // taps nothing (see the cases under "every way out of run()").
+    fun `a stopped run stays where it stands, and goes on from there`() {
+        // Changed on 2026-09-30 (PLAN_RELEASE_1_3.md B4, F24). leave_summons
+        // did not consult the switch -- "walking out is the one step that still
+        // has to happen" -- and since 2026-09-22 the service held back every X
+        // it tapped. Now the way out asks the switch first, taps nothing, and
+        // the page stays where the pause found it; the pass is one to go on
+        // with.
         val r = rig(mode(1), exitOnly(), exitOnly(), main())
         r.on = false
         val outcome = r.skill.run()
         assertEquals(Result.STOPPED, outcome.result)
-        assertTrue(r.count("X") >= 1, r.taps().toString())
+        assertTrue(r.cap.taps.isEmpty(), r.taps().toString())
+        assertTrue(r.log.contains(Stays.LINE), r.log.toString())
+        assertTrue(r.skill.carried)
+    }
+
+    /**
+     * Special Summon as a small game: General's two modes the page asks for
+     * (Skill Card and Support Digimon, two draws each), a draw's animation of
+     * two frames and then its result screen, the X from a result to the mode
+     * screen, the neighbour banner to the next mode. Every tap with the switch
+     * off is counted in [held].
+     */
+    private class Draws(val rig: Rig) {
+        var screen = "mode"
+        var mode = SummonSkill.SKILL
+        var animFrames = 0
+        var phase = 0
+        val draws = HashMap<Int, Int>()
+        var held = 0
+        /** Turn the switch off after the draw that brings a mode to this count. */
+        var offAt: Pair<Int, Int>? = null
+
+        fun frame(): Mat {
+            phase += 1
+            val p = phase % 3 + 1
+            if (screen == "anim") {
+                animFrames += 1
+                if (animFrames > 2) screen = "result"
+            }
+            return when (screen) {
+                "mode" -> PaintSummon.modeScreen(mode, p)
+                "anim" -> PaintSummon.animation(p)
+                "result" -> PaintSummon.resultScreen(p)
+                else -> Paint.mainScreen()
+            }
+        }
+
+        fun tap(x: Int, y: Int) {
+            if (!rig.on) { held += 1; return }
+            val fx = x / Paint.W.toDouble()
+            val fy = y / Paint.H.toDouble()
+            fun near(a: Double, b: Double) = kotlin.math.abs(fx - a) < 0.02 && kotlin.math.abs(fy - b) < 0.02
+            when {
+                (screen == "mode" || screen == "result") && near(PaintSummon.BUTTON.fx, PaintSummon.BUTTON.fy) -> {
+                    val n = (draws[mode] ?: 0) + 1
+                    draws[mode] = n
+                    screen = "anim"
+                    animFrames = 0
+                    if (offAt == mode to n) rig.on = false
+                }
+                screen == "anim" && near(SummonSkill.NEUTRAL_TAP_FX, SummonSkill.NEUTRAL_TAP_FY) -> screen = "result"
+                screen == "result" && near(Summon.EXIT_BUTTON_FX, Summon.EXIT_BUTTON_FY) -> screen = "mode"
+                screen == "mode" && near(Summon.NEIGHBOUR_FX_RIGHT, Summon.BANNER_FY) -> mode = minOf(3, mode + 1)
+                screen == "mode" && near(Summon.NEIGHBOUR_FX_LEFT, Summon.BANNER_FY) -> mode = maxOf(1, mode - 1)
+                screen == "mode" && near(Summon.EXIT_BUTTON_FX, Summon.EXIT_BUTTON_FY) -> screen = "main"
+            }
+        }
+    }
+
+    /**
+     * Two pauses in one pass (PLAN_RELEASE_1_3.md B4), two draws a mode on the
+     * page: the switch goes off after Skill Card's first draw and again after
+     * Support Digimon's. Each time the pass stops where the draw left the
+     * game -- its animation, the director's `unknown` -- and goes on from
+     * there: the draw hurried to its result, the X to the mode screen, the
+     * mode's second draw and no third, a mode done not drawn again. Four
+     * draws in all, as the page asked, and the TODAY card's parts add up to
+     * four.
+     */
+    @Test
+    fun `Special Summon paused twice draws the page's number and not one more`() {
+        val r = rig(settings = SummonSkill.Settings(skill = true, support = true, crest = false,
+                                                     watchAdsFirst = false, maxPerMode = 2))
+        val game = Draws(r)
+        r.scene { game.frame() }
+        r.cap.onTap = { x, y -> game.tap(x, y) }
+        game.offAt = SummonSkill.SKILL to 1
+        val summons = ArrayList<Int>()
+
+        val first = r.skill.work(r.cap.grab())
+        assertEquals(Result.STOPPED, first.result, r.log.joinToString("\n"))
+        summons += r.skill.lastCounts["summons"] ?: 0
+        val drawing = r.cap.grab()
+        val screen = Director.classify(drawing).screen
+        assertTrue(r.skill.resumesOn(screen, drawing), "the draw's own screen: $screen")
+
+        r.on = true
+        game.offAt = SummonSkill.SUPPORT to 1
+        val second = r.skill.resume(drawing, whole = false)
+        assertEquals(Result.STOPPED, second.result, r.log.joinToString("\n"))
+        summons += r.skill.lastCounts["summons"] ?: 0
+        val again = r.cap.grab()
+        assertTrue(r.skill.resumesOn(Director.classify(again).screen, again))
+
+        r.on = true
+        game.offAt = null
+        val third = r.skill.resume(again, whole = false)
+        val log = r.log.joinToString("\n")
+        assertEquals(Result.DONE, third.result, log)
+        summons += r.skill.lastCounts["summons"] ?: 0
+        assertEquals(2, game.draws[SummonSkill.SKILL], "Skill Card: ${game.draws}\n$log")
+        assertEquals(2, game.draws[SummonSkill.SUPPORT], "Support Digimon: ${game.draws}\n$log")
+        assertEquals(4, summons.sum(), "the TODAY card's parts: $summons")
+        assertEquals(0, game.held, "no tap with the switch off")
+        assertTrue(r.kept.isEmpty(), "${r.kept}")
+        assertFalse(r.skill.carried)
     }
 
     // -- back to the mode screen ---------------------------------------------
@@ -463,6 +600,22 @@ class SummonSkillTest {
         assertTrue(r.log.any { it == "  ads done" }, r.log.toString())
     }
 
+    /**
+     * The grey-Cancel prompt is the game's "Exit the game?", not its question
+     * before an ad: nothing is tapped on it, and it is not taken for a pass
+     * that is not there.
+     */
+    @Test
+    fun `the exit prompt after View Ads is not answered`() {
+        val r = rig(ads(2), ads(2), Paint.prompt(pink = false))
+        r.cap.hand = FakeFront()
+        r.skill.watchAds(SummonSkill.SKILL)
+        assertEquals(1, r.count("View Ads"))
+        assertEquals(listOf("View Ads"), r.taps().filter { it != "hurry" }.take(1))
+        assertTrue(r.taps().none { it == "%.3f,%.3f".format(Paint.GREY_OK.fx, Paint.GREY_OK.fy) }, r.taps().toString())
+        assertNull(r.skill.adPark, "the exit prompt is no ad")
+    }
+
     @Test
     fun `the ad phase stops where the counter does not fall`() {
         val r = rig(ads(2), ads(2), result(), result(), mode(1), ads(2))
@@ -470,6 +623,132 @@ class SummonSkillTest {
         assertEquals(1, r.count("View Ads"))
         assertEquals(0, r.skill.adsWatched)
         assertTrue(r.log.any { it.contains("the ad counter did not fall") }, r.log.toString())
+    }
+
+    /** K7 of PLAN_ABSCHLUSS_1_3.md: "no free ads" and "the counter did not read" are two sentences. */
+    @Test
+    fun `no free ads left and an unread counter are two sentences`() {
+        val zero = rig(ads(0))
+        zero.skill.watchAds(SummonSkill.SKILL)
+        assertTrue(zero.log.any { it == "  no free ads left today" }, zero.log.toString())
+        val unread = rig(button())
+        assertNull(Summon.adsLeft(button()), "the frame without a counter")
+        unread.skill.watchAds(SummonSkill.SKILL)
+        assertTrue(unread.log.any { it == "  the ads counter could not be read" }, unread.log.toString())
+        assertTrue((zero.log + unread.log).none { it.contains("(or the counter could not be read)") })
+    }
+
+    /**
+     * The file a phone can carry into 1.3: the two picks on, the pass as
+     * [pass], and `ad_watch` -- "Watch the free ads for me" from 2026-10-02
+     * to 2026-10-03 -- still on, which nothing reads any more.
+     */
+    private fun adFile(pass: Boolean) = MapSettings(mapOf(
+        SkillSettings.AD_PASS_KEY to pass, "ad_watch" to true,
+        Stored.SUMMON_ADS_KEY to true, Stored.DUNGEON_ADS_KEY to true))
+
+    /** What a pass reads out of [file], on a phone with a supporter code or without: [Stored] asks no code. */
+    private fun stored(file: MapSettings) = Stored.summon(file)
+
+    /** The ad in front the moment View Ads is tapped, and nothing afterwards changes it. */
+    private fun adOnViewAds(r: Rig): FakeFront {
+        val front = FakeFront()
+        r.cap.hand = front
+        r.cap.onTap = { x, y ->
+            if (kotlin.math.abs(x / Paint.W.toDouble() - PaintSummon.ADS_BUTTON.fx) < 0.02 &&
+                kotlin.math.abs(y / Paint.H.toDouble() - PaintSummon.ADS_BUTTON.fy) < 0.02) front.ad()
+        }
+        return front
+    }
+
+    /**
+     * Without the Ad Skip Pass no View Ads is tapped, for anybody: the
+     * Summon pick on, a supporter code, and `ad_watch` on in the file --
+     * counted over two passes of both modes that have free ads (2026-10-03,
+     * PLAN_ABSCHLUSS_1_3.md 3.6). The free draws stay where they are, and
+     * nothing parks for them.
+     */
+    @Test
+    fun `without the pass no View Ads is tapped, with a code and ad_watch in the file, over two passes`() {
+        val r = rig(ads(2), settings = stored(adFile(pass = false)))
+        r.cap.hand = FakeFront()
+        repeat(2) {
+            r.skill.watchAds(SummonSkill.SKILL)
+            r.skill.watchAds(SummonSkill.SUPPORT)
+        }
+        assertEquals(0, r.count("View Ads"), r.taps().toString())
+        assertTrue(r.cap.taps.isEmpty(), r.taps().toString())
+        assertEquals(0, r.skill.adsWatched)
+        assertNull(r.skill.adPark, "a free draw left lying holds nothing up")
+    }
+
+    /** With the pass: View Ads, the draw comes with the tap, the counter falls, nothing is waited for. */
+    @Test
+    fun `with the pass View Ads is tapped and the draw comes`() {
+        val r = rig(ads(2), ads(2), result(), result(), result(), mode(1),
+                    ads(1), ads(1), result(), result(), result(), mode(1),
+                    ads(0), settings = stored(adFile(pass = true)))
+        r.cap.hand = FakeFront()
+        r.skill.watchAds(SummonSkill.SKILL)
+        assertEquals(2, r.count("View Ads"), r.taps().toString())
+        assertEquals(2, r.skill.adsWatched, r.log.toString())
+        assertNull(r.skill.adPark)
+        assertEquals(0, r.count("summon"))
+        assertTrue(r.log.any { it == "  ads done" }, r.log.toString())
+    }
+
+    /**
+     * The pass switched on for an account without it: View Ads raises the
+     * game's question all the same. Nothing is tapped on it -- with a code
+     * as well --, no draw follows, and the phase parks with the one
+     * sentence; the question stands for the player.
+     */
+    @Test
+    fun `with the pass the game's question parks the phase untouched, with a code as well`() {
+        val r = rig(ads(2), ads(2), Paint.prompt(pink = true), settings = stored(adFile(pass = true)))
+        val front = FakeFront()
+        r.cap.hand = front
+        r.skill.watchAds(SummonSkill.SKILL)
+        assertEquals(listOf("View Ads"), r.taps(), "nothing tapped on the question")
+        assertEquals(0, r.cap.backs)
+        assertEquals(FreeAds.PARK, r.skill.adPark)
+        assertEquals(0, r.skill.adsWatched)
+    }
+
+    /**
+     * The same with the video already in front, no question before it:
+     * View Ads is the last gesture -- no tap, no back, in the ad or on the
+     * game behind it -- and the phase parks with the one sentence. The ad
+     * still stands; the player closes it.
+     */
+    @Test
+    fun `with the pass an ad in front after View Ads parks the phase and nothing touches it`() {
+        val r = rig(ads(2), ads(2), animation(), settings = stored(adFile(pass = true)))
+        val front = adOnViewAds(r)
+        r.skill.watchAds(SummonSkill.SKILL)
+        assertEquals(listOf("View Ads"), r.taps(), "View Ads, and nothing after it")
+        assertEquals(0, r.cap.backs)
+        assertEquals(FreeAds.PARK, r.skill.adPark)
+        assertTrue(front.inAd, "the ad still stands, for the player")
+    }
+
+    /**
+     * The Quest Loop's summon step builds its bot with these settings
+     * ([QuestSkill.summonSettings]): without the pass that bot taps no View
+     * Ads either, a code and `ad_watch` in the file, over two passes.
+     */
+    @Test
+    fun `the Quest Loop's summon bot taps no View Ads without the pass, over two passes`() {
+        val loop = QuestSkill(DirectorTest.FakeCapture(), { Stored.quest(adFile(pass = false)) })
+        val r = rig(ads(2), settings = loop.summonSettings())
+        r.cap.hand = FakeFront()
+        repeat(2) {
+            r.skill.watchAds(SummonSkill.SKILL)
+            r.skill.watchAds(SummonSkill.SUPPORT)
+        }
+        assertTrue(r.cap.taps.isEmpty(), r.taps().toString())
+        val withPass = QuestSkill(DirectorTest.FakeCapture(), { Stored.quest(adFile(pass = true)) })
+        assertTrue(withPass.summonSettings().watchAdsFirst, "with the pass the step's bot takes them")
     }
 
     @Test
@@ -527,6 +806,73 @@ class SummonSkillTest {
         assertFalse(r.skill.leaveSummons())
         assertEquals(SummonSkill.EXIT_TAPS_MAX, r.count("X"))
         assertTrue(r.kept.contains("no_way_back"), r.kept.toString())
+    }
+
+    /**
+     * PLAN_RELEASE_1_3.md B72: live on instance 1 on 2026-10-01 the X out
+     * of Crest Summon landed on the main screen with the Stage Failed banner,
+     * its Growth Guide and the game's "Time Sale!" window over it -- no X,
+     * one purchase button. The way out waited blind, kept `nothing_to_tap`
+     * and `no_way_back`, and said "could not get back to the main screen".
+     * It hands the window back as it stands now, at the first look that
+     * reads it: no tap on it, no frame, the one sentence (Stays.over). The
+     * frames are the three the director kept that minute.
+     */
+    @org.junit.jupiter.api.Tag(OracleFamilies.CORPUS_TAG)
+    @Test
+    fun `leaving hands the game's sale window back as it stands and taps nothing on it`() {
+        val repo = java.io.File(System.getProperty("digiautotap.repo") ?: "..")
+        val names = listOf("134815", "134833", "134844").map {
+            java.io.File(repo, "corpus/summon/time_sale_over_main_1080x2340_hole105_$it.png")
+        }
+        org.junit.jupiter.api.Assumptions.assumeTrue(names.all { it.exists() }, "the sale frames are not in the corpus")
+        val sale = names.map { OracleFamilies.read(it) }
+        for (pass in 0 until 2) {
+            val r = rig(exitOnly(), animation(), *sale.toTypedArray())
+            assertFalse(r.skill.leaveSummons())
+            assertEquals(listOf("X"), r.taps(), "pass $pass: the X out of the mode screen, and nothing on the window")
+            assertTrue(r.kept.isEmpty(), "pass $pass: ${r.kept}")
+            assertTrue(r.log.contains("the game's \"Time Sale!\" window is over the way home -- " +
+                                      "leaving it to the director, nothing tapped"), r.log.toString())
+            assertTrue(r.log.none { it.startsWith("could not get back") || it.startsWith("neither the main") },
+                       r.log.toString())
+        }
+        sale.forEach { it.release() }
+    }
+
+    /**
+     * PLAN_RELEASE_1_3.md B71: the switch went off a second after the
+     * step's icon tap (live, instance 1, 13:30:11 and :12). The walk in was
+     * the one part of a pass not carried across a pause, so the page the
+     * icon opened had nothing to go on from it. The walk stopped after the
+     * icon is carried now: the page it opens -- Buddy with General in view
+     * here -- is the pass's own, and the pass goes on from it with General's
+     * tab, the one tap the walk in makes there, and the icon is not tapped a
+     * second time.
+     */
+    @Test
+    fun `a pass the switch stopped right after the icon goes on from the page the icon opened`() {
+        val r = rig(main(), main(), buddy(), mode(1), mode(1), mode(1), mode(1), result(), result(),
+                    dialog(), dialog(), result(), exitOnly(), main(),
+                    settings = SummonSkill.Settings(support = false, crest = false, watchAdsFirst = false))
+        r.cap.onTap = { _, _ -> if (r.cap.taps.size == 1) r.on = false }
+        val first = r.skill.run()
+        assertEquals(Result.STOPPED, first.result, r.log.toString())
+        assertEquals(listOf("icon"), r.taps())
+        assertTrue(r.skill.carried, "a walk in the switch stopped is a pass to go on with")
+        val page = buddy()
+        assertTrue(r.skill.resumesOn(Director.SUMMON, page), "the page the icon opened")
+        assertTrue(r.skill.resumesOn(Director.UNKNOWN, page), "the way to it")
+        assertFalse(r.skill.resumesOn(Director.DUNGEON_LIST, page))
+        r.on = true
+        r.cap.onTap = { _, _ -> }
+        val second = r.skill.resume(page, whole = true)
+        assertEquals(Result.DONE, second.result, r.log.toString())
+        assertEquals(listOf("icon", "General"), r.taps().take(2), r.taps().toString())
+        assertEquals(1, r.count("icon"), "the icon once: ${r.taps()}")
+        assertEquals(2, r.skill.summons)
+        assertFalse(r.skill.carried)
+        page.release()
     }
 
     // -- every way out of run() ------------------------------------------------

@@ -40,6 +40,17 @@ class Chain(steps: List<Step>, val repeat: Boolean = false,
      */
     var ran = 0
         private set
+    /**
+     * How often each key has been moved past this round, run or skipped:
+     * what a new order ([reordered]) must not run a second time.
+     */
+    private val handled = HashMap<String, Int>()
+    /**
+     * Of [handled], what this chain took over from the order before it and
+     * has not met yet: each is passed by once, silently, where the new
+     * order has it.
+     */
+    private val carried = HashMap<String, Int>()
 
     /** The Step about to run, or null once the chain is over. */
     fun current(): Step? = if (finished || steps.isEmpty()) null else steps[index]
@@ -69,9 +80,14 @@ class Chain(steps: List<Step>, val repeat: Boolean = false,
      * the chain -- in that order of preference.
      */
     fun advance() {
+        if (index in steps.indices) handled.merge(steps[index].key, 1, Int::plus)
         index += 1
+        while (index < steps.size && passCarried(steps[index].key)) index += 1
         if (index < steps.size) return
         index = 0
+        // A finished chain keeps what it ran: a new order given to it
+        // afterwards ([reordered]) runs only what this round never reached.
+        carried.clear()
         if (!repeat) {
             finished = true
             return
@@ -86,8 +102,71 @@ class Chain(steps: List<Step>, val repeat: Boolean = false,
         }
         round += 1
         skipped.clear()
+        handled.clear()
         ran = 0
         log("  chain: round $round starting")
+    }
+
+    private fun passCarried(key: String): Boolean {
+        val n = carried[key] ?: return false
+        if (n <= 1) carried.remove(key) else carried[key] = n - 1
+        return true
+    }
+
+    /**
+     * This chain on the order [steps] the player has set since it was read,
+     * going on from where this round stands: every step this round has
+     * already moved past -- run, skipped or retired -- is passed by once
+     * where the new order has it, and the first one it has not met is next.
+     * Round, skips and retirements go with it.
+     *
+     * Not "from the top": a Dungeons step that ran before the change would
+     * run again and spend its tickets twice, since a pass's budgets begin at
+     * nought. A step added or moved ahead that this round has not reached is
+     * what runs next, the chain's end included -- a finished chain the
+     * player adds a step to runs that step.
+     */
+    fun reordered(steps: List<Step>, repeat: Boolean): Chain {
+        val c = Chain(steps, repeat, log)
+        c.round = round
+        c.ran = ran
+        c.skipped.addAll(skipped)
+        c.retired.putAll(retired)
+        c.handled.putAll(handled)
+        c.carried.putAll(handled)
+        c.index = -1
+        c.advance()
+        return c
+    }
+
+    /**
+     * This chain with the steps [keys] once more in this run: the player
+     * switched their rows off and on (PLAN_ABSCHLUSS_1_3.md A2). Each loses
+     * its retirement, and a step this round has already moved past -- run,
+     * skipped or retired -- is met once more, as a step added to the order is
+     * by [reordered]: the first such step in the order is next, and from it
+     * the chain goes on to where it stood, the chain's end included -- a
+     * finished chain runs it. A step this round has not reached yet runs
+     * where it stands, once, as it would have. Round and the other steps'
+     * skips and retirements go with it.
+     */
+    fun again(keys: Collection<String>): Chain {
+        for (k in keys) retired.remove(k)
+        if (keys.none { (handled[it] ?: 0) > 0 }) return this
+        val c = Chain(steps, repeat, log)
+        c.round = round
+        c.ran = ran
+        c.skipped.addAll(skipped.filter { it.first !in keys })
+        c.retired.putAll(retired)
+        c.handled.putAll(handled)
+        for (k in keys) {
+            val n = c.handled[k] ?: continue
+            if (n <= 1) c.handled.remove(k) else c.handled[k] = n - 1
+        }
+        c.carried.putAll(c.handled)
+        c.index = -1
+        c.advance()
+        return c
     }
 
     /** "2 rounds, skipped tower (no point set)" -- the closing log line. */
@@ -118,6 +197,23 @@ class Chain(steps: List<Step>, val repeat: Boolean = false,
 
         /** `chain.dungeon_has_budget` (chain.py:96): a dungeon with n > 0. */
         fun dungeonHasBudget(budgets: Map<Int, Int>): Boolean = budgets.values.any { it > 0 }
+
+        /**
+         * The Dungeons task's whole question since the daily dungeon's
+         * minutes (PLAN_DAILY_LOST_SECTOR_PRESETS.md 3.1): a ticket on a
+         * card, or minutes on the daily one. Asked by `DungeonSkill.hasBudget`
+         * and by the row in the Tasks list, so the two cannot disagree.
+         */
+        fun dungeonHasWork(budgets: Map<Int, Int>, dailyMinutes: Int): Boolean =
+            dungeonHasBudget(budgets) || dailyMinutes > 0
+
+        /**
+         * The Lost Sector Tower's whole question (PLAN_DAILY_LOST_SECTOR_PRESETS.md
+         * 3.2): minutes on its field of the Dungeons page. Asked by
+         * `LostSectorSkill.hasBudget` and by the Dungeons row in the Tasks
+         * list, which the tower stands or falls with (`Skills.rowFor`).
+         */
+        fun lostSectorHasWork(minutes: Int): Boolean = minutes > 0
 
         /**
          * `chain.summon_has_mode` (chain.py:100): any mode at all. Python

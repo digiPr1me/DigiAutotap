@@ -17,25 +17,41 @@ the file `digiautotap-<version>-arm64.apk`.
 Each thing it can do is a **task**, named after what the game calls it, and
 each one has its own switch:
 
-- **Bond token** -- collects the bond token from your partner on the main screen
 - **World Search** -- plays the Digital World Search board
 - **Summon** -- draws on the General tab of Special Summon, and only there
-- **Meat Field** -- harvests what is ripe and plants free seeds
-- **Dungeons** -- plays the dungeons you pick
+- **Meat Field** -- harvests, plants, and waters with the free watering cans
+- **Dungeons** -- plays the dungeons you pick, the Daily Dungeon and the Lost
+  Sector Tower by the minute
+- **Bond token** -- collects the bond token from your partner on the main screen
 - **Quest Loop** -- works through the quest card on the main screen
 - **Gekkomon Run** -- plays the Gekkomon Run event, one run after another
+- **EX Missions** -- claims the rewards on the EX Missions tab
+- **Presets** -- switches your Digivice, Tactical Memory, Food Effects, Skill
+  Cards, Support Digimon and Overdrive to a saved set of slots
+- **Chef's Special** -- plays the Chef's Special minigame in the Events window until
+  the combos of the daily mission are made
 
-A small dot at the top of the screen shows what it is doing; tap it to pause
-and tap it again to go on. It is blue in semi-automatic mode and green in
-fully automatic mode. Most of it is free. A few tasks need a supporter
-code (below).
+A small dot at the top of the screen shows what it is doing. Tap it to stop
+the bot, tap it again to start it afresh; *Turn off* in the app ends the dot
+as well. It is blue in semi-automatic mode and green in fully automatic mode.
+Most of it is free. A few tasks need a supporter code (below).
+
+**Ad Rewards.** With the game's Ad Skip Pass the free rewards behind an ad --
+the two free summons a day on Skill Card and Support Digimon, a dungeon's two
+ad tickets, the Meat Field's seeds and cans -- come with one tap, and
+DigiAutotap takes them for you: switch on *Ad Skip Pass* in the **Ad Rewards**
+card on the main page and pick the tasks there (the Quest Loop follows Summon
+and Dungeons). Without the pass DigiAutotap taps no ad and watches none; the
+free rewards stay for you to take yourself.
 
 
 ## What it needs
 
-- **Android 11 or later**, a phone with an **arm64** processor (nearly every
-  phone from the last years). Tablets and foldables are not supported.
-- The game in portrait.
+- **Android 11 or later** and an **arm64** processor (nearly every phone and
+  tablet from the last years).
+- Any phone, tablet or emulator. It has been tested on many screen shapes and
+  formats, upright or on its side, with or without a camera cutout. If it does
+  not work on yours, share the log (below) on Discord.
 
 ## Installing
 
@@ -82,30 +98,48 @@ Android itself refuses an update signed with any other key.
   still stops, look for your phone's own "app launch" or "background activity"
   setting and allow DigiAutotap there. When its notification disappears,
   DigiAutotap has been stopped.
-- **Report it:** in the app, open *Settings* and tap *Debug package* (the log,
-  the settings and the last pictures it looked at), then post it on Discord
-  (below) or attach it to a bug report here.
-- **Discord:** https://discord.gg/WBrnSpwrR -- questions, help, news.
+- **Report it:** in the app, open *Settings*, then *Log*, and tap *Share*. It
+  makes a ZIP of the log, the settings and the phone model and hands it to the
+  app you pick -- post it in `#bug-reports` on Discord (below) or attach it to
+  a bug report here, with what you did and what happened, and a screenshot of
+  the game if it is about a screen. Nothing is sent by itself.
+- **A task stopped for the day** (out of tickets, the day's combos made): switch
+  its row off and on, and it starts its day again.
+- **Discord:** https://discord.gg/mJFXtPuXng -- questions, help, news.
 
 ## Supporter code
 
-A few tasks are unlocked by a supporter code, which comes with a donation on
-**[Ko-fi](https://ko-fi.com/digipr1me)**. You type it in once under *Settings*.
-One code works on two devices; reinstalling the app on the same phone is not a
-new device. To move a code to a new phone, ask on Discord.
+A supporter code from the **[Ko-fi shop](https://ko-fi.com/digipr1me/shop)** --
+pay what you want, from 3 € -- unlocks Gekkomon Run, Chef's Special, EX
+Missions and Presets. Everything else is free: World Search, Summon, Meat
+Field, Dungeons with the Daily Dungeon and the Lost Sector Tower, Bond token
+for all of your Digimon, the Quest Loop, and the free ads with the Ad Skip
+Pass (above).
+
+The code comes by e-mail, and you type it in once under *Settings*, which shows
+it afterwards, covered but for its first four characters; it stays on the
+phone, and the shared log shows it only covered. One code works on two
+devices; reinstalling the app on the same phone is not a new device. To move
+a code to a new phone, ask on Discord.
 
 ## Privacy
 
-Everything DigiAutotap sees on the screen stays on the phone. There is no
-crash reporting. When the app is opened it asks GitHub whether a newer version
+What DigiAutotap sees on the screen stays on the phone: it keeps no pictures
+of the game and sends none. It goes online for three things. When the app is
+opened it asks GitHub whether a newer version
 is out, and that request carries nothing about you or the phone. Once a day it
-tells our server the app version, with nothing that identifies you or the
-phone. And when you redeem a supporter code it sends one request, once, with
+tells our server the app version, and once a month what kind of phone it is:
+make and model, Android version, screen size, camera cutout and the colour
+format of screenshots. That says which phones the app has to work on; it
+identifies nobody, and the server keeps no id and no IP address. And when you redeem a supporter code it sends one request, once, with
 two values -- a hash of the code (never the code itself) and an anonymous id
 for this phone, a salted hash of the per-app id Android gives it. The server
 keeps those two and the time: no e-mail, no IP address. What comes back is a
 signed token the app checks offline from then on, in flight mode too, and even
-if the server is gone for good. The debug package goes only where you share it.
+if the server is gone for good. *Share* on the Log page makes a ZIP of the
+log, the settings and the phone model and hands it to the app you pick --
+nothing is sent by itself. The ZIP never holds the token of your supporter
+code or the id it is bound to, and the log names the code only covered.
 
 You do not have to take our word for any of this: the source code is public,
 right here in this repository, so you can check for yourself exactly what the

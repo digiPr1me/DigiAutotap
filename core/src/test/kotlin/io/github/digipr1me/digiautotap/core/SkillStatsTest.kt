@@ -6,7 +6,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-/** The TODAY card's numbers: what a pass counted, added up, and rolled at midnight. */
+/** The TODAY card's numbers: what a pass counted, added up, and rolled at the game's reset. */
 class SkillStatsTest {
 
     private val day = 20_000L
@@ -28,10 +28,10 @@ class SkillStatsTest {
     /**
      * The dungeon card counted attempts until 2026-09-23 and counts tickets
      * now. An `attempts` of the morning is not shown any more, and it is
-     * still cleared at midnight: [SkillStats.RETIRED].
+     * still cleared at the reset: [SkillStats.RETIRED].
      */
     @Test
-    fun `the dungeon card's retired attempts are still cleared at midnight`() {
+    fun `the dungeon card's retired attempts are still cleared at the reset`() {
         val s = MapSettings()
         s.put(SkillStats.DAY_KEY, day)
         s.put(SkillStats.key("dungeon", "attempts"), 6)
@@ -89,7 +89,7 @@ class SkillStatsTest {
     }
 
     /**
-     * A line a card has lost still has to be cleared at midnight, or
+     * A line a card has lost still has to be cleared at the reset, or
      * yesterday's number sits in digiautotap.json for good: [SkillStats.clear]
      * walks [SkillStats.SHOWN], and a key taken out of that table is a key
      * nothing else would ever remove.
@@ -180,7 +180,7 @@ class SkillStatsTest {
     @Test
     fun `every skill of the Skills list is counted under a name of its own`() {
         for (key in listOf("dungeon", "summon", "mini", "farm", "tower", "passive", "quest",
-                           "runner")) {
+                           "runner", "skewer")) {
             assertTrue(key in SkillStats.SHOWN, key)
         }
     }

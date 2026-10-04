@@ -27,15 +27,16 @@ import org.opencv.core.Mat
  *    through the dimmed yellow button behind it, and a loading spinner over
  *    that button drops its fill from 0.96 to 0.73, which is how a live run
  *    hurry-tapped the dialog away and raised it again for as long as anybody
- *    watched (debug-queue/ticket-rot-asd.png; NOTES.md, "One way of asking
- *    is no way of asking"). So both, and neither is asked to be the only one.
+ *    watched (debug-queue/ticket-rot-asd.png; the laboratory's notes, "One
+ *    way of asking is no way of asking"). So both, and neither is asked to be
+ *    the only one.
  *  - **The stop is checked beside the pause.** On the PC `wait_while_paused`
  *    answers the pause question alone and says "go on" the moment the skill
  *    is not paused; this skill checked nothing else, and its Stop button and
- *    F8 therefore did nothing at all (NOTES.md, "`wait_while_paused` does
- *    not answer 'was I stopped'"). Here the two are one switch --
- *    [MainSwitch] is the director's only stop -- and [goOn] is the one gate
- *    that reads it, between two actions and never inside one.
+ *    F8 therefore did nothing at all (the laboratory's notes,
+ *    "`wait_while_paused` does not answer 'was I stopped'"). Here the two are
+ *    one switch -- [MainSwitch] is the director's only stop -- and [goOn] is
+ *    the one gate that reads it, between two actions and never inside one.
  *
  * Nothing from `android.*`: a [Capture], the settings, a log, a place to keep
  * a frame, a clock and a sleep, so that SummonSkillTest can drive it with
@@ -71,8 +72,11 @@ class SummonSkill(
      * The Summons page, `app.py`'s `_start_summon` (PLAN_ANDROID_3_DIRECTOR.md
      * 5.3): `summon_skill`, `summon_support`, `summon_crest`, `summon_max`
      * (0 = every draw the tickets allow). [watchAdsFirst] was `summon_ads`
-     * until 2026-09-24 and is the app's one Ad Skip Pass switch since
-     * (SkillSettings.AD_PASS_KEY, Stored.summon).
+     * until 2026-09-24, always on from 2026-09-26, the page's own switch
+     * from 2026-09-30, `summon_free_ads`, off by default
+     * (Stored.SUMMON_ADS_KEY), and since 2026-10-03 that pick with the Ad
+     * Skip Pass (Stored.summon, [FreeAds]): View Ads is tapped only where the
+     * draw comes with the tap.
      */
     data class Settings(
         val skill: Boolean = true,
@@ -99,6 +103,12 @@ class SummonSkill(
     var modesDone = 0
         private set
     var modesSkipped = 0
+        private set
+    /**
+     * Why the ad phase ended in a park -- the game asked for an ad where the
+     * Ad Skip Pass was taken for granted ([FreeAds.PARK]) -- or null.
+     */
+    var adPark: String? = null
         private set
 
     /**
@@ -132,6 +142,8 @@ class SummonSkill(
      * stale.
      */
     private var rect = Dungeon.GameRect(0, 0, 1080, 1920)
+    /** The headroom of the frame [rect] was taken off (Dungeon.CanvasFrame). */
+    private var room = 0
 
     // ------------------------------------------------------------------------
     // The seam
@@ -211,7 +223,9 @@ class SummonSkill(
      * director in front of it.
      */
     override fun work(img: Mat): Outcome = guarded {
+        fresh()
         rect = Dungeon.gameRect(img)
+        room = Dungeon.headroom(img)
         if (!onGeneral(img)) return@guarded Outcome.parked(PARK_NOT_GENERAL)
         spend()
     }
@@ -235,9 +249,10 @@ class SummonSkill(
      * taps General's X until the main screen is back.
      */
     override fun run(): Outcome = guarded {
+        fresh()
         if (!look { onGeneral(it) }) {
             val why = walkIn()
-            if (!on()) return@guarded Outcome.STOPPED
+            if (!on()) return@guarded walkStopped()
             if (why != null) return@guarded Outcome.retired(why)
         }
         try {
@@ -246,6 +261,172 @@ class SummonSkill(
             leaveSummons()
         }
     }
+
+    // ------------------------------------------------------------------------
+    // After a pause (PLAN_RELEASE_1_3.md B4, the player's rule of 2026-09-30)
+    // ------------------------------------------------------------------------
+    /** The last pass was stopped by the main switch and has not been gone on with or begun afresh since. */
+    internal var carried = false
+        private set
+    /** The modes this pass finished, not drawn again when it goes on. */
+    private val doneModes = HashSet<Int>()
+    /** Draws per mode in this pass, against the page's limit ([Settings.maxPerMode]) across a pause. */
+    private val drawnOn = HashMap<Int, Int>()
+    /** Draws of the mode [spam] is on, from before a pause. */
+    private var drawnBefore = 0
+    /** The switch stopped the pass inside a draw: the game may still be showing it. */
+    private var midDraw = false
+    /** Every way home asks the switch first ([Stays]). */
+    private val stays = Stays(on) { log(it) }
+
+    /**
+     * The switch stopped the pass in its walk in ([walkIn]), after the icon
+     * and before General stood on two frames: the page the icon opens is the
+     * pass's own, and it goes on there ([resumesOn], [resume]).
+     */
+    private var walkingIn = false
+
+    /** A pass begun afresh: nothing carried. */
+    private fun fresh() {
+        carried = false
+        walkingIn = false
+        doneModes.clear()
+        drawnOn.clear()
+        midDraw = false
+        stays.reset()
+    }
+
+    /**
+     * The walk in stopped by the switch: a pass to go on with, from the page
+     * its own icon tap opened. Until 2026-10-01 only a pass stopped in its
+     * spending was carried, and one stopped a second after the icon had no
+     * screen to go on from: live on instance 1 that day the summon page the
+     * step itself had opened was parked on (PLAN_RELEASE_1_3.md B71).
+     */
+    private fun walkStopped(): Outcome {
+        carried = true
+        walkingIn = true
+        return Outcome.STOPPED
+    }
+
+    /**
+     * Where a pass the switch stopped goes on: the Special Summon page and a
+     * dialog of it (the director's `summon`, `summon_dialog` and
+     * `no_tickets`), and -- where it stopped inside a draw -- the draw's own
+     * screens, which the director does not name (`unknown`). Not a pink
+     * prompt: the View Ads question is one of three identical ones, and its
+     * OK is never pressed here since 2026-10-03 ([adAsked]).
+     */
+    override fun resumesOn(screen: String, img: Mat): Boolean {
+        if (!carried) return false
+        // Stopped in its walk in: the page the icon opened -- General, or a
+        // page with General's tab in view, which the walk in taps (the
+        // player's rule of 2026-09-23) -- and the screens on the way to it.
+        if (walkingIn) return when (screen) {
+            Director.SUMMON -> onGeneral(img) || Summon.generalTab(img)?.let { it.fy < TAB_ROW_FY_MAX } == true
+            Director.UNKNOWN -> true
+            else -> false
+        }
+        // General's mode screen, once it has been seen in the pause, is the
+        // one screen the pass goes on from: a page after it that is not
+        // General is a tab the player chose, or a draw of their own -- and
+        // on the other three tabs nothing is tapped (the player's rule of
+        // 2026-09-22, [onGeneral]).
+        if (screen == Director.SUMMON && onGeneral(img)) {
+            generalSeen = true
+            return true
+        }
+        if (generalSeen) return false
+        return when (screen) {
+            // The draw's own screens: a result, the out-of-tickets dialog.
+            // Buddy's page is told by its tab row, which a result has not.
+            Director.SUMMON -> midDraw && Summon.generalTab(img) == null
+            Director.SUMMON_DIALOG, Director.NO_TICKETS -> midDraw
+            Director.UNKNOWN -> midDraw
+            else -> false
+        }
+    }
+
+    /** General's mode screen was seen since the pass stopped ([resumesOn]). */
+    private var generalSeen = false
+
+    /**
+     * The pass the switch stopped, gone on with: the out-of-tickets dialog
+     * closed (the mode it ended is done), a draw's animation hurried to its
+     * result as [spam] hurries it and stepped back from to the mode screen
+     * ([backToMain]); then the modes that are left, the one it stopped in
+     * with the draws it had made counted against the page's limit. [whole]
+     * goes home after it. From the main screen (a chain step whose claim
+     * ended) the walk in is [run]'s.
+     */
+    override fun resume(img: Mat, whole: Boolean): Outcome {
+        if (!carried) return if (whole) run() else work(img)
+        return guarded {
+            stays.reset()
+            rect = Dungeon.gameRect(img)
+            room = Dungeon.headroom(img)
+            log("going on with the Special Summon pass the main switch stopped")
+            val fromMain = Dungeon.autoButton(img) != null
+            if ((whole && fromMain) || walkingIn) {
+                // From the main screen the walk in is [run]'s; from the page
+                // a stopped walk in had opened, its second half ([arrive]).
+                val why = if (fromMain) walkIn() else arrive()
+                if (!on()) return@guarded walkStopped()
+                walkingIn = false
+                if (why != null) return@guarded Outcome.retired(why)
+            }
+            try {
+                if (!backToModes()) {
+                    if (!on()) return@guarded Outcome.STOPPED
+                    return@guarded Outcome.parked(PARK_NOT_GENERAL)
+                }
+                spend()
+            } finally {
+                if (whole) leaveSummons()
+            }
+        }
+    }
+
+    /**
+     * From wherever the stopped pass left Special Summon to General's mode
+     * screen: the out-of-tickets dialog closed, a draw hurried along until its
+     * button stands, and the X once from a result screen. True once the mode
+     * dots read; nothing is tapped on a tab that is not General.
+     */
+    private fun backToModes(): Boolean {
+        val end = now() + SPAM_TIMEOUT
+        while (now() < end) {
+            if (!goOn()) return false
+            val img = grab()
+            try {
+                if (onGeneral(img)) return true
+                val close = Summon.notEnoughTickets(img)
+                if (close != null) {
+                    // The game said the mode was over: it is done.
+                    modeAt?.let { doneModes += it }
+                    closeDialog(close)
+                    continue
+                }
+                val button = Summon.summonButton(img)
+                if (button == null) {
+                    // The draw still showing: hurried as [spam] hurries it.
+                    tap(NEUTRAL_TAP_FX, NEUTRAL_TAP_FY)
+                    sleep(0.5 * patience)
+                    continue
+                }
+                // A tab row that is not General's page: another tab, whose
+                // X and buttons are the player's (walkIn's rule).
+                if (Summon.generalTab(img) != null) return false
+                if (!backToMain(img)) return false
+            } finally {
+                img.release()
+            }
+        }
+        return false
+    }
+
+    /** The mode [spend] was on when the switch stopped it, or null. */
+    private var modeAt: Int? = null
 
     /**
      * From the plain main screen into General, or the reason not; null once
@@ -267,6 +448,15 @@ class SummonSkill(
         if (!look { Dungeon.autoButton(it) != null }) return RETIRE_NOT_MAIN
         log("opening Special Summon")
         tap(Summon.SUMMON_ICON_FX, Summon.SUMMON_ICON_FY)
+        return arrive()
+    }
+
+    /**
+     * [walkIn] after its icon: General on two frames running, its tab tapped
+     * where another page shows it, or the page left by the back key and the
+     * reason not. Also where a walk in the switch stopped goes on from.
+     */
+    private fun arrive(): String? {
         var generalTaps = 0
         var seen = 0
         for (round in 0 until WALK_ROUNDS) {
@@ -283,7 +473,7 @@ class SummonSkill(
                 val tab = Summon.generalTab(img)
                 if (tab != null && tab.fy < TAB_ROW_FY_MAX && generalTaps < GENERAL_TAPS_MAX) {
                     log("  another tab is open, tapping General")
-                    tap(tab.fx, tab.fy)
+                    tap(tab.fx, tab.fy, Summon.PAGE)
                     generalTaps += 1
                 }
             } finally {
@@ -304,6 +494,9 @@ class SummonSkill(
     private fun leaveByBack() {
         for (press in 0 until BACK_KEYS_MAX) {
             if (look { Dungeon.autoButton(it) != null }) return
+            if (stays.now()) return
+            // A window of the game's own is the director's ([Stays.over], B60).
+            if (look { stays.over(it) }) return
             cap.back()
             sleep(WALK_ROUND * patience)
         }
@@ -323,10 +516,11 @@ class SummonSkill(
         adsWatched = 0
         modesDone = 0
         modesSkipped = 0
+        adPark = null
         return try {
             block()
         } catch (e: CaptureError) {
-            Outcome.parked("No picture of the screen: ${e.message}")
+            Outcome.noFrame(e, "No picture of the screen")
         }
     }
 
@@ -336,32 +530,57 @@ class SummonSkill(
 
     /** `_spend` (summon.py:1605), the seam itself. */
     internal fun spend(): Outcome {
+        val out = spendModes()
+        // A pass the switch stopped is one to go on with ([resume]); any
+        // other end is the pass over.
+        carried = out.result == Result.STOPPED
+        generalSeen = false
+        return out
+    }
+
+    private fun spendModes(): Outcome {
         val set = settings()
+        midDraw = false
         for (mode in MODE_ORDER) {
+            modeAt = mode
             if (!goOn()) return Outcome.STOPPED
             if (!set.enabled(mode)) {
                 log("${modeName(mode)}: switched off, skipping")
                 continue
             }
+            // A mode this pass finished before a pause is not drawn again.
+            if (mode in doneModes) continue
             log(modeName(mode))
             if (!gotoMode(mode)) {
+                if (!on()) return Outcome.STOPPED
                 modesSkipped += 1
                 continue
             }
             watchAds(mode)
-            spam(mode)
+            // The ad is still in front, and nothing is drawn or tapped behind it.
+            adPark?.let { return Outcome.parked(it) }
+            if (!on()) return Outcome.STOPPED
+            drawnBefore = drawnOn[mode] ?: 0
+            val drawn = spam(mode)
+            drawnOn[mode] = drawnBefore + drawn
+            drawnBefore = 0
             // A mode cut short by the main switch is not a mode done. Nor is
             // there any point stepping back to the mode screen for a run that
             // is over -- the way out walks from wherever this leaves off,
-            // result screen included.
-            if (!on()) return Outcome.STOPPED
+            // result screen included. The pass that goes on after the pause
+            // takes the draw up where it stands ([midDraw]).
+            if (!on()) {
+                midDraw = true
+                return Outcome.STOPPED
+            }
             modesDone += 1
+            doneModes += mode
             // Only where another mode still has to be reached. backToMain
             // exists so that gotoMode has a mode screen to work on; after the
             // last enabled mode there is nothing to go to, and the way out
             // walks from a result screen perfectly well. A tap that buys
             // nothing can still cost something.
-            if (MODE_ORDER.any { it > mode && set.enabled(it) }) backToMain()
+            if (MODE_ORDER.any { it > mode && set.enabled(it) && it !in doneModes }) backToMain()
         }
         return Outcome.DONE
     }
@@ -413,7 +632,7 @@ class SummonSkill(
             val fx = if (target > current!!) Summon.NEIGHBOUR_FX_RIGHT else Summon.NEIGHBOUR_FX_LEFT
             var moved = false
             for (attempt in 0 until BANNER_TRIES) {
-                tap(fx, Summon.BANNER_FY)
+                tap(fx, Summon.BANNER_FY, Summon.PAGE)
                 sleep(pauseLong())
                 val seen = look { Summon.modeDots(it) }
                 if (seen != null && seen != current) {
@@ -455,11 +674,13 @@ class SummonSkill(
         try {
             if (Summon.modeDots(img) != null) return true
             val x = Summon.exitButton(img)
-            val aim = if (x != null) x.fx to x.fy else {
+            if (x != null) tap(x.fx, x.fy) else {
+                // Beside the button, so in the button's rectangle: the X of a
+                // result screen stands on the button's row.
                 val button = Summon.summonButton(img) ?: return false
-                Summon.xBesideButton(button)
+                val aim = Summon.xBesideButton(button)
+                tap(aim.first, aim.second, Summon.PAGE)
             }
-            tap(aim.first, aim.second)
         } finally {
             if (given == null) img.release()
         }
@@ -476,11 +697,12 @@ class SummonSkill(
     /**
      * Tap the X until the plain main screen is back. True if it is.
      *
-     * Deliberately not gated on [goOn]. By the time this runs the switch is
-     * often already off -- that is one of the ways a run ends -- and a gate
-     * that gave up here would skip the one step whose whole point is to leave
-     * the game somewhere the next run can start from. It is bounded instead,
-     * so Stop still ends the session promptly.
+     * Not gated on [goOn], which says "stopped" and would end it at once --
+     * but asked of the switch since 2026-09-30 all the same ([Stays]): the
+     * switch is one of the ways a run ends, and after the pause the game
+     * stays where it is, with no tap held back and no frame kept for it
+     * (PLAN_WORLD_SEARCH_FORMATE.md F24). It is bounded, so Stop still ends
+     * the session promptly.
      *
      * The X pops one screen, not all of them: from a result screen it goes
      * back to the mode screen, and only from there to the game. So this taps,
@@ -495,8 +717,15 @@ class SummonSkill(
         var taps = 0
         var blind = 0
         for (round in 0 until EXIT_ROUNDS) {
+            // With the switch off the game stays where it is ([Stays], F24).
+            if (stays.now()) return false
             val img = grabOrNull() ?: return false
             try {
+                // The game's own window over the way home -- "Time Sale!" over
+                // the Stage Failed banner after the X, live on 2026-10-01
+                // (PLAN_RELEASE_1_3.md B72), or its news after the reset (B60)
+                // -- is handed back as it stands, nothing tapped ([Stays.over]).
+                if (stays.over(img)) return false
                 if (Dungeon.autoButton(img) != null) {
                     if (taps > 0) log("back on the main screen")
                     return true
@@ -537,6 +766,7 @@ class SummonSkill(
                 img.release()
             }
         }
+        if (stays.now()) return false
         log("could not get back to the main screen -- the game is left where it stands")
         grabOrNull()?.let {
             dump(it, "no_way_back")
@@ -617,11 +847,18 @@ class SummonSkill(
     internal fun watchAds(mode: Int) {
         if (!settings().watchAdsFirst || MODE_HAS_ADS[mode] != true) return
         var remaining = look { Summon.adsLeft(it) }
-        if (remaining == null || remaining == 0) {
-            log("  no free ads to watch (or the counter could not be read)")
+        // Two sentences since 2026-10-02: the one line said both, and on the
+        // Poco's report of that day (K7 of PLAN_ABSCHLUSS_1_3.md) every visit
+        // after the quest loop had watched the day's two read 0.
+        if (remaining == null) {
+            log("  the ads counter could not be read")
             return
         }
-        log("  $remaining free ad${plural(remaining)} to watch first")
+        if (remaining == 0) {
+            log("  no free ads left today")
+            return
+        }
+        log("  $remaining free ad${plural(remaining)} to take with the pass first")
         while (remaining!! > 0) {
             if (!goOn()) return
             val button = look { Summon.viewAdsButton(it) }
@@ -629,9 +866,22 @@ class SummonSkill(
                 log("  the View Ads button is gone, stopping the ad phase")
                 return
             }
-            tap(button.fx, button.fy)
+            tap(button.fx, button.fy, Summon.PAGE)
+            // The pass taken for granted: the draw comes with the tap. Where
+            // the game asks for an ad all the same, the switch is on and the
+            // pass is not there -- nothing is tapped on the question or in
+            // the ad, no back key is sent, and the phase parks where it
+            // stands (2026-10-03, PLAN_ABSCHLUSS_1_3.md 3.6).
+            if (adAsked()) {
+                parkOnAd()
+                return
+            }
             val settled = waitButtonBack(AD_TIMEOUT)
             if (settled == null) {
+                if (Ads.inFront(cap.adHand())) {
+                    parkOnAd()
+                    return
+                }
                 log("  stopping the ad phase, the screen did not settle")
                 return
             }
@@ -649,6 +899,44 @@ class SummonSkill(
             remaining = left
         }
         log("  ads done")
+    }
+
+    /** The game wants an ad watched where the pass was taken for granted: said, and the phase's park. */
+    private fun parkOnAd() {
+        log("  the game asks for an ad although the Ad Skip Pass is switched on -- I never touch an ad")
+        adPark = FreeAds.PARK
+    }
+
+    /**
+     * Did the game ask for an ad after View Ads? Its question "You can view
+     * ads to perform a Summon. View ads?", Cancel in pink and OK in blue,
+     * measured live on LDPlayer instance 1 on 2026-09-28 (PLAN_WERBUNG.md
+     * 7h, 9.4): on an account without the pass View Ads opens it and no ad,
+     * 0.30 s after the tap on the first of six frames and on all six.
+     * `Dungeon.recognise` reads it as the prompt with the pink Cancel
+     * (`exit_kind` party, the director's `prompt`); the grey-Cancel prompt
+     * is the game's exit and is not this question. Or an ad -- or where one
+     * sends the player -- already in front. Either is how a pass taken for
+     * granted finds out it is not there, and nothing is tapped on either: the
+     * question stands for the player, as the ad does (2026-10-03).
+     *
+     * Looked for only while nothing else has happened: a frame that is
+     * neither the question nor the page as it was before the tap (the View
+     * Ads button still lit) -- the draw's animation, which follows the tap
+     * with the pass -- ends the looking at once, and so does
+     * [AD_CONFIRM_WAIT].
+     */
+    private fun adAsked(): Boolean {
+        val hand = cap.adHand()
+        val deadline = now() + AD_CONFIRM_WAIT
+        while (true) {
+            if (!goOn()) return false
+            if (Ads.inFront(hand)) return true
+            val (rec, page) = look { Dungeon.recognise(it) to (Summon.viewAdsButton(it) != null) }
+            if (rec.state == Dungeon.EXIT && rec.exitKind == "party" && rec.exitOk != null) return true
+            if (!page || now() >= deadline) return false
+            sleep(0.5 * patience)
+        }
     }
 
     // -- spending the tickets -------------------------------------------------
@@ -813,8 +1101,20 @@ class SummonSkill(
                         reds += 1
                         if (reds >= RED_FRAMES) {
                             val done = taps / perDraw
-                            log("  the price above the button is red -- " +
-                                "${modeName(mode)} done, about $done summon${plural(done)}")
+                            // The price is the yellow button's, and the game
+                            // paints the bigger draw yellow on every mode -- 35x
+                            // for 30 tickets, 10x for 10 crests -- with the
+                            // smaller one blue beside it, which this skill never
+                            // taps. So a red price can leave up to 29 tickets in
+                            // the bag, and the line says how many, off the same
+                            // frame; a counter it cannot read is left out
+                            // (notes/summon.md, "The red price is the yellow
+                            // button's, and the yellow button is the bigger draw").
+                            val left = Summon.ticketCounter(img)
+                            log("  the price above the yellow button is red" +
+                                (if (left != null) ", $left ticket${plural(left)} left" else "") +
+                                " -- ${modeName(mode)} done, about $done summon${plural(done)}" +
+                                " (the task taps only the yellow draw)")
                             return done
                         }
                         nap(started)
@@ -822,11 +1122,18 @@ class SummonSkill(
                     }
                     reds = 0
 
-                    tap(button.fx, button.fy)
+                    // The page's limit counts the draws this mode had before
+                    // a pause as well ([drawnBefore]): a pass that goes on is
+                    // the same pass, and does not draw the limit twice.
+                    if (limit > 0 && drawnBefore + taps / perDraw >= limit) {
+                        log("  limit of $limit reached")
+                        return taps / perDraw
+                    }
+                    tap(button.fx, button.fy, Summon.PAGE)
                     taps += 1
                     if (taps % perDraw == 0) summons += 1
                     val done = taps / perDraw
-                    if (limit > 0 && done >= limit) {
+                    if (limit > 0 && drawnBefore + done >= limit) {
                         log("  limit of $limit reached")
                         // Let the draw that was just paid for finish before
                         // handing the screen on. Whoever asked for a limit
@@ -871,6 +1178,7 @@ class SummonSkill(
     private fun grab(): Mat {
         val img = cap.grab()
         rect = Dungeon.gameRect(img)
+        room = Dungeon.headroom(img)
         return img
     }
 
@@ -897,8 +1205,17 @@ class SummonSkill(
      * The sentence the PC's tap carries is for its dry-run log; there is no dry
      * run here, and a phone log with five lines a second in it is no log.
      */
-    private fun tap(fx: Double, fy: Double) {
-        cap.tap(Py.roundInt(rect.x0 + fx * rect.gw), Py.roundInt(rect.y0 + fy * rect.gh))
+    private fun tap(fx: Double, fy: Double, anchor: Dungeon.Anchor = Dungeon.Anchor.BOTTOM) {
+        // Not with the main switch off: the service would hold it back, and
+        // the step it belongs to ends at its next look ([goOn]).
+        if (!on()) return
+        // A fraction is a place only in the rectangle it was read in: the
+        // page's readers read at Summon.PAGE, so their answers are tapped
+        // there, and everything else -- the icon, the X, the dialog -- at the
+        // bottom, as it always was. The same place on any display under the
+        // canvas ceiling (Dungeon.Anchor).
+        val y0 = rect.y0 - Py.roundInt(room * anchor.share)
+        cap.tap(Py.roundInt(rect.x0 + fx * rect.gw), Py.roundInt(y0 + fy * rect.gh))
     }
 
     /**
@@ -911,6 +1228,8 @@ class SummonSkill(
         Dungeon.sameScreen(before, after, MOVING_SHARE)
 
     private fun dump(img: Mat, tag: String) {
+        // Nothing failed where the switch cut a step short (PLAN_RELEASE_1_3.md B4).
+        if (!on()) return
         if (dumps >= DUMPS_MAX) return
         dumps += 1
         keep(img, tag)
@@ -996,6 +1315,8 @@ class SummonSkill(
          */
         const val SPAM_TIMEOUT = 25.0
         const val AD_TIMEOUT = 90.0
+        /** The question before an ad stood 0.30 s after the tap ([adAsked]); ten times that for a slow phone. */
+        const val AD_CONFIRM_WAIT = 3.0
         /** Where a tap goes on a frame that has no button to aim at. */
         const val NEUTRAL_TAP_FX = 0.5
         const val NEUTRAL_TAP_FY = 0.10

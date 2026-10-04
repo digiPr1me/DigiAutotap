@@ -4,6 +4,7 @@ import io.github.digipr1me.digiautotap.core.Explore.Blob
 import io.github.digipr1me.digiautotap.core.Explore.Target
 import org.opencv.core.Core
 import org.opencv.core.Mat
+import org.opencv.core.Size
 import org.opencv.imgproc.Imgproc
 import kotlin.math.abs
 
@@ -17,13 +18,31 @@ import kotlin.math.abs
  * loop are not here; they come with the Meat Field skill's own session,
  * under the director.
  *
- * Every constant keeps its Python name and value, and the sentence that says
- * where it came from. A number here is changed in farm.py first, with a
- * measurement, then the oracle is written again, then this file follows --
- * never the other way round (NOTES.md, "Two implementations, one
- * direction"). The frame is BGR, uint8, as `cv2.imread` gives it.
+ * Every constant came over with its Python name and value, and the sentence
+ * that says where it came from; a number is changed in this file, with a
+ * measurement and its sentence, and then `writeOracle` writes the oracle
+ * (NOTES.md, "One project"). The frame is BGR, uint8, as `cv2.imread`
+ * gives it.
  */
 object Farm {
+
+    // ------------------------------------------------------------------------
+    // Where the field's windows stand (PLAN_FORMATE.md V4)
+    // ------------------------------------------------------------------------
+    // Measured 2026-09-28 on LDPlayer instance 0 with whole frames of 1080 x
+    // 2520 (180 rows of headroom), 1080 x 2340 and their 1080 x 1920 twins
+    // of the same minutes (corpus/formats/meat_field_*, water_popup_*,
+    // boost_*): the header -- the sack, the two cans, the meat, their pink
+    // timers -- stands at the top of the display, the sack's digit at fy
+    // 0.0879 to 0.0986 at the top's rectangle against 0.0884 to 0.0990 at
+    // 1920 (0.0506 to 0.0613 at the middle's, 0.0435 at the bottom's, where
+    // it was cut off). The popups stand in the middle: the water popup's
+    // Water button at fy 0.6757 there against 0.6758, 0.6384 at the bottom
+    // and 0.7130 at the top; the watering-can dialog's Water button 0.6616
+    // against 0.6616. The plots and the X stay at the bottom, as the whole
+    // HUD does. On any display under the canvas ceiling the three are one.
+    val HEADER = Dungeon.Anchor.TOP
+    val DIALOG = Dungeon.Anchor.MIDDLE
 
     // ------------------------------------------------------------------------
     // The plot grid
@@ -82,14 +101,14 @@ object Farm {
      * Is the Meat Field open -- how many of the six grid cells are found.
      *
      * Not a plain True/False: a popup or the seed-choice menu covers one or two
-     * cells without hiding the rest (NOTES.md, "a dialog dims what is behind
-     * it"), and callers that need "definitely open, nothing covering it" ask
-     * for 6, while a caller that only needs "this is still the field, not some
-     * other screen" can accept fewer. Measured over the whole debug* archive
-     * (677 frames, none of them meant to be this screen): the six-cell count
-     * fires 6/6 on exactly four frames, two captured here and two the passive
-     * helper's own "unclear" dumps of this same screen from an earlier run,
-     * and nothing else in the archive reaches even 4.
+     * cells without hiding the rest (the laboratory's notes, "a dialog dims
+     * what is behind it"), and callers that need "definitely open, nothing
+     * covering it" ask for 6, while a caller that only needs "this is still the
+     * field, not some other screen" can accept fewer. Measured over the whole
+     * debug* archive (677 frames, none of them meant to be this screen): the
+     * six-cell count fires 6/6 on exactly four frames, two captured here and
+     * two the passive helper's own "unclear" dumps of this same screen from an
+     * earlier run, and nothing else in the archive reaches even 4.
      *
      * That last sentence stopped being true as the archive grew. Over the
      * 747 frames of 2026-09-19 the count reaches 4 on 36 frames that are the
@@ -497,6 +516,35 @@ object Farm {
     val DIGIT_ASPECT = doubleArrayOf(0.40, 0.85)
     const val DIGIT_GAP_MAX = 1.0
 
+    // A harvest of a thousand or more is written "x1,200", and the comma sits
+    // in the gap the rule above measures. Measured on the phone tour's Meat
+    // Field (corpus/formats/meat_field_*, the bottom right plot): the gap from
+    // the "1" to the "2" across the comma is 11 px against the "1"'s 11 px at
+    // 1080 x 1920 -- inside the rule by nothing at all -- and 9 against 8 at
+    // 720 x 1600, 8 against 7 at 720 x 1280, so a ripe plot read "empty" on
+    // every 720-wide phone. The comma itself is 3 to 5 px wide and 0.33 to
+    // 0.44 of a digit tall, its top in the lower half of the digits and its
+    // bottom 2 to 4 px under theirs; digit to comma and comma to digit are 3
+    // to 4 px each, like any two digits. So a comma of that shape standing in
+    // a gap splits it, and each half is held to the rule -- the trowel's two
+    // flecks, 180 px apart, have no comma between them.
+    const val COMMA_MAX_H = 0.5
+    const val COMMA_BELOW_MAX = 0.3
+
+    /** The two halves of the gap between a and b, split by a comma lying in it -- or null. */
+    private fun commaSplit(a: IntArray, b: IntArray, comps: List<IntArray>): Pair<Int, Int>? {
+        val h = minOf(a[3], b[3])
+        val bottom = maxOf(a[1] + a[3], b[1] + b[3])
+        val mid = minOf(a[1], b[1]) + h / 2.0
+        for (c in comps) {
+            if (c[3] > COMMA_MAX_H * h) continue
+            if (c[0] < a[0] + a[2] || c[0] + c[2] > b[0]) continue
+            if (c[1] < mid || c[1] + c[3] > bottom + COMMA_BELOW_MAX * h) continue
+            return (c[0] - (a[0] + a[2])) to (b[0] - (c[0] + c[2]))
+        }
+        return null
+    }
+
     /**
      * The best run of digit-shaped, closely-spaced glyphs in these
      * components, sorted left to right -- or null.
@@ -515,7 +563,10 @@ object Farm {
                 val a = candidates[k]
                 val b = candidates[k + 1]
                 val gap = b[0] - (a[0] + a[2])
-                if (gap > DIGIT_GAP_MAX * minOf(a[2], b[2])) {
+                val limit = DIGIT_GAP_MAX * minOf(a[2], b[2])
+                if (gap > limit) {
+                    val halves = commaSplit(a, b, comps)
+                    if (halves != null && halves.first <= limit && halves.second <= limit) continue
                     ok = false
                     break
                 }
@@ -616,23 +667,59 @@ object Farm {
      * not a number" floor NOTES.md asks for elsewhere -- a single confident
      * digit is a complete answer between 0 and 9.
      */
-    fun freeSeeds(img: Mat): Int? {
-        val (x0, y0, gw, gh) = Dungeon.gameRect(img)
-        val top = Py.int(y0 + FREE_SEEDS_BAND[0] * gh)
-        val bottom = Py.int(y0 + FREE_SEEDS_BAND[1] * gh)
-        val left = Py.int(x0 + FREE_SEEDS_BAND[2] * gw)
-        val right = Py.int(x0 + FREE_SEEDS_BAND[3] * gw)
+    fun freeSeeds(img: Mat, anchor: Dungeon.Anchor = HEADER): Int? =
+        headerCount(img, FREE_SEEDS_BAND, 2, anchor)
+
+    /**
+     * A band of a rectangle in this frame's pixels, (top, bottom, left,
+     * right), its top kept inside the picture: a window at the top of a
+     * display with headroom stands above a frame that was cut to the canvas
+     * (the V3 frames of the tour), and a negative row is numpy's row from
+     * the end. Null when nothing of the band is left.
+     */
+    private fun bandPx(img: Mat, band: DoubleArray, anchor: Dungeon.Anchor): IntArray? {
+        val (x0, y0, gw, gh) = Dungeon.gameRect(img, anchor)
+        val top = maxOf(0, Py.int(y0 + band[0] * gh))
+        val bottom = Py.int(y0 + band[1] * gh)
+        val left = maxOf(0, Py.int(x0 + band[2] * gw))
+        val right = Py.int(x0 + band[3] * gw)
         if (bottom <= top || right <= left) return null
+        return intArrayOf(top, bottom, left, right)
+    }
+
+    // A row of the header band is a count only if its glyphs are a digit's
+    // height. Measured live on 2026-09-28 (M3, instance 0 at 1080 x 2340,
+    // corpus/farm/field_seeds0_1080x2340_none0_063823.png): the sack read
+    // "2" while it showed 0. The band's right end reaches the Good bag's
+    // icon there, whose bright rim fell into specks of 1 to 3 px wide and 3
+    // and 4 px tall, and two of them made a row of two -- which rowClusters
+    // tries before the lone "0" (25 px) because it tries the fuller rows
+    // first. A count of one digit loses to any pair of specks, so the same
+    // thing waits for a 0 to 9 on any format. The digits are 0.0104 to
+    // 0.0106 of the rectangle's height on every format of M1 (21 px of 1980
+    // at 1920, 25 of 2413 at 2340, sack and can alike); the specks 0.0017.
+    // Half a digit, 0.005, is the floor.
+    const val HEADER_DIGIT_H_MIN = 0.005
+
+    /**
+     * A count of one to [maxDigits] digits in a band of the header, white
+     * on the dark bar (freeSeeds' reading, for every counter of the row).
+     * A row shorter than [HEADER_DIGIT_H_MIN] of the rectangle is not one.
+     */
+    private fun headerCount(img: Mat, band: DoubleArray, maxDigits: Int, anchor: Dungeon.Anchor): Int? {
+        val (top, bottom, left, right) = (bandPx(img, band, anchor) ?: return null).toList()
         val crop = Py.crop(img, top, bottom, left, right) ?: return null
         val gray = Cv.gray(crop)
         val mask = brightMask(gray, 200.0)
         gray.release()
+        val floor = HEADER_DIGIT_H_MIN * Dungeon.gameRect(img, anchor).gh
         try {
             val comps = rawComponents(mask)
             for (row in rowClusters(comps)) {
                 val tallest = row.maxOf { it[3] }
+                if (tallest < floor) continue
                 val digits = row.filter { it[3] >= GLYPH_MIN_SHARE * tallest }
-                if (digits.size != 1 && digits.size != 2) continue
+                if (digits.isEmpty() || digits.size > maxDigits) continue
                 val values = ArrayList<Int>()
                 var ok = true
                 for (stat in digits.sortedBy { it[0] }) {
@@ -653,6 +740,36 @@ object Farm {
             mask.release()
         }
     }
+
+    // ------------------------------------------------------------------------
+    // water_cans -- the green can's counter, the header's second row
+    // ------------------------------------------------------------------------
+    // The Tiny Watering Can, 30 minutes off a growing plot each (the game's
+    // own item text), one more every hour while under the cap, the pink
+    // timer under it counting to the next (59:50 right after one arrived,
+    // 2026-09-28). Measured on corpus/farm/field_cans_013050.png and
+    // field_ripe_cans_012636.png (instance 0, 1080 x 1920, 4 cans): the
+    // digit at fx 0.5466 to 0.5606, fy 0.1182 to 0.1288, 21 px -- the sack's
+    // digits stand a row higher at 0.0884 to 0.0990 in the same font. The
+    // bar behind it runs fy 0.1141 to 0.1333 and fx 0.49 to 0.563, and the
+    // count is right-aligned in it. The can's own icon overlaps the bar's
+    // left end up to fx 0.490 and carries white highlights (fx 0.4603 to
+    // 0.4804, 8 and 9 px tall), which read as a digit if the band takes
+    // them in; the blue can's icon begins at fx 0.582. So the band starts
+    // at 0.500 and ends at 0.575, which leaves room for three digits right
+    // of the icon (a digit and its gap are 0.0146, and three end at 0.5606).
+    // Three and not two as for the sack: the two ads of a day give 20 cans
+    // each (the player; M3 checks it on the counter), so a count past 99 is
+    // unlikely and not impossible.
+    //
+    // The blue can beside it is the Huge Watering Can, an hour a can, and
+    // is never used (PLAN_MEAT_FIELD_GIESSEN.md 4.1); it reads 0 here at fx
+    // 0.6879 to 0.7001, and nothing asks it.
+    val WATER_CANS_BAND = doubleArrayOf(0.108, 0.136, 0.500, 0.575)
+
+    /** The green can's count on the field's header, or null. */
+    fun waterCans(img: Mat, anchor: Dungeon.Anchor = HEADER): Int? =
+        headerCount(img, WATER_CANS_BAND, 3, anchor)
 
     // ------------------------------------------------------------------------
     // seed_refill -- the pink countdown under the free-seed counter
@@ -694,17 +811,29 @@ object Farm {
      * is also the answer once it is full, which is exactly when nothing needs
      * waiting for.
      */
-    fun seedRefill(img: Mat): Int? {
-        val (x0, y0, gw, gh) = Dungeon.gameRect(img)
-        val top = Py.int(y0 + REFILL_BAND[0] * gh)
-        val bottom = Py.int(y0 + REFILL_BAND[1] * gh)
-        val left = Py.int(x0 + REFILL_BAND[2] * gw)
-        val right = Py.int(x0 + REFILL_BAND[3] * gw)
+    fun seedRefill(img: Mat, anchor: Dungeon.Anchor = HEADER): Int? = refillIn(img, REFILL_BAND, anchor)
+
+    /** A pink M:S timer of the header in [band], seconds, or null. */
+    private fun refillIn(img: Mat, band: DoubleArray, anchor: Dungeon.Anchor): Int? {
+        val (top, bottom, left, right) = (bandPx(img, band, anchor) ?: return null).toList()
         val mask = refillMask(img, top, bottom, left, right) ?: return null
         val value = readTimerMask(mask)
         mask.release()
         return value
     }
+
+    // The can's timer, pink like the sack's and read by the same mask: on
+    // field_cans_013050.png at fx 0.4996 to 0.5519, fy 0.1364 to 0.1444
+    // (16 px, "58:30"), under the can's bar as the sack's stands under the
+    // sack's. The band is the sack's in shape, 0.03 tall around the digits,
+    // and holds nothing else pink: the Great seed's red gift, the nearest,
+    // is at fx 0.589 and fy 0.084 to 0.104. Drawn only while the cans are
+    // under their cap, like the sack's; with cans at 0 it still runs (0 to
+    // 1 in 32:22, field_cans0_nobubble_013707.png).
+    val CAN_REFILL_BAND = doubleArrayOf(0.130, 0.160, 0.470, 0.580)
+
+    /** Seconds until the next free can arrives, or null. */
+    fun canRefill(img: Mat, anchor: Dungeon.Anchor = HEADER): Int? = refillIn(img, CAN_REFILL_BAND, anchor)
 
     // ------------------------------------------------------------------------
     // The seed-choice menu
@@ -746,8 +875,8 @@ object Farm {
     const val SELECT_MIN_SHARE = 0.003
 
     private fun hueBlobs(img: Mat, hue: Dungeon.Hsv, minShare: Double,
-                         fyBand: DoubleArray? = null): List<Blob> {
-        val (x0, y0, gw, gh) = Dungeon.gameRect(img)
+                         fyBand: DoubleArray? = null, anchor: Dungeon.Anchor = DIALOG): List<Blob> {
+        val (x0, y0, gw, gh) = Dungeon.gameRect(img, anchor)
         val mask = Cv.hsvMask(img, hue)
         val (n, stats) = Cv.components(mask)
         mask.release()
@@ -768,8 +897,8 @@ object Farm {
      * The three seed slots' tap targets, leftmost first, or an empty list if
      * the seed-choice menu is not open.
      */
-    fun seedSlots(img: Mat): List<Blob> =
-        hueBlobs(img, SLOT_HUE, SLOT_MIN_SHARE, SLOT_FY_BAND).sortedBy { it.fx }
+    fun seedSlots(img: Mat, anchor: Dungeon.Anchor = DIALOG): List<Blob> =
+        hueBlobs(img, SLOT_HUE, SLOT_MIN_SHARE, SLOT_FY_BAND, anchor).sortedBy { it.fx }
 
     /**
      * Is this slot (one of seedSlots(img)'s entries) the marked one?
@@ -777,10 +906,15 @@ object Farm {
      * At least two of the bracket's four corners found in the annulus around
      * this slot's centre -- see BRACKET_DX/DY for why a plain radius would
      * also catch the slot's own icon.
+     *
+     * The menu keeps the last choice: after a Great seed the next menu
+     * opened with Great in the bracket, after a Good one with Good
+     * (corpus/farm/seed_menu_kept_great_012940.png, seed_menu_kept_good_013011.png,
+     * 2026-09-28). So the free slot is asked for every time, never assumed.
      */
-    fun seedSelected(img: Mat, slot: Blob): Boolean {
+    fun seedSelected(img: Mat, slot: Blob, anchor: Dungeon.Anchor = DIALOG): Boolean {
         var corners = 0
-        for (b in hueBlobs(img, BRACKET_HUE, BRACKET_MIN_SHARE)) {
+        for (b in hueBlobs(img, BRACKET_HUE, BRACKET_MIN_SHARE, anchor = anchor)) {
             val dx = abs(b.fx - slot.fx)
             val dy = abs(b.fy - slot.fy)
             if (BRACKET_DX[0] <= dx && dx <= BRACKET_DX[1] &&
@@ -792,8 +926,8 @@ object Farm {
     }
 
     /** The green Select/OK button's tap target, or null. */
-    fun selectButton(img: Mat): Blob? =
-        hueBlobs(img, SELECT_HUE, SELECT_MIN_SHARE).maxByOrNull { it.share }
+    fun selectButton(img: Mat, anchor: Dungeon.Anchor = DIALOG): Blob? =
+        hueBlobs(img, SELECT_HUE, SELECT_MIN_SHARE, anchor = anchor).maxByOrNull { it.share }
 
     /**
      * The seed-choice menu's slots (leftmost first) and Select button, or
@@ -811,10 +945,10 @@ object Farm {
      * dialog, PLAN_MEAT_FIELD 2.2); the ripe frame reads 6, undimmed, because
      * nothing is actually open there.
      */
-    fun seedMenu(img: Mat): Pair<List<Blob>?, Blob?> {
+    fun seedMenu(img: Mat, anchor: Dungeon.Anchor = DIALOG): Pair<List<Blob>?, Blob?> {
         if (meatFieldScreen(img) >= 6) return null to null
-        val slots = seedSlots(img)
-        val button = selectButton(img)
+        val slots = seedSlots(img, anchor)
+        val button = selectButton(img, anchor)
         if (slots.size != 3 || button == null) return null to null
         return slots to button
     }
@@ -831,7 +965,15 @@ object Farm {
     // water_popup_adb.png, Select fw 0.244/fh 0.046 on seed_menu_left_adb.png,
     // close enough in aspect that shape alone would not tell them apart), but
     // only one of them ever has three slots above it.
-    const val WATER_BUTTON_MIN_ASPECT = 4.0
+    //
+    // 4.0 was the Water button's own aspect at 1920, 368 x 92 px, with
+    // nothing to spare, and at 1080 x 2340 the same button is 450 x 113,
+    // 3.98: the popup went unread on a long display and the director called
+    // it unknown (corpus/formats/water_popup_1080x2340_none0_014000.png,
+    // 2026-09-28). The other green buttons of the field are far below it:
+    // Select 3.07 and the watering-can dialog's Water 3.10 (seed_menu_left_012848,
+    // boost_012720), so the floor is 3.5, between them.
+    const val WATER_BUTTON_MIN_ASPECT = 3.5
 
     /**
      * The green Water button's tap target, or null.
@@ -841,9 +983,9 @@ object Farm {
      * outside it. Exposed here for section 10 and for the tests that must
      * prove it is never reached.
      */
-    fun waterButton(img: Mat): Blob? {
+    fun waterButton(img: Mat, anchor: Dungeon.Anchor = DIALOG): Blob? {
         val candidates = ArrayList<Blob>()
-        val (x0, y0, gw, gh) = Dungeon.gameRect(img)
+        val (x0, y0, gw, gh) = Dungeon.gameRect(img, anchor)
         val mask = Cv.hsvMask(img, SELECT_HUE)
         val (n, stats) = Cv.components(mask)
         mask.release()
@@ -864,10 +1006,382 @@ object Farm {
      * True positive needs the wide green button and no seed-choice slots in
      * the same frame; the close target is fixed, well above the dialog, on
      * the dimmed field that is never interactive while any popup is up.
+     * At 1920 that is the header's Good bag (x 567, y 141), and the header
+     * is live on a bare field: a tap on its sack or its can opens that
+     * item's card (item_info_seed_013145, item_info_can_013217). Under the
+     * popup it is not: a tap at x 540, y 192, on the green can, closed the
+     * popup and opened nothing, three times on 2026-09-28.
      */
-    fun waterPopup(img: Mat): Target? {
-        waterButton(img) ?: return null
-        if (seedSlots(img).isNotEmpty()) return null
-        return Target(0.5, 0.10)
+    fun waterPopup(img: Mat, anchor: Dungeon.Anchor = DIALOG): Target? {
+        waterButton(img, anchor) ?: return null
+        if (seedSlots(img, anchor).isNotEmpty()) return null
+        return Target(0.5, 0.10, anchor)
+    }
+
+    // ------------------------------------------------------------------------
+    // popup_timer -- "Time Remaining" in the water popup
+    // ------------------------------------------------------------------------
+    // The plot's own plate (plotTimer) is small and often unreadable; the
+    // popup a tap on a growing plot opens writes the same time large and
+    // green. Measured on the eleven popups of 2026-09-28 and the two of the
+    // laboratory (corpus/farm/water_popup_*.png, after_tap_growing.png,
+    // corpus/formats/water_popup_*): the digits stand at fy 0.6202 to 0.6313
+    // of the middle's rectangle on every one, 1920, 2340 and 2520 alike,
+    // right-aligned to fx 0.6827, "55:24" from fx 0.6112 and "03:52:53" from
+    // 0.5676; H 38 to 55, S 90 to 236, V 177 to 196. What else is green
+    // there: the popup's own edge at fx 0.73 (V 100 to 121, under the V
+    // floor) and the Water button, whose top is at fy 0.6525 (under the
+    // band). "Estimated Harvest" above is orange. The watering-can dialog
+    // writes its "Estimated Time Reduction" in the same green at fy 0.615
+    // and fx 0.49 to 0.61, inside this band, so the timer is read only
+    // where the popup's own Water button is ([waterPopup]).
+    //
+    // readTimerMask's colon is a dot of at most 6 px (COLON_DOT_MAX_H, the
+    // plot plate's), and this font's dots are 5 px at 1920 and 6 at 2340; on
+    // a display a third larger again they are 8. So the crop is brought to
+    // the scale of the 1920 frame first, the rectangle's height against
+    // POPUP_REF_GH, which on every 1080 x 1920 frame is no change at all.
+    val POPUP_TIMER_BAND = doubleArrayOf(0.600, 0.645, 0.500, 0.720)
+    val POPUP_TIMER_HUE = Dungeon.Hsv(intArrayOf(35, 80, 160), intArrayOf(60, 255, 255))
+    const val POPUP_REF_GH = 1980
+
+    /** "Time Remaining" of the water popup, seconds, or null when no popup is open or it does not parse. */
+    fun popupTimer(img: Mat, anchor: Dungeon.Anchor = DIALOG): Int? {
+        waterPopup(img, anchor) ?: return null
+        val (top, bottom, left, right) = (bandPx(img, POPUP_TIMER_BAND, anchor) ?: return null).toList()
+        val crop = Py.crop(img, top, bottom, left, right) ?: return null
+        val scaled = toReference(crop, Dungeon.gameRect(img, anchor).gh)
+        val mask = Cv.hsvMask(scaled, POPUP_TIMER_HUE)
+        if (scaled !== crop) scaled.release()
+        val value = readTimerMask(mask)
+        mask.release()
+        return value
+    }
+
+    /** [crop] at the scale of a 1080 x 1920 frame, whose rectangle is [POPUP_REF_GH] tall; itself when it is there already. */
+    private fun toReference(crop: Mat, gh: Int): Mat {
+        val f = POPUP_REF_GH / gh.toDouble()
+        if (abs(f - 1.0) < 0.01) return crop
+        val out = Mat()
+        Imgproc.resize(crop, out, Size(), f, f, if (f < 1.0) Imgproc.INTER_AREA else Imgproc.INTER_CUBIC)
+        return out
+    }
+
+    // ------------------------------------------------------------------------
+    // The number under a slot -- the seed menu's three, the can dialog's two
+    // ------------------------------------------------------------------------
+    // Every slot writes its count white under its icon, in the header's
+    // font: on seed_menu_left_012848.png "4", "92" and "54" at fy 0.5005 to
+    // 0.5116, 22 px, centred on their slot (fx 0.288, 0.473, 0.660 against
+    // the slots' 0.291, 0.476, 0.661 from seedSlots, fy 0.475); on the can
+    // dialog (boost_012720.png) "4" and "0" at fy 0.4727 to 0.4833 under
+    // slots at fy 0.4475 -- the same 0.025 to 0.036 below the slot's centre
+    // in both dialogs. Above the digits the icon's own white ends 0.0235
+    // below the centre (the Good bag's rim, 42 x 26 px, aspect 1.6), under
+    // them the slot's name starts 0.054 below. So the band is 0.022 to
+    // 0.048 under the centre and 0.065 either side, which holds three digits
+    // (0.045 wide), and a glyph counts as a digit only in DIGIT_ASPECT --
+    // the rim that reaches into the band is a sliver of it and wide.
+    val SLOT_COUNT_DY = doubleArrayOf(0.022, 0.048)
+    const val SLOT_COUNT_DX = 0.065
+
+    /** The white glyphs of a box: its mask, and each glyph as (x, y, w, h). */
+    private class Glyphs(val mask: Mat, val comps: List<IntArray>)
+
+    private fun glyphsIn(img: Mat, band: DoubleArray, anchor: Dungeon.Anchor): Glyphs? {
+        val (top, bottom, left, right) = (bandPx(img, band, anchor) ?: return null).toList()
+        val crop = Py.crop(img, top, bottom, left, right) ?: return null
+        val gray = Cv.gray(crop)
+        val mask = brightMask(gray, 200.0)
+        gray.release()
+        return Glyphs(mask, rawComponents(mask))
+    }
+
+    private fun slotGlyphs(img: Mat, slot: Blob, anchor: Dungeon.Anchor): Glyphs? =
+        glyphsIn(img, doubleArrayOf(slot.fy + SLOT_COUNT_DY[0], slot.fy + SLOT_COUNT_DY[1],
+                                    slot.fx - SLOT_COUNT_DX, slot.fx + SLOT_COUNT_DX), anchor)
+
+    /**
+     * One to [maxDigits] digits in a row, read or null: a row of glyphs of
+     * one height (rowClusters), each shaped like a digit, none further
+     * from the next than a digit is wide. Null as soon as one digit does
+     * not read -- half a count is worse than none (Dungeon.readCounter).
+     */
+    private fun plainCount(g: Glyphs, maxDigits: Int): Int? {
+        for (row in rowClusters(g.comps)) {
+            val tallest = row.maxOf { it[3] }
+            val digits = row.filter {
+                it[3] >= GLYPH_MIN_SHARE * tallest &&
+                    DIGIT_ASPECT[0] <= it[2] / it[3].toDouble() && it[2] / it[3].toDouble() <= DIGIT_ASPECT[1]
+            }.sortedBy { it[0] }
+            if (digits.isEmpty() || digits.size > maxDigits) continue
+            if ((0 until digits.size - 1).any { k ->
+                    digits[k + 1][0] - (digits[k][0] + digits[k][2]) > DIGIT_GAP_MAX * minOf(digits[k][2], digits[k + 1][2])
+                }) continue
+            var value = 0
+            var ok = true
+            for (stat in digits) {
+                val d = Dungeon.readDigit(g.mask, stat)
+                if (d == null) { ok = false; break }
+                value = value * 10 + d
+            }
+            if (ok) return value
+        }
+        return null
+    }
+
+    // An ad's count is written "n/2" -- on the can slot at 0 cans, "0/2"
+    // (ad_dialog_cans_013607.png) -- or "Ad (n/2)" on the seed menu's
+    // violet button (ad_dialog_seeds_013423.png), n the ads left today: the
+    // slot said 0/2 and the game answered "Ad viewing limit reached."
+    // (ad_limit_cans_013641.png), the button said 2/2, gave three seeds and
+    // said nothing (ad_reward_seeds_013446.png). The slash is the proof of a
+    // count, as Dungeon.counterDigits has it, and here it is not the only
+    // tall glyph: both brackets of "(2/2)" are as tall (30 px against the
+    // slash's 29 and the digits' 25), and "d" before the bracket reads as a
+    // digit's shape. What only the slash has is its lean: its ink at the
+    // top stands right of its ink at the bottom. So the count is the digits
+    // straight left of the one tall glyph that leans, back to a gap or a
+    // tall glyph -- "2" of "(2/2)", "0" of "0/2" -- and one digit must stand
+    // right of it, the day's two. Tall is SLASH_TALL of the glyphs' median
+    // height (27 against 22 on the slot, 29 against 25 on the button); the
+    // lean is SLASH_LEAN of the glyph's width, a fixed grid's columns
+    // (Dungeon.digitBitmap, 12): the slash leans 6.7 and 7.3 columns, the
+    // brackets 0.6 and -0.6, the digits 0.0 to 2.0 -- and "d", 4.3, with its
+    // stem at the top right, which is why tall comes first.
+    const val SLASH_TALL = 1.12
+    const val SLASH_LEAN = 0.25
+
+    /** Does this glyph lean like a slash: its top quarter's ink right of its bottom quarter's? */
+    private fun leans(mask: Mat, stat: IntArray): Boolean {
+        val bits = Dungeon.digitBitmap(mask, stat) ?: return false
+        fun centre(rows: IntRange): Double? {
+            var sum = 0.0
+            var n = 0
+            for (r in rows) for (c in bits[r].indices) if (bits[r][c]) { sum += c; n += 1 }
+            return if (n == 0) null else sum / n
+        }
+        val q = bits.size / 4
+        val top = centre(0 until q) ?: return false
+        val bottom = centre(bits.size - q until bits.size) ?: return false
+        return top - bottom >= SLASH_LEAN * bits[0].size
+    }
+
+    /** n of an "n/2" in these glyphs, or null. */
+    private fun adCount(g: Glyphs): Int? {
+        // The film clapper beside "Ad" is white stripes 6 to 8 px tall; half
+        // the tallest glyph leaves them out of the median and out of the walk.
+        val maxH = g.comps.maxOfOrNull { it[3] } ?: return null
+        val glyphs = g.comps.filter { it[3] >= 0.5 * maxH }.sortedBy { it[0] }
+        if (glyphs.size < 3) return null
+        val median = glyphs.map { it[3] }.sorted()[glyphs.size / 2]
+        fun tall(s: IntArray) = s[3] >= SLASH_TALL * median
+        val slash = glyphs.indices.singleOrNull { tall(glyphs[it]) && leans(g.mask, glyphs[it]) } ?: return null
+        fun digit(s: IntArray) = !tall(s) &&
+            DIGIT_ASPECT[0] <= s[2] / s[3].toDouble() && s[2] / s[3].toDouble() <= DIGIT_ASPECT[1]
+        fun near(a: IntArray, b: IntArray) = b[0] - (a[0] + a[2]) <= DIGIT_GAP_MAX * minOf(a[2], b[2])
+        val right = glyphs.getOrNull(slash + 1) ?: return null
+        if (!digit(right) || !near(glyphs[slash], right)) return null
+        val digits = ArrayList<IntArray>()
+        var k = slash - 1
+        var next = glyphs[slash]
+        while (k >= 0 && digit(glyphs[k]) && near(glyphs[k], next)) {
+            digits.add(0, glyphs[k])
+            next = glyphs[k]
+            k -= 1
+        }
+        if (digits.isEmpty()) return null
+        return Dungeon.readCounter(g.mask, digits)
+    }
+
+    /**
+     * The count under a seed slot (one of seedSlots' entries), or null --
+     * also when the slot shows an ad's "n/2" instead of a count.
+     */
+    fun seedSlotCount(img: Mat, slot: Blob, anchor: Dungeon.Anchor = DIALOG): Int? {
+        val g = slotGlyphs(img, slot, anchor) ?: return null
+        try {
+            if (adCount(g) != null) return null
+            return plainCount(g, 3)
+        } finally {
+            g.mask.release()
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // boost_popup -- "Select Watering Can", the dialog after Water
+    // ------------------------------------------------------------------------
+    // Seen for the first time 2026-09-28 (corpus/farm/boost_*.png): the
+    // title, two slots -- the Tiny Watering Can (the green one of the
+    // header, "01:59" over it, its count under it) and the Huge one (blue,
+    // 0) -- a row of four yellow keys MIN, -, +, MAX around a white box with
+    // the number of cans, "Estimated Time Reduction" in green, and the green
+    // Water button. Not the one-can-a-tap dialog the laboratory plan
+    // guessed: the box opens at what the plot needs, the fewest cans that
+    // ripen it, capped by the cans there are -- 2 for 55:24 with 4 cans, 1
+    // for 19:39, 2 for 57:48, 1 for 53:35 with 1 can -- MAX says the same and
+    // "+" goes no further (boost_min_012804.png, 1 after MIN, "30:00").
+    // Water spends what the box says and closes everything: the field is
+    // back at once with the can flying (boost_after_012806.png), the counter
+    // 4 -> 3 with 1 in the box, the plot 54:23 -> 24:21 two seconds later,
+    // 30:02 for 30:00 and 2 s; 3 -> 1 with 2 in the box and a 55-minute
+    // Tanemon ripe at once (field_watered_ripe2_013418.png).
+    //
+    // What says it is this dialog: the four yellow keys in one row, fy
+    // 0.554 to 0.589 of the middle's rectangle, H 17 to 30, S 174 to 255, V
+    // 200 to 255, 0.0019 to 0.0023 of the rectangle each (MIN and MAX
+    // wider, - and + narrower), and nothing of that yellow anywhere on the
+    // field, the seed menu or the water popup at a tenth of that share; two
+    // slots of the seed menu's brown in seedSlots' band (the can dialog's
+    // at fy 0.4475); and a green button under the row, at fy 0.6616.
+    // meat_field_screen is 2 under it at 1920 and 2340 and 4 at 2520 --
+    // under Director.FIELD_DIALOG_CELLS, so the director asks for it apart.
+    //
+    // At 0 cans the same dialog shows a film clapper and "0/2" on the Tiny
+    // slot, 0 in the box, "00:00", and the green button says "View Ads"
+    // (ad_dialog_cans_013607.png): the same shape, another button. So a
+    // Boost does not say which; [adDialog] and [boostCans] do.
+    val BOOST_KEY_HUE = Dungeon.Hsv(intArrayOf(15, 150, 190), intArrayOf(32, 255, 255))
+    const val BOOST_KEY_MIN_SHARE = 0.001
+    val BOOST_KEY_FY = doubleArrayOf(0.54, 0.60)
+    const val BOOST_KEYS = 4
+    const val BOOST_KEY_ROW_TOL = 0.01
+    val BOOST_BUTTON_FY = doubleArrayOf(0.63, 0.70)
+    // Closing it: a tap outside, as the water popup. Not at the water
+    // popup's fy 0.10, which is the header's Good bag at 1920; at 0.18 it
+    // is the forest over the pots' labels (Lv. at fy 0.22 and down), and a
+    // tap there on the bare field opened nothing (2026-09-28). The pots are
+    // never tapped (PLAN_MEAT_FIELD_GIESSEN.md 2).
+    val BOOST_CLOSE = doubleArrayOf(0.5, 0.18)
+
+    /**
+     * The watering-can dialog: [tiny] is the green can's slot, [button] the
+     * green button under the keys (Water, or View Ads at 0 cans), [close] a
+     * tap outside. [huge] is the blue can's slot and is never tapped
+     * (PLAN_MEAT_FIELD_GIESSEN.md 4.1) -- it is here so that a test can
+     * hold every tap against it.
+     */
+    data class Boost(val tiny: Target, val huge: Target, val button: Target, val close: Target) {
+        fun toOracle(): Map<String, Any?> = mapOf(
+            "tiny" to tiny.toOracle(), "huge" to huge.toOracle(),
+            "button" to button.toOracle(), "close" to close.toOracle())
+    }
+
+    /** The watering-can dialog, or null if it is not open. */
+    fun boostPopup(img: Mat, anchor: Dungeon.Anchor = DIALOG): Boost? {
+        val keys = hueBlobs(img, BOOST_KEY_HUE, BOOST_KEY_MIN_SHARE, BOOST_KEY_FY, anchor)
+        if (keys.size != BOOST_KEYS) return null
+        if (keys.maxOf { it.fy } - keys.minOf { it.fy } > BOOST_KEY_ROW_TOL) return null
+        val slots = seedSlots(img, anchor)
+        if (slots.size != 2) return null
+        val button = hueBlobs(img, SELECT_HUE, SELECT_MIN_SHARE, BOOST_BUTTON_FY, anchor)
+            .maxByOrNull { it.share } ?: return null
+        return Boost(Target(slots[0].fx, slots[0].fy, anchor), Target(slots[1].fx, slots[1].fy, anchor),
+                     Target(button.fx, button.fy, anchor), Target(BOOST_CLOSE[0], BOOST_CLOSE[1], anchor))
+    }
+
+    /**
+     * The green can's count on the dialog's Tiny slot, or null -- also at 0
+     * cans, where the slot shows the ads left ("0/2") and not a count. The
+     * second witness beside [waterCans]: the header is dimmed to 148 under
+     * every dialog of the field and does not read (5.2 of the plan).
+     */
+    fun boostCans(img: Mat, anchor: Dungeon.Anchor = DIALOG): Int? {
+        val boost = boostPopup(img, anchor) ?: return null
+        return seedSlotCount(img, Explore.Blob(boost.tiny.fx, boost.tiny.fy, 0.0), anchor)
+    }
+
+    // The number in the white box: black, 33 px, at fx 0.462 to 0.481 and
+    // fy 0.5621 to 0.5788 on every can dialog of 2026-09-28 (0.4607 to
+    // 0.4814 and 0.5620 to 0.5789 at 2340 and 2520). The box runs fx 0.36
+    // to 0.58 between "-" (to 0.337) and "+" (from 0.614), whose black
+    // signs stay outside; the dialog's cream is grey 230 and more.
+    val BOOST_AMOUNT_BAND = doubleArrayOf(0.550, 0.590, 0.360, 0.580)
+    const val BOOST_AMOUNT_INK = 80.0
+
+    /** How many cans the dialog's box says Water will spend, or null. */
+    fun boostAmount(img: Mat, anchor: Dungeon.Anchor = DIALOG): Int? {
+        boostPopup(img, anchor) ?: return null
+        val (top, bottom, left, right) = (bandPx(img, BOOST_AMOUNT_BAND, anchor) ?: return null).toList()
+        val crop = Py.crop(img, top, bottom, left, right) ?: return null
+        val gray = Cv.gray(crop)
+        val mask = Mat()
+        Imgproc.threshold(gray, mask, BOOST_AMOUNT_INK, 255.0, Imgproc.THRESH_BINARY_INV)
+        gray.release()
+        try {
+            return plainCount(Glyphs(mask, rawComponents(mask)), 3)
+        } finally {
+            mask.release()
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // ad_dialog -- where the field offers an ad
+    // ------------------------------------------------------------------------
+    // There is no ad button anywhere until a count is at 0 (the header has
+    // no "+", and a tap on the sack or the can opens only the item's card):
+    // the seed menu with its free slot at 0 turns Select into a violet "Ad
+    // (n/2)" in Select's place (fx 0.476, fy 0.5995, H 122 to 130; the
+    // dungeon panel's ad button is the same violet, and Dungeon.recognise
+    // calls the menu a dialog_werbung), and the can dialog at 0 cans shows
+    // "n/2" on the Tiny slot and "View Ads" on its green button. With the
+    // Ad Skip Pass the reward comes at once: the Reward sheet with three
+    // seeds (Dungeon.rewardSheet reads it), the sack 0 -> 3, and the menu
+    // back with Select (seed_menu_after_ad_013504.png). Not seen: the cans'
+    // reward -- that day's two were gone before the measurement -- and the
+    // seeds at 1/2 and at 0/2.
+    val SEED_AD_FY = doubleArrayOf(0.57, 0.63)
+    const val SEED_AD_MIN_AREA = 0.004
+
+    /** An ad offer: [kind] "seeds" or "cans", [left] the ads left today or null if unread, [button] what watches it. */
+    data class AdOffer(val kind: String, val left: Int?, val button: Target) {
+        fun toOracle(): Map<String, Any?> = mapOf("kind" to kind, "left" to left, "button" to button.toOracle())
+    }
+
+    /** The field's ad offer on the seed menu or the can dialog, or null. */
+    fun adDialog(img: Mat, anchor: Dungeon.Anchor = DIALOG): AdOffer? {
+        val boost = boostPopup(img, anchor)
+        if (boost != null) {
+            val g = slotGlyphs(img, Explore.Blob(boost.tiny.fx, boost.tiny.fy, 0.0), anchor) ?: return null
+            val left = try { adCount(g) } finally { g.mask.release() }
+            // A count and not "n/2": the can dialog with cans in it, no offer.
+            return if (left == null) null else AdOffer("cans", left, boost.button)
+        }
+        if (meatFieldScreen(img) >= 6) return null
+        if (seedSlots(img, anchor).size != 3) return null
+        val button = Dungeon.findButtons(img, Dungeon.VIOLET, minArea = SEED_AD_MIN_AREA, minY = 0.0, anchor = anchor)
+            .firstOrNull { it.fy in SEED_AD_FY[0]..SEED_AD_FY[1] } ?: return null
+        val g = glyphsIn(img, doubleArrayOf(button.fy - button.fh / 2, button.fy + button.fh / 2,
+                                            button.fx - button.fw / 2, button.fx + button.fw / 2), anchor) ?: return null
+        val left = try { adCount(g) } finally { g.mask.release() }
+        return AdOffer("seeds", left, Target(button.fx, button.fy, anchor))
+    }
+
+    // After an ad button with none left the game answers with a message box
+    // of its own: dark blue, "Ad viewing limit reached.", one blue OK
+    // (ad_limit_cans_013641.png; the can dialog stays under it and is
+    // closed after the OK, boost_ad_cans0_013705.png). Dungeon.recognise
+    // takes the OK for a panel's Attempt and calls it a dialog. Found as
+    // what it is: Dungeon.findButtons' blue, a panel at least half the
+    // rectangle wide and 0.15 tall (0.6626 x 0.2384 here), and in its lower
+    // half a button the size of an OK (0.1953 x 0.0419, fy 0.5997 against
+    // the panel's 0.5136). The item cards of the header are the same blue
+    // panel with no button in it, and are not this.
+    val LIMIT_PANEL_MIN = doubleArrayOf(0.50, 0.15)
+    val LIMIT_OK_W = doubleArrayOf(0.12, 0.30)
+    val LIMIT_OK_H = doubleArrayOf(0.03, 0.06)
+
+    /** The OK of the game's one-button message box over the field -- the ad limit -- or null. */
+    fun adLimit(img: Mat, anchor: Dungeon.Anchor = DIALOG): Target? {
+        val blue = Dungeon.findButtons(img, Dungeon.BLUE, minY = 0.0, anchor = anchor)
+        for (panel in blue) {
+            if (panel.fw < LIMIT_PANEL_MIN[0] || panel.fh < LIMIT_PANEL_MIN[1]) continue
+            val ok = blue.firstOrNull {
+                it !== panel && it.fw in LIMIT_OK_W[0]..LIMIT_OK_W[1] && it.fh in LIMIT_OK_H[0]..LIMIT_OK_H[1] &&
+                    abs(it.fx - panel.fx) <= panel.fw / 2 && it.fy > panel.fy && it.fy < panel.fy + panel.fh / 2
+            } ?: continue
+            return Target(ok.fx, ok.fy, anchor)
+        }
+        return null
     }
 }

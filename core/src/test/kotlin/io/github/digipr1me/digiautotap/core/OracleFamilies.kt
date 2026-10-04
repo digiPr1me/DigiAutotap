@@ -138,20 +138,37 @@ object OracleFamilies {
         // The one prompt whose OK the caller has to know the colour of.
         // recognise finds the button; asked on its own, the answer is the
         // same one recognise already carries as exit_kind.
-        rec.exitOk?.let { ok -> f.ask("confirm_kind(ok_button=recognise.exit_ok)") { Dungeon.confirmKind(img, ok) } }
+        rec.exitOk?.let { ok -> f.ask("confirm_kind(ok_button=recognise.exit_ok)") { Dungeon.confirmKind(img, ok, rec.anchor) } }
+        // What tells the grey prompt's two apart: the message's height, one
+        // line for "Exit the game?", two for the game's download (2026-09-30).
+        rec.exitOk?.let { ok -> f.ask("prompt_text_h(ok_button=recognise.exit_ok)") { Dungeon.promptTextH(img, ok, rec.anchor) } }
         f.ask("reward_sheet") { Dungeon.rewardSheet(img) }
+        // A run's own transitions, which the waits after Attempt do not tap
+        // (PLAN_RELEASE_1_3.md B6, 2026-10-01).
+        f.ask("black_frame") { Dungeon.blackFrame(img) }
+        f.ask("vs_screen") { Dungeon.vsScreen(img) }
         // The panel's own counter hangs off its button: Attempt where there is
         // one, the ad button on a panel at 0/2 -- the one the skill reads it
         // from. Asked wherever recognise found either, dialog or not.
         val counterButton = rec.attempt ?: rec.ad
         if (counterButton != null) {
             val which = if (rec.attempt != null) "attempt" else "ad"
-            f.ask("panel_tickets(button=recognise.$which)") { Dungeon.panelTickets(img, counterButton) }
+            f.ask("panel_tickets(button=recognise.$which)") { Dungeon.panelTickets(img, counterButton, rec.anchor) }
         }
         // The party panel's counter stands above the panel, not over a button.
         f.ask("header_tickets") { Dungeon.headerTickets(img) }
+        // The daily dungeon's panel, its Attempt beside a Reset (2026-09-29).
+        f.ask("daily_panel") { Dungeon.dailyPanel(img)?.toOracle() }
         f.ask("title_bar") { Startup.titleBar(img)?.toOracle() }
         f.ask("at_main") { Startup.atMain(img) }
+        // The title by day by its Menu button (PLAN_RELEASE_1_3.md B43), and
+        // the OK of the game's news after its reset (B44), 2026-10-01.
+        f.ask("menu_button") { Startup.menuButton(img)?.toOracle() }
+        f.ask("announcement") { Startup.announcement(img)?.toOracle() }
+        // The game's "Time Sale!" window and its Help tutorial, which nothing
+        // taps (PLAN_RELEASE_1_3.md B72, B73), 2026-10-01.
+        f.ask("sale_window") { Startup.saleWindow(img)?.toOracle() }
+        f.ask("help_window") { Startup.helpWindow(img)?.toOracle() }
     }
 
     private fun passive(f: Frame) {
@@ -191,6 +208,10 @@ object OracleFamilies {
         f.ask("quest_claimable") { Quest.questClaimable(img) }
         f.ask("stage_number") { Quest.stageNumber(img) }
         f.ask("close_x") { Quest.closeX(img)?.toOracle() }
+        f.ask("rewards_chest") { Quest.rewardsChest(img)?.toOracle() }
+        val idle = Quest.idleWindow(img)
+        f.ask("idle_window") { idle?.toOracle() }
+        if (idle != null) f.ask("idle_extra_left(window=idle_window)") { Quest.idleExtraLeft(img, idle) }
     }
 
     // The meat field's cells are asked only on a screen that reads as the
@@ -213,10 +234,13 @@ object OracleFamilies {
         f.ask("plots") { Farm.plots(img) }
         f.ask("free_seeds") { Farm.freeSeeds(img) }
         f.ask("seed_refill") { Farm.seedRefill(img) }
+        f.ask("water_cans") { Farm.waterCans(img) }
+        f.ask("can_refill") { Farm.canRefill(img) }
         val slots = Farm.seedSlots(img)
         f.ask("seed_slots") { slots.map { it.toOracle() } }
         // `slot=seed_slots[i]`: the i-th answer of seed_slots on this frame.
         slots.forEachIndexed { i, slot -> f.ask("seed_selected(slot=seed_slots[$i])") { Farm.seedSelected(img, slot) } }
+        slots.forEachIndexed { i, slot -> f.ask("seed_slot_count(slot=seed_slots[$i])") { Farm.seedSlotCount(img, slot) } }
         f.ask("select_button") { Farm.selectButton(img)?.toOracle() }
         f.ask("seed_menu") {
             val (menuSlots, button) = Farm.seedMenu(img)
@@ -224,6 +248,12 @@ object OracleFamilies {
         }
         f.ask("water_button") { Farm.waterButton(img)?.toOracle() }
         f.ask("water_popup") { Farm.waterPopup(img)?.toOracle() }
+        f.ask("popup_timer") { Farm.popupTimer(img) }
+        f.ask("boost_popup") { Farm.boostPopup(img)?.toOracle() }
+        f.ask("boost_cans") { Farm.boostCans(img) }
+        f.ask("boost_amount") { Farm.boostAmount(img) }
+        f.ask("ad_dialog") { Farm.adDialog(img)?.toOracle() }
+        f.ask("ad_limit") { Farm.adLimit(img)?.toOracle() }
         if (screen != null && screen >= FIELD_CELLS_FROM) {
             for (col in 0 until 2) for (row in 0 until 3) {
                 val args = "(col=$col,row=$row)"
@@ -294,6 +324,95 @@ object OracleFamilies {
         f.ask("read_score") { Runner.readScore(img) }
     }
 
+    // The Events window (Events.kt): its rim, its cards named, and where a tap closes it.
+    private fun events(f: Frame) {
+        val img = f.img
+        val window = Events.window(img)
+        f.ask("window") { window?.toOracle() }
+        f.ask("cards") { Events.cards(img)?.map { it.toOracle() } }
+        f.ask("outside") { Events.outside(img)?.toOracle() }
+    }
+
+    // One per thread, as the writer's Vision is: SkewerIcons keeps the
+    // order's templates at the last frame's scale, and two frames of two
+    // widths asked at once would hand each other theirs.
+    private val skewerIcons = ThreadLocal.withInitial { SkewerIcons(ClassPathAssets) }
+
+    // Chef's Special (Skewer.kt): the screens around the round, then what a
+    // round carries -- the grill's twelve, the order, the lives.
+    private fun skewer(f: Frame) {
+        val img = f.img
+        val icons = skewerIcons.get()
+        f.ask("menu") { Skewer.menu(img)?.toOracle() }
+        f.ask("stage") { Skewer.stage(img)?.toOracle() }
+        val grill = Skewer.grill(img)
+        f.ask("grill") { grill.toOracle() }
+        f.ask("over") { Skewer.over(img)?.toOracle() }
+        f.ask("paused") { Skewer.paused(img)?.toOracle() }
+        f.ask("playing") { Skewer.playing(img) }
+        if (grill.ok) {
+            f.ask("grid") { icons.grid(img).map { it.toOracle() } }
+            f.ask("order") { icons.order(img)?.toOracle() }
+            f.ask("lives") { icons.lives(img)?.toOracle() }
+            f.ask("combo") { Skewer.comboGlyphs(img) }
+        }
+    }
+    // The preset readers, in the order the skill asks them: the bars and the
+    // place; on a place, the bar's text; on a compact place its ten rows and
+    // each row's text. The wide list's heads are asked on every frame --
+    // an open wide list dims its bar, so there is no place to hang them
+    // from, and the skill asks them wherever it opened one -- and each
+    // head's name after them. A text crop goes in as a picture.
+    private fun preset(f: Frame) {
+        val img = f.img
+        fun pic(m: Mat?): Any? = picture(m).also { m?.release() }
+        f.ask("preset_bars") { Preset.bars(img).map { it.toOracle() } }
+        val place = Preset.place(img)
+        f.ask("preset_place") { place?.let { mapOf("place" to it.first.key, "bar" to it.second.toOracle()) } }
+        if (place != null) {
+            val bar = place.second
+            f.ask("bar_text(bar=preset_place)") { pic(Preset.barText(img, bar)) }
+            if (place.first.kind == Preset.Kind.COMPACT) {
+                val rows = Preset.compactRows(img, bar)
+                f.ask("compact_rows(bar=preset_place)") { rows?.map { it.toOracle() } }
+                rows?.forEachIndexed { i, r ->
+                    f.ask("row_text(bar=preset_place,row=compact_rows[$i])") { pic(Preset.rowText(img, bar, r)) }
+                }
+            }
+        }
+        val heads = Preset.headers(img)
+        f.ask("preset_headers") { heads.map { it.toOracle() } }
+        heads.forEachIndexed { i, h -> f.ask("header_name(head=preset_headers[$i])") { pic(Preset.headerName(img, h)) } }
+        // The Overdrive page's tab row, asked on every frame: the page opens
+        // on a tab without the bar, so there is no place to hang it from.
+        f.ask("overdrive_tabs") { Preset.overdriveTabs(img)?.map { it.toOracle() } }
+    }
+
+    // The Lost Sector Tower's readers, in the order the skill meets them:
+    // the Crests page (its Enter pill, the page), then the panel's Subjugate
+    // and the toast of the highest floor over it.
+    private fun lostSector(f: Frame) {
+        val img = f.img
+        f.ask("enter_button") { LostSector.enterButton(img)?.toOracle() }
+        f.ask("page") { LostSector.page(img)?.toOracle() }
+        f.ask("subjugate") { LostSector.subjugate(img)?.toOracle() }
+        f.ask("max_floor") { LostSector.maxFloor(img)?.toOracle() }
+    }
+
+    // The EX Missions readers (Missions.kt), in the order the task asks
+    // them: the tile and its "!" on the main screen, the window with its lit
+    // tab, and on the EX tab its header block and every yellow Claim with
+    // its row.
+    private fun missions(f: Frame) {
+        val img = f.img
+        f.ask("tile") { Missions.tile(img)?.toOracle() }
+        f.ask("badge") { Missions.badge(img) }
+        f.ask("window") { Missions.window(img)?.toOracle() }
+        val ex = Missions.exWindow(img)
+        f.ask("ex_window") { ex?.toOracle() }
+        if (ex != null) f.ask("ex_claims(window=ex_window)") { Missions.exClaims(img, ex).map { it.toOracle() } }
+    }
+
     // One answer per frame, the director's own: which screen is in front.
     // It asks nothing new -- every reader it calls is in a family above --
     // so what it adds to the contract is the order, and the file is the
@@ -307,11 +426,12 @@ object OracleFamilies {
         "dungeon", listOf("Dungeon", "Startup"),
         listOf("game_rect", "find_buttons", "list_cards", "list_at_top", "list_at_bottom",
                "badge_crop", "badge_glyphs",
-               "card_counters", "card_budget", "card_has_attempts", "confirm_kind",
+               "card_counters", "card_budget", "card_has_attempts", "confirm_kind", "prompt_text_h",
                "party_slots_filled", "popup_ok", "claim_button", "stage_failed",
-               "auto_button", "home_button", "recognise", "reward_sheet", "panel_tickets",
-               "header_tickets",
-               "title_bar", "at_main"),
+               "auto_button", "home_button", "recognise", "reward_sheet", "black_frame", "vs_screen",
+               "panel_tickets",
+               "header_tickets", "daily_panel",
+               "title_bar", "at_main", "menu_button", "announcement", "sale_window", "help_window"),
         depends = listOf("Cv"), script = ::dungeon)
     val PASSIVE = Family(
         "passive", listOf("Passive", "Bond"),
@@ -326,16 +446,19 @@ object OracleFamilies {
         depends = listOf("Cv"), script = ::summon)
     val QUEST = Family(
         "quest", listOf("Quest"),
-        listOf("quest_progress", "quest_card", "quest_claimable", "stage_number", "close_x"),
-        depends = listOf("Cv"), script = ::quest)
+        listOf("quest_progress", "quest_card", "quest_claimable", "stage_number", "close_x",
+               "rewards_chest", "idle_window", "idle_extra_left"),
+        depends = listOf("Dungeon", "Cv"), script = ::quest)
     val EXPLORE = Family(
         "explore", listOf("Explore", "Farm"),
         listOf("nav_tab", "explore_tab", "digimon_tab", "explore_menu",
                "world_search_card", "meat_field_card", "close_button",
                "meat_field_screen", "bubble_over", "plot_timer", "plot_badge_kind",
                "plot_harvest", "plot_state", "plots", "free_seeds", "seed_refill",
-               "seed_slots", "seed_selected", "select_button", "seed_menu",
-               "water_button", "water_popup"),
+               "water_cans", "can_refill",
+               "seed_slots", "seed_selected", "seed_slot_count", "select_button", "seed_menu",
+               "water_button", "water_popup", "popup_timer", "boost_popup", "boost_cans",
+               "boost_amount", "ad_dialog", "ad_limit"),
         depends = listOf("Cv"), script = ::explore)
     val VISION = Family(
         "vision", listOf("Vision"),
@@ -349,13 +472,43 @@ object OracleFamilies {
                "missions_dialog", "claim_buttons", "missions_x", "reward_overlay", "obstacles", "answer",
                "orbs_in_air", "bar_state", "read_score"),
         depends = listOf("Summon", "Dungeon", "Cv"), script = ::runner)
+    val EVENTS = Family(
+        "events", listOf("Events"),
+        listOf("window", "cards", "outside"),
+        depends = listOf("Runner", "Dungeon", "Cv"), script = ::events)
+    val SKEWER = Family(
+        "skewer", listOf("Skewer"),
+        listOf("menu", "stage", "grill", "over", "paused", "playing", "grid", "order", "lives", "combo"),
+        data = listOf("templates"), depends = listOf("Runner", "Summon", "Dungeon", "Cv"), script = ::skewer)
+    val PRESET = Family(
+        "preset", listOf("Preset"),
+        listOf("preset_bars", "preset_place", "bar_text", "compact_rows", "row_text",
+               "preset_headers", "header_name", "overdrive_tabs"),
+        depends = listOf("Dungeon", "Cv"), script = ::preset)
+    val LOST_SECTOR = Family(
+        "lost_sector", listOf("LostSector"),
+        listOf("enter_button", "page", "subjugate", "max_floor"),
+        depends = listOf("Dungeon", "Summon", "Passive", "Cv"), script = ::lostSector)
+    val MISSIONS = Family(
+        "missions", listOf("Missions"),
+        listOf("tile", "badge", "window", "ex_window", "ex_claims"),
+        depends = listOf("Dungeon", "Runner", "Cv"), script = ::missions)
     val DIRECTOR = Family(
         "director", listOf("Director"), listOf("classify"),
-        depends = listOf("Dungeon", "Startup", "Passive", "Bond", "Summon", "Explore", "Farm", "Runner", "Cv"),
+        depends = listOf("Dungeon", "Startup", "Passive", "Bond", "Summon", "Explore", "Farm", "Runner",
+                         "Preset", "Quest", "LostSector", "Missions", "Skewer", "Cv"),
         script = ::director)
 
-    val ALL: List<Family> = listOf(DUNGEON, PASSIVE, SUMMON, QUEST, EXPLORE, VISION, RUNNER, DIRECTOR)
-    val BY_NAME: Map<String, Family> = ALL.associateBy { it.name }
+    val ALL: List<Family> = listOf(DUNGEON, PASSIVE, SUMMON, QUEST, EXPLORE, VISION, RUNNER, EVENTS, SKEWER, PRESET, LOST_SECTOR,
+                                   MISSIONS, DIRECTOR)
+    /**
+     * Families whose frames wait in `staging/` for the oracle's holder
+     * (NOTES.md, "A new reader, or a new task", step 1): readerProbe reads
+     * them, and writeOracle and the oracle tests do not know them yet. A
+     * family moves into [ALL] in the commit that writes its oracle file.
+     */
+    val STAGED: List<Family> = emptyList()
+    val BY_NAME: Map<String, Family> = (ALL + STAGED).associateBy { it.name }
 
     /** One family's entry for one frame: `{"size": [w, h], call: answer}`. */
     fun answers(family: Family, img: Mat, vision: Vision): Map<String, Any?> {
@@ -379,15 +532,37 @@ object OracleFamilies {
     // the tallest phone sold 2.336; nothing that is not a frame sits between
     // 1.85 and 2.16, and every crop fails the aspect outright. 400 wide is
     // 19 % under the narrowest window frame there is (497 x 914).
+    //
+    // The aspect was 1.6 to 2.5 until 2026-09-27, and a tablet or a Fold fell
+    // out of it without a word, into `skipped` (PLAN_FORMATE.md 9). The
+    // devices the game and the app share run from the Pixel 9 Pro Fold's
+    // inner display, 2076 x 2152 (1.037), through the OnePlus Pad's 1.4, the
+    // Xiaomi Pad 7's 1.498 and the Galaxy tablets' 1.6 to 1.68, to the Z
+    // Fold3's outer display, 832 x 2268 (2.726). So a frame is upright, 1.0
+    // to 2.8: the game only ever runs portrait, a landscape emulator frame
+    // (1920 x 1080, 0.5625) is still refused, and so is every crop wider than
+    // it is tall. On 2026-09-27 the corpus held 1360 PNGs and every one was a
+    // frame under both rules, so the widening took nothing in and let
+    // nothing out.
+    //
+    // And a display on its side is a frame since the same evening
+    // (PLAN_FORMATE.md V19): the game does run on one, upright in the middle
+    // of a landscape emulator that does not turn, and the player chose to
+    // support it. [LANDSCAPE_ASPECT] is a whole landscape display, 21:9
+    // (0.43) to 16:10 (0.625); a crop that wide is not in the corpus. Counted
+    // before it was written: of the 1508 PNGs then in corpus/ not one is
+    // under 1.0, so the rule took in only the landscape frames put there for
+    // it and let nothing out.
     const val CORPUS = "corpus"
 
     /**
      * The JUnit tag every suite carries that reads a frame out of [CORPUS]:
-     * the eight `*OracleTest`, and nothing else. They are 477 of the 506
-     * seconds `:core:test` takes (measured 2026-09-21), so `:core:fastTest`
-     * leaves them out and `:core:test` still runs everything, exactly as
-     * NOTES.md says. The same string stands once more in
-     * `core/build.gradle.kts`, which is the only other place that may name it.
+     * the `*OracleTest`, and the flow tests that play on corpus frames. They
+     * are eleven of the fourteen minutes `:core:test` takes (measured
+     * 2026-10-03), so `:core:fastTest` leaves them out and `:core:test`
+     * still runs everything, exactly as NOTES.md says. The same string
+     * stands once more in `core/build.gradle.kts`, which is the only other
+     * place that may name it.
      *
      * A suite that starts reading the corpus gets the tag; one that stops
      * reading it loses the tag. `CorpusTest` does not carry it -- it scans
@@ -395,11 +570,68 @@ object OracleFamilies {
      * a frame.
      */
     const val CORPUS_TAG = "corpus"
-    val FRAME_ASPECT = 1.6..2.5
+    val FRAME_ASPECT = 1.0..2.8
+    val LANDSCAPE_ASPECT = 0.42..0.63
     const val FRAME_MIN_W = 400
 
+    private val FORMAT_NAME = Regex("""_(\d+)x(\d+)_([a-z]+)(\d+)_\d{6}\.png$""")
+
+    /**
+     * The headroom of a tour frame whose name does not say it
+     * (PLAN_FORMATE.md 3a, row 23): `1080x2640_hole300` stands for a phone
+     * with a 100 px hole, and LDPlayer ran it as 1080 x 2540 without a
+     * cutout, where the app cut 200 -- both leave 200 rows between the top
+     * and the canvas, and the fits of V4 said -100 and -200.
+     */
+    val HEADROOM_BY_FORMAT = mapOf("1080x2640_hole300" to 200)
+
+    /**
+     * Rows of headroom (Dungeon.CanvasFrame) of a corpus frame [rows] tall,
+     * by its name (PLAN_FORMATE.md 7): a `none` frame was cut by the canvas
+     * ceiling alone, so every row the app cut is headroom; a cutout's rows
+     * are the camera's, not the game's; and a frame of any other name was
+     * never cut.
+     */
+    fun headroom(name: String, rows: Int): Int = room(name, rows).first
+
+    /**
+     * The headroom of a corpus frame and how many of its rows it holds above
+     * the canvas (Dungeon.CanvasFrame.above). A `none` frame's headroom is
+     * the band the canvas ceiling leaves, H - W * 13/6; the frame holds the
+     * part of it the app did not cut. The V3 frames of the tour were cut to
+     * the canvas (`none180` at 2520, above 0); a frame kept whole since V4's
+     * fifth group is `none0` and holds all of it.
+     */
+    fun room(name: String, rows: Int): Pair<Int, Int> {
+        val m = FORMAT_NAME.find(name) ?: return 0 to 0
+        val (w, h, kind, cut) = m.destructured
+        HEADROOM_BY_FORMAT["${w}x${h}_$kind$cut"]?.let { return it to 0 }
+        if (kind != "none" || rows != h.toInt() - cut.toInt()) return 0 to 0
+        val band = Dungeon.canvasTop(w.toInt(), h.toInt(), 0)
+        if (band <= 0 || cut.toInt() > band) return 0 to 0
+        return band to band - cut.toInt()
+    }
+
+    /** A corpus frame as `DigiAutotapService.grab` would have handed it over: with its headroom. */
+    fun read(file: File): Mat = framed(Imgcodecs.imread(file.path), file.name)
+
+    /** [img], which was read from a file called [name], with its headroom; [img] itself when it has none. */
+    fun framed(img: Mat, name: String): Mat {
+        val (room, above) = if (img.empty()) 0 to 0 else room(name, img.rows())
+        if (room == 0) return img
+        return Dungeon.CanvasFrame(room, above).also { img.copyTo(it); img.release() }
+    }
+
+    /** A copy of [img] that keeps its headroom, where `clone` would lose it. */
+    fun copy(img: Mat): Mat {
+        val room = Dungeon.headroom(img)
+        if (room == 0) return img.clone()
+        return Dungeon.CanvasFrame(room, Dungeon.above(img)).also { img.copyTo(it) }
+    }
+
     /** Is a picture of this size a whole emulator frame, not a crop? */
-    fun isFrame(w: Int, h: Int): Boolean = w >= FRAME_MIN_W && (h.toDouble() / w) in FRAME_ASPECT
+    fun isFrame(w: Int, h: Int): Boolean = w >= FRAME_MIN_W &&
+        (h.toDouble() / w).let { it in FRAME_ASPECT || it in LANDSCAPE_ASPECT }
 
     /** (width, height) from the PNG header, or null if it is not a PNG. */
     fun pngSize(file: File): Pair<Int, Int>? {
@@ -591,8 +823,33 @@ object OracleFamilies {
      * `prepare` is what happens to the picture before it is asked --
      * nothing, unless a test is about a picture that was changed on purpose.
      */
-    fun check(family: Family, oracle: JsonObject, repo: File, vision: Vision,
-              prepare: (Mat) -> Unit = {}): Report {
+    fun check(family: Family, oracle: JsonObject, repo: File, prepare: (Mat) -> Unit = {}): Report =
+        check(listOf(family to oracle), repo, prepare).single()
+
+    /**
+     * Several families' files over the frames they share: each picture read
+     * once and asked by every one of them, and a report per file, in their
+     * order. The frames are asked on [OracleWriter.collect]'s threads, the
+     * loop the files were written with, and compared here in the file's
+     * order, so a report reads the same whichever frame was done first.
+     * Until 2026-10-03 this asked one frame after the other, and the
+     * fourteen suites that call it were 49 of the 60 minutes `:core:test`
+     * had grown to.
+     */
+    fun check(files: List<Pair<Family, JsonObject>>, repo: File, prepare: (Mat) -> Unit = {}): List<Report> {
+        val paths = files.first().second["frames"]!!.jsonObject.keys
+        for ((family, oracle) in files) {
+            require(oracle["frames"]!!.jsonObject.keys == paths) {
+                "oracle/${family.name}.json names another set of frames than oracle/${files.first().first.name}.json"
+            }
+        }
+        for (path in paths) File(repo, path).let { require(it.exists()) { "frame of the oracle is not on disk: $it" } }
+        val got = OracleWriter.collect(paths.toList(), files.map { it.first }, repo, prepare = prepare, log = {})
+        return files.map { (family, oracle) -> compare(oracle, got.getValue(family.name)) }
+    }
+
+    /** One file against what its family answers now, frame by frame in the file's order. */
+    private fun compare(oracle: JsonObject, answers: Map<String, Map<String, Any?>>): Report {
         val frames = oracle["frames"]!!.jsonObject
         val mismatches = ArrayList<Mismatch>()
         val checked = HashMap<String, Int>()
@@ -600,12 +857,7 @@ object OracleFamilies {
         val folders = HashMap<String, Int>()
         var windowFrames = 0
         for ((path, expectedEntry) in frames) {
-            val file = File(repo, path)
-            require(file.exists()) { "frame of the oracle is not on disk: $file" }
-            val img = Imgcodecs.imread(file.path)
-            require(!img.empty()) { "could not read $path" }
-            prepare(img)
-            val got = answers(family, img, vision)
+            val got = answers.getValue(path)
             val expected = expectedEntry.jsonObject
             for (key in (expected.keys + got.keys).sorted()) {
                 val name = readerName(key)
@@ -623,8 +875,7 @@ object OracleFamilies {
                 }
             }
             folders.merge(path.substringAfter('/').substringBefore('/'), 1, Int::plus)
-            if (img.cols() != 1080 || img.rows() != 1920) windowFrames += 1
-            img.release()
+            if (got["size"] != listOf(1080, 1920)) windowFrames += 1
         }
         return Report(frames.size, mismatches, checked, answered, folders, windowFrames)
     }

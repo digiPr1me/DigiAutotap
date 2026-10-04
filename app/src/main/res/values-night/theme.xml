@@ -1,4 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- The dark half of values/theme.xml: the same transparent bars, with
+     light icons over the dark ground. -->
 <resources>
-    <style name="DigiAutotap" parent="@android:style/Theme.Material.NoActionBar" />
+    <style name="DigiAutotap" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+    </style>
 </resources>

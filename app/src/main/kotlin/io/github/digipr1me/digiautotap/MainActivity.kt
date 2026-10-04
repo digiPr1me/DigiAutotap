@@ -7,8 +7,10 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.BitmapFactory
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
@@ -16,18 +18,24 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import android.text.SpannableString
+import android.text.Spanned
+import android.text.TextPaint
+import android.text.method.LinkMovementMethod
+import android.text.style.ClickableSpan
 import android.view.Gravity
+import android.view.MotionEvent
+import android.view.VelocityTracker
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.ViewGroup
 import android.view.Window
 import android.view.WindowInsets
-import android.widget.ArrayAdapter
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
-import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
 import io.github.digipr1me.digiautotap.core.Activation
@@ -36,12 +44,20 @@ import io.github.digipr1me.digiautotap.core.Game
 import io.github.digipr1me.digiautotap.core.HelperLog
 import io.github.digipr1me.digiautotap.core.HelperState
 import io.github.digipr1me.digiautotap.core.MainSwitch
+import io.github.digipr1me.digiautotap.core.Preset
 import io.github.digipr1me.digiautotap.core.Shell
 import io.github.digipr1me.digiautotap.core.SkillSettings
 import io.github.digipr1me.digiautotap.core.SkillStats
 import io.github.digipr1me.digiautotap.core.Stored
 import io.github.digipr1me.digiautotap.core.Unlock
 import io.github.digipr1me.digiautotap.core.Updates
+import java.io.File
+import java.text.SimpleDateFormat
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
+import java.util.Date
+import java.util.Locale
 import kotlin.concurrent.thread
 
 /**
@@ -86,6 +102,14 @@ class MainActivity : Activity() {
     private var page: String? = null
     private var onboarding = -1
 
+    /**
+     * The status bar's height, as the window last heard it: the bar's top
+     * padding while there is a bar, the page's while there is not
+     * (onboarding). Nought until the first insets arrive, which is before
+     * the first frame is drawn.
+     */
+    private var insetTop = 0
+
     /** Set by whichever page is showing; null where nothing on it moves. */
     private var refresh: (() -> Unit)? = null
     private var logSink: ((String) -> Unit)? = null
@@ -98,6 +122,9 @@ class MainActivity : Activity() {
     private val onStatus: (Status) -> Unit = { main.post { refresh?.invoke() } }
     private val onSwitch: (Boolean) -> Unit = { main.post { refresh?.invoke() } }
     private val onLog: (String) -> Unit = { line -> main.post { logSink?.invoke(line) } }
+    // The whole page, not its status panel: the set-up line and every ask
+    // are built from the bound service (Setup.asks).
+    private val onBound: () -> Unit = { main.post { if (!isFinishing && !isDestroyed) render() } }
 
     /**
      * The chosen night mode, written into the context the Activity is built
@@ -113,12 +140,22 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // The page is laid out under the status and navigation bars, and
+        // keeps out of them itself (buildChrome), on every Android alike
+        // since 2026-09-28: Android 15 does this to every app whatever it
+        // asks, and the ones before drew a grey status bar of their own
+        // over the page -- Theme.Material.Light's, which is no colour of
+        // this app's. res/values/theme.xml says which colour the bars'
+        // icons take on which design.
+        window.setDecorFitsSystemWindows(false)
         store = SettingsStore(this)
         ui = Ui(this)
         CoreService.channel(this)
         if (savedInstanceState == null) {
             // The player's decision of 2026-09-19: on when the app is opened.
-            MainSwitch.set(true)
+            // Through the dot's own Start, which waits for a stopped task
+            // still letting go (CoreService.startLogic).
+            CoreService.startLogic("the app opening")
             if (!store.bool(ONBOARDING_SEEN, false)) onboarding = 0
         } else {
             page = savedInstanceState.getString("page", null)
@@ -132,7 +169,20 @@ class MainActivity : Activity() {
         if (savedInstanceState == null) {
             checkForUpdate(asked = false)
             census(this)
+            opened()
         }
+    }
+
+    /**
+     * At every opening: a shared log ZIP an hour old goes ([LogShare.sweep]).
+     * Until 1.3's fourth candidate this also sent an open report on and asked
+     * about a crash since the last opening; the app sends nothing by itself
+     * now and asks nothing after a crash -- the crash is in the log, and in
+     * the crash.txt of a shared ZIP (notes/reports.md, "Nothing is sent and
+     * no picture of the game is kept: the player shares the log").
+     */
+    private fun opened() {
+        thread(name = "share-sweep") { LogShare.sweep(this) }
     }
 
     /**
@@ -146,6 +196,7 @@ class MainActivity : Activity() {
         val found = newer
         if (found != null) offerUpdate(found) else checkForUpdate(asked = false)
         census(this)
+        opened()
     }
 
     override fun onSaveInstanceState(out: Bundle) {
@@ -159,11 +210,23 @@ class MainActivity : Activity() {
         Status.listen(onStatus)
         MainSwitch.listen(onSwitch)
         HelperLog.listen(onLog)
+        DigiAutotapService.bound += onBound
         // The app is in front, so the system allows this start whatever the
         // battery settings say; the service's own start may have been
         // refused. A core the player stopped (the app or the notification) stays
         // stopped: startCore is where that is decided, for every caller.
         if (DigiAutotapService.instance != null) DigiAutotapService.startCore(this, "app opened")
+        // The file as it stands now, not as it stood when the Activity was
+        // made: a store reads the whole file once and answers from that copy
+        // (SettingsStore), and the core writes the day's counts, the quest
+        // lock and the rest through stores of its own. Since Android 12 the
+        // back key only moves the app behind, so the same Activity comes back
+        // for hours. Seen on LDPlayer on 2026-09-29 (PLAN_EX_MISSIONS.md
+        // EX3): the TODAY card said "5 EX mission claims" after a second
+        // "Claim now" had made it 7, and said 7 only once a display change
+        // rebuilt the Activity. notes/director.md, "A page that keeps its
+        // store shows the numbers of the moment it was opened".
+        store = SettingsStore(this)
         // Every ask is asked again on every opening (5_SHELL 3.2).
         render()
     }
@@ -172,6 +235,7 @@ class MainActivity : Activity() {
         Status.unlisten(onStatus)
         MainSwitch.unlisten(onSwitch)
         HelperLog.unlisten(onLog)
+        DigiAutotapService.bound -= onBound
         super.onPause()
     }
 
@@ -204,25 +268,25 @@ class MainActivity : Activity() {
 
     private fun buildChrome() {
         root = ui.column().apply { setBackgroundColor(ui.p.BG) }
-        root.setOnApplyWindowInsetsListener { v, insets ->
-            val bars = insets.getInsets(WindowInsets.Type.systemBars())
-            v.setPadding(bars.left, bars.top, bars.right, bars.bottom)
-            insets
-        }
-
         bar = ui.row().apply {
             setBackgroundColor(ui.p.SURFACE)
-            setPadding(ui.dp(14), ui.dp(10), ui.dp(14), ui.dp(10))
+            setPadding(ui.dp(Ui.BAR_SIDE), ui.dp(10), ui.dp(Ui.BAR_SIDE), ui.dp(10))
         }
-        // The back arrow is the chevron turned round, so there is one arrow
-        // drawable in the app rather than a second one that has to be kept
-        // the same shape as the first.
-        barBack = ui.icon(R.drawable.ic_chevron, 18, ui.p.TEXT).apply {
-            scaleX = -1f
-            (layoutParams as LinearLayout.LayoutParams).rightMargin = ui.dp(10)
-            isClickable = true
-            setOnClickListener { goBack() }
+        // The window is laid out under the system bars (onCreate), so what
+        // they cover is the app's to keep out of: the app bar runs on under
+        // the status bar in its own colour and carries its height as
+        // padding -- the page does while the bar is away (onboarding, in
+        // render) -- and the root keeps clear of the navigation bar and of
+        // the keyboard, which is what lets the supporter code's field rise
+        // above the keys.
+        root.setOnApplyWindowInsetsListener { v, insets ->
+            val around = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.ime())
+            insetTop = insets.getInsets(WindowInsets.Type.statusBars()).top
+            v.setPadding(around.left, if (onboarding >= 0) insetTop else 0, around.right, around.bottom)
+            bar.setPadding(ui.dp(Ui.BAR_SIDE), ui.dp(10) + insetTop, ui.dp(Ui.BAR_SIDE), ui.dp(10))
+            insets
         }
+        barBack = ui.barBack { goBack() }
         barTitle = ui.barTitle("DigiAutotap")
         barPill = FrameLayout(this)
         // The one thing that is not on the page: Settings. A button in the bar
@@ -252,10 +316,18 @@ class MainActivity : Activity() {
         host.removeAllViews()
         val chrome = if (onboarding >= 0) View.GONE else View.VISIBLE
         listOf(bar, barLine).forEach { it.visibility = chrome }
+        // The status bar's rows are the bar's while there is one and the
+        // page's while there is not, in the onboarding page's own colour.
+        root.setPadding(root.paddingLeft, if (onboarding >= 0) insetTop else 0,
+                        root.paddingRight, root.paddingBottom)
+        root.setBackgroundColor(if (onboarding >= 0) ui.p.SURFACE else ui.p.BG)
         if (onboarding >= 0) return pageOnboarding()
         val open = page
         barBack.visibility = if (open == null) View.GONE else View.VISIBLE
         barSettings.visibility = if (open == null) View.VISIBLE else View.GONE
+        // Without the arrow the title stands 14 dp in, level with the cog's
+        // box at the other end; after the arrow's square it needs no more.
+        barTitle.setPadding(if (open == null) ui.dp(14 - Ui.BAR_SIDE) else 0, 0, 0, 0)
         barPill.removeAllViews()
         barTitle.text = when (open) {
             "about" -> "About"
@@ -329,7 +401,7 @@ class MainActivity : Activity() {
         // dot in front is amber where something holds a task back, and the
         // reason is in the task's own sheet, beside the control that mends
         // it.
-        col.addView(ui.eyebrow("Tasks").apply { setPadding(ui.dp(2), 0, 0, 0) }, marginTop(14))
+        col.addView(ui.sectionHead("Tasks"), marginTop(16))
         val list = ui.listBox()
         col.addView(list)
         Skills.ALL.forEachIndexed { i, r ->
@@ -354,15 +426,27 @@ class MainActivity : Activity() {
         // answered once; what still has to be loud is the moment the player
         // presses Start with one of them open, and that is [press].
         col.addView(setupLine(asks), marginTop(8))
-        col.addView(adPassLine(), marginTop(8))
+        // The free ads, a card of their own under a heading since 2026-10-02
+        // ([freeAdsCard]), where the Ad Skip Pass's line stood alone. The
+        // heading said "Free ads" until 2026-10-04 and says "Ad Rewards"
+        // since, the player's word (PLAN_REPORT_RAUS.md 2.11).
+        col.addView(ui.sectionHead("Ad Rewards"), marginTop(16))
+        freeAdsAt = freeAdsCard().also { col.addView(it) }
+        if (toFreeAds) {
+            toFreeAds = false
+            val sv = scroll
+            val at = freeAdsAt
+            if (sv != null && at != null) sv.post { sv.smoothScrollTo(0, maxOf(0, at.top - ui.dp(40))) }
+        }
 
         // The way to the server, as a tile and not the text link it was
         // until 2026-09-23 -- the player called the link too quiet. It is
         // where every question goes since that day (the Settings page's Feedback
-        // row, which opened GitHub, is gone); the debug package's link that
-        // stood beside it went to Settings, beside the log.
+        // row, which opened GitHub, is gone), and since 1.3 where a bug comes
+        // too: the player shares the log there (Settings, Log, Share). The
+        // line is the player's own sentence of 2026-10-04.
         col.addView(ui.tile(R.drawable.ic_discord, ui.p.ON_DISCORD, ui.p.DISCORD, null,
-                            "Join the Discord", "Bugs, help and feedback of any kind.",
+                            "Join the Discord", "If you need help or have feedback of any kind.",
                             R.drawable.ic_external) { openInBrowser(DISCORD_INVITE) },
                     marginTop(8))
 
@@ -371,7 +455,7 @@ class MainActivity : Activity() {
             sentence.text = Shell.sentence(state)
             buttonSlot.removeAllViews()
             val stopped = state == HelperState.STOPPED
-            buttonSlot.addView(ui.bigButton(if (stopped) "Start" else "Stop",
+            buttonSlot.addView(ui.bigButton(if (stopped) "Start" else ActionReceiver.TURN_OFF,
                                             if (stopped) R.drawable.ic_play else R.drawable.ic_stop) {
                 press(state)
             }.apply {
@@ -395,19 +479,20 @@ class MainActivity : Activity() {
     }
 
     /**
-     * The big button: Start while the service is stopped, Stop in every
-     * other state -- Paused and Parked included. The player's decision of
+     * The big button: Start while the service is off, Turn off in every
+     * other state -- Stopped and Parked included. The player's decision of
      * 2026-09-23: in the app the game is not in front anyway, so a pause
      * here is a pause of nothing, and the one button does what it says.
-     * Pause and Resume are the dot's (and the notification's), where the
-     * game is; Try again is theirs too, and a parked director also moves
-     * on by itself when the screen changes.
+     * Stop and Start of the task are the dot's (and the notification's),
+     * where the game is; and a parked director also moves on by itself
+     * when the screen changes. The button said Stop until 2026-10-02, when
+     * that word went to the dot (PLAN_BEFUNDE_1_3.md N5 b).
      *
      * Start with one of the three asks still open goes to the set-up sheet
-     * first, which is where the player learns what is missing and can
-     * still start anyway. Asked of the system at the press and not off the
-     * page's own list: the player may have come back from the settings
-     * since the page was built.
+     * first, which is where the player learns what is missing -- and, where
+     * it is only a warning, can still start anyway. Asked of the system at
+     * the press and not off the page's own list: the player may have come
+     * back from the settings since the page was built.
      */
     private fun press(state: HelperState) {
         if (state != HelperState.STOPPED) {
@@ -416,7 +501,14 @@ class MainActivity : Activity() {
             return
         }
         if (Setup.asks(this).any { !it.ok }) return setupSheet(start = true)
-        ActionReceiver.press(this)
+        pressStart()
+    }
+
+    /** Start, and what stood in the way said where the player is looking. */
+    private fun pressStart() {
+        ActionReceiver.press(this, "the app")?.let { why ->
+            Toast.makeText(this, "Not started: $why", Toast.LENGTH_LONG).show()
+        }
         render()
     }
 
@@ -475,42 +567,138 @@ class MainActivity : Activity() {
         return line
     }
 
+    /** The Ad Rewards card on the page, for a task sheet's pointer to scroll to ([adsPointer]). */
+    private var freeAdsAt: View? = null
+
     /**
-     * The Ad Skip Pass, as one line under the set-up line -- the same
-     * shape, with the switch where the set-up line has its chevron
-     * (the player's decision of 2026-09-24, design A of PLAN_AD_PASS.md;
-     * white in both states, the player's call, not amber like a missing
-     * ask). The chip names the pass whether it is on or off; the switch
-     * and the sentence say which. It is the one switch behind every free
-     * ad the app watches (SkillSettings.AD_PASS_KEY), and it stands on the
-     * main page so that a player who has the pass sees it is off.
+     * A sheet's pointer was tapped: the page that the sheet's dismissal
+     * draws anew ([bottomSheet]) scrolls to the card once it is laid out.
      */
-    private fun adPassLine(): View {
-        val slot = ui.row()
+    private var toFreeAds = false
+    /**
+     * The free ads, as one card on the main page (2026-10-02, design A of
+     * staging/mockups/supporter_ads_mockup.html, the player's choice), cut
+     * down on 2026-10-03 to what the app does with a free ad: it takes the
+     * reward with the game's Ad Skip Pass, and without the pass it leaves the
+     * ad alone (question 15 of PLAN_ABSCHLUSS_1_3.md; notes/ads.md, "The app
+     * never touches an ad, and nothing that closed one ships"). At the head
+     * the pass with its sentence and its switch, everybody's
+     * (SkillSettings.AD_PASS_KEY); under it the tasks it is for, the three
+     * page switches of 2026-09-30 under the keys they had (Stored.AD_PICKS),
+     * dimmed while the pass is off and still the player's to set.
+     */
+    private fun freeAdsCard(): View {
+        val slot = ui.column()
         fun fill() {
             slot.removeAllViews()
-            val on = store.bool(SkillSettings.AD_PASS_KEY, SkillSettings.AD_PASS_DEFAULT)
-            val line = ui.row().apply {
-                background = ui.round(ui.p.SURFACE, ui.p.LINE)
-                setPadding(ui.dp(10), ui.dp(8), ui.dp(10), ui.dp(8))
+            val ads = Stored.freeAds(store)
+            // 1 dp inside the border, so that the row with a background of
+            // its own (the one that throws the switch) leaves the line standing.
+            val card = ui.listBox().apply { setPadding(ui.dp(1), ui.dp(1), ui.dp(1), ui.dp(1)) }
+
+            val head = ui.row().apply {
+                gravity = Gravity.TOP
+                setPadding(ui.dp(10), ui.dp(11), ui.dp(10), ui.dp(10))
             }
-            line.addView(if (on) ui.chip("ad skip pass", ui.p.PILL_OK_FG, ui.p.PILL_OK_BG, ui.p.PILL_OK_EDGE)
-                         else ui.chip("ad skip pass", ui.p.PILL_NEUTRAL_FG, ui.p.PILL_NEUTRAL_BG,
-                                      ui.p.PILL_NEUTRAL_EDGE))
-            line.addView(ui.grow(ui.mono(
-                if (on) "the free ads are \"watched\" in Dungeons, Summon and the Quest Loop"
-                else "no free ad is ever tapped -- switch on if you have the pass",
-                11f, ui.p.TEXT_2)).apply { setPadding(ui.dp(8), 0, ui.dp(6), 0) })
-            line.addView(ui.switch(on) { v ->
+            head.addView(ui.icon(R.drawable.ic_ads, 20, ui.p.STATE_FG).apply {
+                background = ui.round(ui.p.STATE_BG, ui.p.STATE_EDGE)
+                setPadding(ui.dp(9), ui.dp(9), ui.dp(9), ui.dp(9))
+                layoutParams = LinearLayout.LayoutParams(ui.dp(38), ui.dp(38))
+            })
+            val words = ui.column()
+            words.addView(ui.taskName("Ad Skip Pass"))
+            words.addView(
+                if (ads.pass) ui.chip("on", ui.p.PILL_OK_FG, ui.p.PILL_OK_BG, ui.p.PILL_OK_EDGE)
+                else ui.chip("off", ui.p.PILL_NEUTRAL_FG, ui.p.PILL_NEUTRAL_BG, ui.p.PILL_NEUTRAL_EDGE),
+                wrapTop(3))
+            words.addView(ui.hint(
+                "With the game's pass, DigiAutotap takes the free rewards of the tasks below. " +
+                    "Without it, it leaves the free ads alone."), marginTop(4))
+            head.addView(ui.grow(words).apply {
+                (layoutParams as LinearLayout.LayoutParams).apply {
+                    leftMargin = ui.dp(10)
+                    rightMargin = ui.dp(8)
+                }
+            })
+            val pass = ui.switch(ads.pass) { v ->
                 store.put(SkillSettings.AD_PASS_KEY, v)
                 HelperLog.line("ad skip pass: " + if (v) "on" else "off")
                 fill()
-            })
-            slot.addView(line, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+            }
+            head.addView(pass)
+            card.addView(ui.tappable(head) { pass.performClick() })
+
+            // Which tasks take their free ads: always the player's to set,
+            // and dimmed while the pass is off and none is taken.
+            val where = ui.row().apply {
+                setPadding(ui.dp(58), 0, ui.dp(10), ui.dp(6))
+                if (!ads.tap) alpha = 0.5f
+            }
+            where.addView(ui.mono("where", 10f, ui.p.TEXT_2).apply { setPadding(0, 0, ui.dp(4), 0) })
+            for ((task, key) in Stored.AD_PICKS) {
+                val on = store.bool(key, false)
+                where.addView(adPick(Skills.row(task).name, on) {
+                    store.put(key, !on)
+                    HelperLog.line("free ads in ${Skills.row(task).name}: " + if (on) "off" else "on")
+                    fill()
+                })
+            }
+            card.addView(where)
+
+            slot.addView(card, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
                                                          ViewGroup.LayoutParams.WRAP_CONTENT))
         }
         fill()
         return slot
+    }
+
+    /** One task under the Ad Rewards card's pass: a round chip, green while its free ads are taken. */
+    private fun adPick(name: String, on: Boolean, onClick: () -> Unit): View {
+        val chip = ui.hint(name).apply {
+            textSize = 12f
+            setTextColor(if (on) ui.p.PILL_OK_FG else ui.p.PILL_NEUTRAL_FG)
+            background = if (on) ui.round(ui.p.PILL_OK_BG, ui.p.PILL_OK_EDGE, radius = 14)
+                         else ui.round(ui.p.PILL_NEUTRAL_BG, ui.p.PILL_NEUTRAL_EDGE, radius = 14)
+            setPadding(ui.dp(9), ui.dp(4), ui.dp(9), ui.dp(4))
+        }
+        // The chip is the picture; the touch target is the 40 dp around it.
+        return FrameLayout(this).apply {
+            minimumHeight = ui.dp(40)
+            setPadding(ui.dp(3), 0, ui.dp(3), 0)
+            addView(chip, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+                                                   ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER_VERTICAL))
+            isClickable = true
+            setOnClickListener { onClick() }
+        }
+    }
+
+    /**
+     * What a task sheet says where the Ad Rewards card's pick [key] is its
+     * own (2026-10-02): the switch that stood at the head of the page is on
+     * the main page now, and this line says how the task's free ads go and
+     * leads there.
+     */
+    private fun adsPointer(key: String, d: Dialog): View {
+        val ads = Stored.freeAds(store)
+        val how = if (store.bool(key, false) && ads.tap) "Free ads: taken with your Ad Skip Pass."
+                  else "Free ads: left alone."
+        val box = ui.row().apply {
+            background = ui.round(ui.p.STATE_BG, ui.p.STATE_EDGE)
+            setPadding(ui.dp(10), ui.dp(9), ui.dp(10), ui.dp(9))
+            minimumHeight = ui.dp(Ui.TOUCH)
+            isClickable = true
+            setOnClickListener {
+                toFreeAds = true
+                d.dismiss()
+            }
+        }
+        box.addView(ui.icon(R.drawable.ic_ads, 16, ui.p.STATE_FG))
+        box.addView(ui.grow(ui.hint("$how Set on the main page.").apply {
+            setTextColor(ui.p.STATE_FG)
+            setPadding(ui.dp(8), 0, ui.dp(6), 0)
+        }))
+        box.addView(ui.icon(R.drawable.ic_chevron, 16, ui.p.STATE_FG))
+        return box
     }
 
     /**
@@ -520,16 +708,26 @@ class MainActivity : Activity() {
      * service off used to start nothing and say so only in the log -- and
      * it still lets the player start anyway, because a missing notification
      * or battery exception is a warning and not a wall.
+     *
+     * The accessibility service is the wall: without it nothing can see the
+     * game or tap it, and "Start anyway" offered over it started nothing
+     * and said so only in the log -- the Poco on 2026-10-01, 20:24:02 and
+     * :06, with the service switched on in the settings and not running
+     * (notes/director.md, "The bound service is the answer, and a start
+     * without it is refused out loud"). So while it is the one missing,
+     * the sheet says why there is no start and offers only the way to it.
      */
     private fun setupSheet(start: Boolean): Unit = bottomSheet { sheet, d ->
         val asks = Setup.asks(this)
         val missing = asks.firstOrNull { !it.ok }
+        val wall = missing?.key == "acc"
         sheet.addView(ui.title(when {
             start -> "Not ready to start"
             else -> "Set-up"
         }))
         sheet.addView(ui.hint(when {
             missing == null -> "Everything DigiAutotap needs is in place."
+            start && wall -> missing.missing + ". DigiAutotap cannot start without it."
             start -> missing.missing + ". You can start anyway."
             else -> missing.missing + "."
         }), marginTop(4))
@@ -567,11 +765,15 @@ class MainActivity : Activity() {
         }
         sheet.addView(ui.hint("Checked again every time you open the app."), marginTop(12))
         val foot = ui.row().apply { setPadding(0, ui.dp(12), 0, 0) }
-        if (start && missing != null) {
+        if (start && wall) {
+            foot.addView(ui.primaryButton(missing!!.button) { missing.fix(this) }.apply {
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                                                         ViewGroup.LayoutParams.WRAP_CONTENT)
+            })
+        } else if (start && missing != null) {
             foot.addView(ui.outButton("Start anyway") {
                 d.dismiss()
-                ActionReceiver.press(this)
-                render()
+                pressStart()
             }.apply {
                 gravity = Gravity.CENTER
                 setPadding(ui.dp(10), ui.dp(10), ui.dp(10), ui.dp(10))
@@ -652,7 +854,16 @@ class MainActivity : Activity() {
             })
             r.addView(ui.grow(ui.mono((SkillSettings.CHAIN_NAMES[key] ?: key).lowercase(),
                                       11f, ui.p.TEXT)))
+            // A step whose task is switched off is skipped, and says so here
+            // (PLAN_BEFUNDE_1_3.md N3 b: Gekkomon Run stood first and was
+            // off, since Chef's Special had been switched on).
+            if (Skills.stepOff(key, store, Supporter.unlocked)) r.addView(ui.mono("off", 11f, ui.p.PAUSE))
             box.addView(r)
+        }
+        if (steps.any { (key, _) -> Skills.stepOff(key, store, Supporter.unlocked) }) {
+            box.addView(ui.mono("a step marked off is skipped: its task is switched off", 11f, ui.p.TEXT_2).apply {
+                setPadding(ui.dp(24), ui.dp(1), 0, 0)
+            })
         }
         box.addView(ui.mono("then back to the main screen", 11f, ui.p.TEXT_2).apply {
             setPadding(ui.dp(24), ui.dp(1), 0, 0)
@@ -692,11 +903,29 @@ class MainActivity : Activity() {
         }
         box.addView(ui.navDot(colour, halo = on && Shell.state() == HelperState.RUNNING))
         box.addView(ui.grow(ui.taskName(r.name)).apply { setPadding(ui.dp(10), 0, ui.dp(6), 0) })
-        box.addView(ui.switch(on, enabled = !locked) { v -> Skills.include(r, store, v) })
+        box.addView(ui.switch(on, enabled = !locked) { v -> include(r, v) })
         box.addView(ui.chevron().apply {
             (layoutParams as LinearLayout.LayoutParams).leftMargin = ui.dp(6)
         })
         return ui.tappable(box) { taskSheet(r) }
+    }
+
+    /**
+     * A row's switch, thrown ([Skills.include]). A minigame switched on
+     * switches the other one off (PLAN_SKEWER.md 3.3); the page says which,
+     * and why, and draws the list again, so that the other row's switch is
+     * seen going off -- after the tap that threw this one has finished. The
+     * list is drawn again, too, where switching on started a row's day again
+     * (PLAN_ABSCHLUSS_1_3.md A2): its dot goes from amber to green.
+     */
+    private fun include(r: SkillRow, on: Boolean) {
+        val before = Skills.holdBack(r, store, Supporter.unlocked)
+        val off = Skills.include(r, store, on)
+        if (off.isNotEmpty()) {
+            Toast.makeText(this, "${off.joinToString(" and ") { it.name }} switched off: only one " +
+                "minigame runs at a time", Toast.LENGTH_LONG).show()
+        }
+        if (off.isNotEmpty() || Skills.holdBack(r, store, Supporter.unlocked) != before) host.post { render() }
     }
 
     /**
@@ -712,6 +941,21 @@ class MainActivity : Activity() {
         val on = Skills.included(r, store, unlocked)
         val hold = Skills.holdBack(r, store, unlocked)
 
+        // What holds the task back, and -- where it is the day's (Skills.dayHold)
+        // -- the way out before the reset under it. Both go when the switch
+        // has started the day again (PLAN_ABSCHLUSS_1_3.md A2), without the
+        // sheet being opened anew.
+        val holdLine = ui.sub(hold.lowercase(), amber = true)
+        val againLine = ui.sub("")
+        fun holdShown(on: Boolean) {
+            val now = Skills.holdBack(r, store, Supporter.unlocked)
+            holdLine.text = now.lowercase()
+            holdLine.visibility = if (now.isEmpty()) View.GONE else View.VISIBLE
+            val day = now.isNotEmpty() && now == Skills.dayHold(r, store)
+            againLine.text = Skills.againNote(on)
+            againLine.visibility = if (day) View.VISIBLE else View.GONE
+        }
+
         val head = ui.row()
         head.addView(ui.grow(ui.taskName(r.name).apply { textSize = 17f }))
         head.addView(when {
@@ -720,13 +964,17 @@ class MainActivity : Activity() {
             else -> ui.chip("left out", ui.p.PILL_NEUTRAL_FG, ui.p.PILL_NEUTRAL_BG,
                             ui.p.PILL_NEUTRAL_EDGE)
         })
-        head.addView(ui.switch(on, enabled = !locked) { v -> Skills.include(r, store, v) }.apply {
+        head.addView(ui.switch(on, enabled = !locked) { v -> include(r, v); holdShown(v) }.apply {
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
                 .apply { leftMargin = ui.dp(8) }
         })
         sheet.addView(head)
-        if (hold.isNotEmpty()) sheet.addView(ui.sub(hold.lowercase(), amber = true), marginTop(2))
+        sheet.addView(holdLine, marginTop(2))
+        sheet.addView(againLine, marginTop(2))
+        holdShown(on)
+        // The two minigames: why the other switch goes when this one comes on.
+        Skills.minigameNote(r)?.let { sheet.addView(ui.sub(it), marginTop(2)) }
 
         if (locked) {
             sheet.addView(ui.body(
@@ -738,7 +986,17 @@ class MainActivity : Activity() {
             }
         } else {
             val fields = r.page?.let { SkillSettings.page(it).fields } ?: emptyList()
-            val c = section(sheet, "Settings")
+            // The Presets page has its own headings (design A), so no "Settings" over them;
+            // nor over a page whose one field is a button (EX Missions' "Claim now").
+            val buttonsOnly = fields.isNotEmpty() && fields.all { it is SkillSettings.RunNow }
+            val c = section(sheet, if (r.key == "preset" || buttonsOnly) null else "Settings")
+            // Where the page's ad switch stood until 2026-10-02: how this
+            // task's free ads go, and the way to the card that sets it.
+            Stored.AD_PICKS.firstOrNull { it.first == r.key }?.let { (_, key) ->
+                c.addView(adsPointer(key, d), LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    .apply { bottomMargin = ui.dp(10) })
+            }
             if (fields.isNotEmpty()) {
                 for (f in fields) when (f) {
                     // A supporter's box on everybody's task (the Bond token
@@ -757,10 +1015,18 @@ class MainActivity : Activity() {
                         store.put(f.key, v)
                     })
                     is SkillSettings.Number -> {
+                        // The first number of a block of its own: a rule, then
+                        // its heading (the Dungeons page's minutes, 3.4).
+                        if (f.heading.isNotEmpty()) {
+                            c.addView(rule(12))
+                            c.addView(ui.body(f.heading), marginTop(10))
+                        }
                         c.addView(numberField(f.key, f.label, f.default, f.min, f.max, f.decimal))
                         if (f.note.isNotEmpty()) c.addView(ui.hint(f.note))
                     }
                     is SkillSettings.DungeonAttempts -> attemptsField(c, f.label)
+                    is SkillSettings.PresetProfiles -> profilesField(c)
+                    is SkillSettings.RunNow -> runNowField(c, r, f)
                     is SkillSettings.ChainSteps -> Unit  // the chain is the mode sheet's
                 }
                 r.page?.let { key ->
@@ -793,11 +1059,211 @@ class MainActivity : Activity() {
         sheet.addView(semi, marginTop(14))
     }
 
+    // --- presets ------------------------------------------------------------------
+
+    /** The profile the Presets sheet shows, and the one its big button switches to. */
+    private var presetPicked = 0
+
+    /**
+     * Switch to profile [i]: its slots become the ones the next pass sets
+     * (Stored.armPreset) and the director runs the task from the next plain
+     * main screen (DirectorLoop.runNow). What stands in the way is said at
+     * once rather than left to a switch that never comes.
+     */
+    private fun switchPreset(i: Int) {
+        val profiles = Stored.presetProfiles(store)
+        if (i !in profiles.indices) return
+        val director = CoreService.director
+        val say = when {
+            !Skills.included(Skills.row("preset"), store, Supporter.unlocked) -> "Switch the Presets task on first"
+            director == null -> "DigiAutotap is not running -- press Start first"
+            !MainSwitch.on -> "DigiAutotap is stopped (the dot is grey) -- tap the dot first"
+            else -> {
+                Stored.armPreset(store, i)
+                director.runNow = "preset"
+                HelperLog.line("Presets: switching to \"${profiles[i].name}\" asked for")
+                "Switching to ${profiles[i].name} at the next main screen"
+            }
+        }
+        Toast.makeText(this, say, Toast.LENGTH_LONG).show()
+    }
+
+    /**
+     * A page's button that runs its task once (SkillSettings.RunNow, EX
+     * Missions' "Claim now"): the director runs it from the next plain main
+     * screen (DirectorLoop.runNow), as "Switch to" runs Presets, and what
+     * stands in the way is said at once.
+     */
+    private fun runNowField(parent: LinearLayout, r: SkillRow, f: SkillSettings.RunNow) {
+        if (f.note.isNotEmpty()) {
+            val needs = ui.column().apply {
+                background = ui.round(ui.p.PILL_PAUSE_BG, ui.p.PILL_PAUSE_EDGE)
+                setPadding(ui.dp(12), ui.dp(10), ui.dp(12), ui.dp(10))
+            }
+            needs.addView(ui.title("Before you tap").apply { setTextColor(ui.p.PILL_PAUSE_FG) })
+            needs.addView(ui.body(f.note).apply { setTextColor(ui.p.PILL_PAUSE_FG) }, marginTop(4))
+            parent.addView(needs, marginTop(4))
+        }
+        parent.addView(ui.primaryButton(f.label) { runNow(r, f.label) }.apply {
+            textSize = 16f
+            minimumHeight = ui.dp(52)
+        }, marginTop(10))
+    }
+
+    private fun runNow(r: SkillRow, label: String) {
+        val director = CoreService.director
+        val say = when {
+            !Skills.included(r, store, Supporter.unlocked) -> "Switch the ${r.name} task on first"
+            director == null -> "DigiAutotap is not running -- press Start first"
+            !MainSwitch.on -> "DigiAutotap is stopped (the dot is grey) -- tap the dot first"
+            else -> {
+                director.runNow = r.key
+                HelperLog.line("${r.name}: \"$label\" asked for")
+                "${r.name} at the next main screen"
+            }
+        }
+        Toast.makeText(this, say, Toast.LENGTH_LONG).show()
+    }
+
+    /** A profile's button in the sheet: filled while it is the one shown, outlined otherwise. */
+    private fun profileChip(label: String, picked: Boolean, onClick: () -> Unit): TextView =
+        ui.name(label).apply {
+            gravity = Gravity.CENTER
+            setTypeface(typeface, Typeface.BOLD)
+            isSingleLine = true
+            setTextColor(if (picked) ui.p.ON_PRIMARY else ui.p.TEXT)
+            background = if (picked) ui.round(ui.p.PRIMARY, ui.p.PRIMARY) else ui.round(ui.p.BG, ui.p.LINE)
+            setPadding(ui.dp(8), 0, ui.dp(8), 0)
+            minimumHeight = ui.dp(44)
+            isClickable = true
+            setOnClickListener { onClick() }
+        }
+
+    /** Buttons [columns] to a row, each row's cells the same width. */
+    private fun buttonGrid(parent: LinearLayout, buttons: List<View>, columns: Int = 3) {
+        for (chunk in buttons.chunked(columns)) {
+            val row = ui.row()
+            chunk.forEachIndexed { k, v ->
+                row.addView(v, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    if (k > 0) leftMargin = ui.dp(8)
+                })
+            }
+            // A short last row keeps the cells of the rows above.
+            repeat(columns - chunk.size) {
+                row.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f).apply { leftMargin = ui.dp(8) })
+            }
+            parent.addView(row, marginTop(8))
+        }
+    }
+
+    /**
+     * The Presets sheet (design A of 2026-09-26): the profiles as buttons,
+     * the picked one's six slots (1 to 10, saved as a field loses the
+     * focus; Overdrive the sixth since PLAN_DAILY_LOST_SECTOR_PRESETS.md DL2)
+     * and the greyed places the game does not have yet
+     * (SkillSettings.PRESET_PLACEHOLDERS), its name and Remove, the yellow
+     * box, and "Switch to <name>".
+     * Drawn again in place when the pick changes.
+     */
+    private fun profilesField(parent: LinearLayout) {
+        val box = ui.column()
+        parent.addView(box)
+        presetPicked = Stored.presetLast(store) ?: presetPicked
+        fun draw() {
+            box.removeAllViews()
+            val profiles = Stored.presetProfiles(store)
+            presetPicked = presetPicked.coerceIn(0, profiles.size - 1)
+            val p = profiles[presetPicked]
+            fun pick(i: Int) {
+                box.findFocus()?.clearFocus()
+                presetPicked = i
+                draw()
+            }
+
+            box.addView(ui.eyebrow("Profiles"), marginTop(4))
+            val chips = profiles.mapIndexed { i, q -> profileChip(q.name, i == presetPicked) { pick(i) } }
+            val add = if (profiles.size < Stored.PRESET_PROFILES_MAX) listOf(profileChip("+ Add", false) {
+                box.findFocus()?.clearFocus()
+                Stored.addPresetProfile(store)?.let { presetPicked = it }
+                draw()
+            }.apply { setTextColor(ui.p.TEXT_2) }) else emptyList()
+            buttonGrid(box, chips + add)
+            box.addView(ui.hint("Tap a profile to load its slots. A number you change below is saved " +
+                                "in that profile. Up to five profiles."), marginTop(6))
+
+            box.addView(rule(12))
+            box.addView(ui.eyebrow("Slots in “${p.name}”"), marginTop(10))
+            for (place in Preset.Place.values()) {
+                val row = ui.row().apply { setPadding(0, ui.dp(3), 0, ui.dp(3)) }
+                val e = ui.edit(numeric = true).apply { setText(p.slots[place].toString()); minEms = 3 }
+                e.setOnFocusChangeListener { _, has ->
+                    if (has) return@setOnFocusChangeListener
+                    val n = Stored.clampSlot(e.text.toString().toIntOrNull() ?: Stored.PRESET_SLOT_DEFAULT)
+                    e.setText(n.toString())
+                    val now = Stored.presetProfiles(store)[presetPicked]
+                    Stored.putPresetProfile(store, presetPicked, now.copy(slots = now.slots + (place to n)))
+                }
+                row.addView(e)
+                row.addView(ui.grow(ui.body(place.label)).apply { setPadding(ui.dp(10), 0, 0, 0) })
+                box.addView(row)
+            }
+            // The places the game does not have yet (Gear, question 6 of
+            // PLAN_DAILY_LOST_SECTOR_PRESETS.md): a greyed line under the real
+            // ones, no field, nothing to tap, no slot in the profile.
+            for (label in SkillSettings.PRESET_PLACEHOLDERS) {
+                val row = ui.row().apply { setPadding(0, ui.dp(6), 0, ui.dp(3)) }
+                row.addView(ui.body(label).apply { setTextColor(ui.p.TEXT_2); isEnabled = false })
+                row.addView(ui.grow(ui.hint(SkillSettings.PRESET_PLACEHOLDER_NOTE))
+                                .apply { setPadding(ui.dp(10), 0, 0, 0) })
+                box.addView(row)
+            }
+
+            // The name, and Remove: not in the mockup, and a profile needs both.
+            val nameRow = ui.row().apply { setPadding(0, ui.dp(8), 0, 0) }
+            val name = ui.edit("Name").apply { setText(p.name); minEms = 7; isSingleLine = true }
+            name.setOnFocusChangeListener { _, has ->
+                if (has) return@setOnFocusChangeListener
+                val n = name.text.toString().trim().take(16)
+                val now = Stored.presetProfiles(store)[presetPicked]
+                if (n.isNotEmpty() && n != now.name) {
+                    Stored.putPresetProfile(store, presetPicked, now.copy(name = n))
+                    box.post { draw() }
+                }
+            }
+            nameRow.addView(name)
+            nameRow.addView(ui.grow(ui.body("Name")).apply { setPadding(ui.dp(10), 0, 0, 0) })
+            if (profiles.size > 1) nameRow.addView(ui.outButton("Remove") {
+                box.findFocus()?.clearFocus()
+                Stored.removePresetProfile(store, presetPicked)
+                presetPicked = (presetPicked - 1).coerceAtLeast(0)
+                draw()
+            })
+            box.addView(nameRow)
+
+            val needs = ui.column().apply {
+                background = ui.round(ui.p.PILL_PAUSE_BG, ui.p.PILL_PAUSE_EDGE)
+                setPadding(ui.dp(12), ui.dp(10), ui.dp(12), ui.dp(10))
+            }
+            needs.addView(ui.title("Before you switch").apply { setTextColor(ui.p.PILL_PAUSE_FG) })
+            needs.addView(ui.body(SkillSettings.PRESET_NEEDS).apply { setTextColor(ui.p.PILL_PAUSE_FG) },
+                          marginTop(4))
+            box.addView(needs, marginTop(14))
+            box.addView(ui.primaryButton("Switch to ${p.name}") {
+                box.findFocus()?.clearFocus()
+                switchPreset(presetPicked)
+            }.apply {
+                textSize = 16f
+                minimumHeight = ui.dp(52)
+            }, marginTop(10))
+        }
+        draw()
+    }
+
     /** A part of a sheet: a rule, an eyebrow, and the column under it. */
-    private fun section(sheet: LinearLayout, eyebrow: String): LinearLayout {
+    private fun section(sheet: LinearLayout, eyebrow: String?): LinearLayout {
         sheet.addView(rule(12))
         val c = ui.column().apply { setPadding(0, ui.dp(10), 0, 0) }
-        c.addView(ui.eyebrow(eyebrow))
+        if (eyebrow != null) c.addView(ui.eyebrow(eyebrow))
         sheet.addView(c)
         return c
     }
@@ -823,8 +1289,18 @@ class MainActivity : Activity() {
             if (has) return@setOnFocusChangeListener
             val v = (edit.text.toString().toDoubleOrNull() ?: default).coerceIn(min, max)
             edit.setText(if (decimal) v.toString() else v.toInt().toString())
+            val before = store.num(key, default)
             // app.py's _spin writes an int where its variable is an IntVar.
             store.put(key, if (decimal) v else v.toInt())
+            // New minutes for the Lost Sector Tower are the player saying "try
+            // again" to a tower that is at its highest floor for the day
+            // (Stored.lostSectorDoneUntil, G16), as the Quest Loop row's
+            // switch lifts that loop's day lock (Skills.include).
+            if (key == Stored.LOST_SECTOR_MINUTES_KEY && v != before &&
+                !store.num(Stored.LOST_SECTOR_DONE_UNTIL_KEY, Double.NaN).isNaN()) {
+                Stored.unretireLostSector(store)
+                HelperLog.line("Lost Sector Tower: new minutes, the day's highest floor forgotten")
+            }
         }
         row.addView(edit)
         row.addView(ui.grow(ui.body(text)).apply { setPadding(ui.dp(10), 0, 0, 0) })
@@ -832,7 +1308,9 @@ class MainActivity : Activity() {
     }
 
     private fun attemptsField(parent: LinearLayout, label: String) {
-        parent.addView(ui.body(label))
+        // Under the ad switch since 2026-09-30, whose note it touched on
+        // LDPlayer without the air between them.
+        parent.addView(ui.body(label), marginTop(12))
         val values = Stored.attempts(store)
         val edits = ArrayList<Pair<Int, EditText>>()
         val stampRow = ui.row().apply { setPadding(0, ui.dp(6), 0, ui.dp(6)) }
@@ -876,10 +1354,17 @@ class MainActivity : Activity() {
      * A field that still has the focus when the sheet goes is given it back
      * first: the number fields save on losing focus, and a sheet dismissed
      * by a tap outside it would otherwise take the last number with it.
+     *
+     * It goes three ways, whatever its height: the back key, a tap above it,
+     * and a pull down from its top ([SheetScroll]). The Dungeons sheet on a
+     * Poco F3 (2026-09-30) was taller than the screen: the dialog filled it,
+     * nothing outside was left to tap, and the grip did not move -- only the
+     * phone's back key closed it.
      */
     private fun bottomSheet(build: (LinearLayout, Dialog) -> Unit) {
         val d = Dialog(this)
         d.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        d.setCanceledOnTouchOutside(true)
         val sheet = ui.column().apply {
             background = GradientDrawable().apply {
                 setColor(ui.p.SURFACE)
@@ -895,7 +1380,20 @@ class MainActivity : Activity() {
             bottomMargin = ui.dp(10)
         })
         build(sheet, d)
-        val sv = ScrollView(this).apply { addView(sheet) }
+        // A strip at the top stays free for the tap outside: an eighth of
+        // the window, and never less than 96 dp, which is still a thumb's
+        // width below a tall status bar.
+        val sv = SheetScroll(this, gap = { h -> maxOf(ui.dp(96), h / 8) }) { d.cancel() }
+            .apply { addView(sheet) }
+        // Where the sheet's window is laid out under the navigation bar or
+        // the keyboard, the sheet's own bottom padding grows by that much,
+        // in its own colour; where the window keeps clear of them by itself
+        // the inset is nought and nothing changes.
+        sv.setOnApplyWindowInsetsListener { _, insets ->
+            val under = insets.getInsets(WindowInsets.Type.navigationBars() or WindowInsets.Type.ime()).bottom
+            sheet.setPadding(ui.dp(16), ui.dp(10), ui.dp(16), ui.dp(20) + under)
+            insets
+        }
         d.setContentView(sv)
         d.setOnDismissListener {
             sheet.findFocus()?.clearFocus()
@@ -933,37 +1431,78 @@ class MainActivity : Activity() {
     private fun chainField(parent: LinearLayout, again: () -> Unit) {
         val steps = Stored.chainSteps(store).toMutableList()
         if (steps.isEmpty()) parent.addView(ui.hint("No step yet."))
-        steps.forEachIndexed { i, (key, minutes) ->
-            val row = ui.row().apply { setPadding(0, ui.dp(4), 0, ui.dp(4)) }
-            row.addView(ui.sub("${i + 1}").apply {
-                layoutParams = LinearLayout.LayoutParams(ui.dp(20), ViewGroup.LayoutParams.WRAP_CONTENT)
-            })
-            row.addView(ui.grow(ui.body(SkillSettings.CHAIN_NAMES[key] ?: key)))
-            fun small(glyph: String, f: () -> Unit) = ui.outButton(glyph) {
-                f(); store.putSteps("chain_steps", steps); again()
-            }.apply { setPadding(ui.dp(10), ui.dp(4), ui.dp(10), ui.dp(4)) }
-            if (i > 0) row.addView(small("▲") { steps.add(i - 1, steps.removeAt(i)) })
-            if (i < steps.size - 1) row.addView(small("▼") { steps.add(i + 1, steps.removeAt(i)) })
-            row.addView(small("✕") { steps.removeAt(i) })
-            parent.addView(row)
-        }
-        val keys = SkillSettings.CHAIN_WAITING + SkillSettings.CHAINABLE
-        val pick = Spinner(this).apply {
-            adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item,
-                                   keys.map { SkillSettings.CHAIN_NAMES[it] ?: it })
-        }
-        parent.addView(pick, marginTop(8))
-        val addRow = ui.row().apply { setPadding(0, ui.dp(6), 0, 0) }
-        // No minutes field any more: Tower & Ruins was the one step that had
-        // them (SkillSettings.CHAIN_TIMED), and it left the interface on
-        // 2026-09-22.
-        addRow.addView(ui.grow(ui.hint("The step runs until it is done.")))
-        addRow.addView(ui.outButton("Add") {
-            steps += Chain.Step(keys[pick.selectedItemPosition], 0)
+        // Dragged by the grip into place (OrderList), not moved a place at a
+        // time by ▲ and ▼ with the sheet built again after every tap: the
+        // player's ask of 2026-10-01. Saved the moment a row is let go; the
+        // director reads the order before every step it chooses.
+        val numbers = ArrayList<TextView>()
+        lateinit var list: OrderList
+        list = OrderList(this) { from, to ->
+            steps.add(to, steps.removeAt(from))
             store.putSteps("chain_steps", steps)
-            again()
-        })
-        parent.addView(addRow)
+            numbers.add(to, numbers.removeAt(from))
+            numbers.forEachIndexed { i, n -> n.text = "${i + 1}" }
+        }
+        steps.forEachIndexed { i, (key, _) ->
+            val row = ui.row().apply {
+                // Its own ground, so that the row lifted over the others hides them.
+                background = ui.round(ui.p.SURFACE)
+                setPadding(0, ui.dp(2), 0, ui.dp(2))
+            }
+            val grip = FrameLayout(this).apply {
+                addView(ui.icon(R.drawable.ic_drag, 20, ui.p.TEXT_2).apply {
+                    layoutParams = FrameLayout.LayoutParams(ui.dp(20), ui.dp(20), Gravity.CENTER)
+                })
+                contentDescription = "Drag to move"
+                layoutParams = LinearLayout.LayoutParams(ui.dp(Ui.TOUCH), ui.dp(Ui.TOUCH))
+            }
+            row.addView(grip)
+            val n = ui.sub("${i + 1}").apply {
+                layoutParams = LinearLayout.LayoutParams(ui.dp(22), ViewGroup.LayoutParams.WRAP_CONTENT)
+            }
+            numbers += n
+            row.addView(n)
+            row.addView(ui.grow(ui.body(SkillSettings.CHAIN_NAMES[key] ?: key)))
+            // Skipped while its task is switched off (PLAN_BEFUNDE_1_3.md N3 b).
+            if (Skills.stepOff(key, store, Supporter.unlocked)) row.addView(ui.sub("off").apply {
+                setTextColor(ui.p.PAUSE)
+            })
+            row.addView(FrameLayout(this).apply {
+                addView(ui.icon(R.drawable.ic_delete, 18, ui.p.TEXT_2).apply {
+                    layoutParams = FrameLayout.LayoutParams(ui.dp(18), ui.dp(18), Gravity.CENTER)
+                })
+                contentDescription = "Remove"
+                layoutParams = LinearLayout.LayoutParams(ui.dp(Ui.TOUCH), ui.dp(Ui.TOUCH))
+                // Where the row stands now: a drag may have moved it.
+                setOnClickListener {
+                    steps.removeAt(list.indexOfChild(row))
+                    store.putSteps("chain_steps", steps)
+                    again()
+                }
+            })
+            list.addRow(row, grip)
+        }
+        parent.addView(list)
+        if (steps.size > 1) parent.addView(ui.hint("Hold a step by its dots and drag it into place."),
+                                           marginTop(2))
+        // A step is added by a button of its own, two to a row, rather than
+        // picked from a platform Spinner and confirmed with Add: the Spinner
+        // was the one control on the page the design did not draw itself,
+        // and it looked it (2026-09-28). The buttons carry the rows' names,
+        // which are the list's; the steps above keep the chain's own longer
+        // ones. No minutes field any more: Tower & Ruins was the one step
+        // that had them (SkillSettings.CHAIN_TIMED), and it left the
+        // interface on 2026-09-22.
+        val keys = SkillSettings.CHAIN_WAITING + SkillSettings.CHAINABLE
+        parent.addView(ui.eyebrow("Add a step"), marginTop(14))
+        buttonGrid(parent, keys.map { key ->
+            ui.outButton(Skills.stepName(key)) {
+                steps += Chain.Step(key, 0)
+                store.putSteps("chain_steps", steps)
+                again()
+            }
+        }, columns = 2)
+        parent.addView(ui.hint("A step runs until it is done."), marginTop(8))
     }
 
     // --- Log -------------------------------------------------------------------
@@ -997,6 +1536,23 @@ class MainActivity : Activity() {
         head.addView(ui.outButton(if (logHeld) "Follow" else "Hold") {
             logHeld = !logHeld
             render()
+        }.apply { layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            .apply { leftMargin = ui.dp(8) } })
+        // The way a bug reaches us since 1.3's fourth candidate: the log as a
+        // ZIP, handed to the share sheet (LogShare). Built off the main
+        // thread -- logcat alone can take a second.
+        head.addView(ui.outButton("Share") {
+            thread(name = "log-share") {
+                val zip = runCatching { LogShare.build(this) }
+                main.post {
+                    if (isFinishing || isDestroyed) return@post
+                    zip.onSuccess { LogShare.share(this, it) }.onFailure {
+                        HelperLog.line("log share: failed, ${it::class.java.simpleName}: ${it.message}")
+                        Toast.makeText(this, "The log could not be packed.", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
         }.apply { layoutParams = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
             .apply { leftMargin = ui.dp(8) } })
@@ -1037,8 +1593,38 @@ class MainActivity : Activity() {
             })
             addView(ui.grow(ui.body("Thank you for supporting DigiAutotap.")))
         })
+        // The code itself stays, small (the player's one change to design A,
+        // 2026-10-02; question 14): covered but for its first group, because
+        // a picture of this page goes into Discord and a code works on two
+        // devices, and a tap shows it whole. A phone that redeemed before
+        // 1.3 kept only the token, and says so.
+        val code = Supporter.code
+        sup.addView(if (code != null) codeLine(code)
+                    else ui.mono("your code  redeemed before this version -- the code itself is " +
+                                 "not kept on this phone", 11f, ui.p.TEXT_2), marginTop(8))
         sup.addView(ui.hint("This phone is device ${Supporter.token?.slot ?: 1} of 2. " +
-            "New phone? Ask on Discord to free one up."), marginTop(8))
+            "New phone? Ask on Discord to free one up."), marginTop(4))
+    }
+
+    /** "your code  ABCD-····-····  show": the redeemed code, covered until tapped ([Unlock.masked]). */
+    private fun codeLine(code: String): View {
+        var shown = false
+        val value = ui.mono(Unlock.masked(code), 11f, ui.p.TEXT)
+        val toggle = ui.mono("show", 11f, ui.p.PRIMARY, bold = true)
+        return ui.row().apply {
+            minimumHeight = ui.dp(Ui.TOUCH)
+            addView(ui.mono("your code", 11f, ui.p.TEXT_2).apply { setPadding(0, 0, ui.dp(10), 0) })
+            addView(value)
+            addView(toggle, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+                                                     ViewGroup.LayoutParams.WRAP_CONTENT)
+                .apply { leftMargin = ui.dp(12) })
+            isClickable = true
+            setOnClickListener {
+                shown = !shown
+                value.text = if (shown) Unlock.pretty(code) else Unlock.masked(code)
+                toggle.text = if (shown) "hide" else "show"
+            }
+        }
     }
 
     /** The supporter card of a phone with no code that holds yet: what it has, and the field. */
@@ -1051,8 +1637,9 @@ class MainActivity : Activity() {
         sup.addView(ui.body(when (Supporter.have) {
             // BOUND is thanked in its own card and never reaches this one.
             Supporter.Have.CHECKING, Supporter.Have.BOUND -> "Checking..."
-            Supporter.Have.NONE -> "No code on this phone. Dungeons, Meat Field, Gekkomon Run " +
-                "and collecting the bond token for all of the Digimon are locked."
+            // What a code opens is said by the task list itself, on each
+            // locked row; the card's two lists went in 1.3's fourth candidate.
+            Supporter.Have.NONE -> "No code on this phone."
             Supporter.Have.OLD_CODE ->
                 "Your code was redeemed with an older version of DigiAutotap. Enter it " +
                 "once more to keep it working on this phone."
@@ -1111,9 +1698,11 @@ class MainActivity : Activity() {
         sup.addView(field)
         sup.addView(answer, marginTop(10))
         // What redeeming sends is in the README under "What leaves the phone".
-        val kofi = "Ko-fi"
-        val hint = "Support DigiAutotap with a donation on $kofi and we'll email you a " +
-            "supporter code. One code works on two devices."
+        // The code is a shop item on Ko-fi since 2026-10-02, pay what you want
+        // from 3 euros; a donation still mails one, but the shop is what we name.
+        val kofi = "Ko-fi shop"
+        val hint = "Get a supporter code in the DigiAutotap $kofi -- pay what you want, " +
+            "from 3 €. It comes by email and works on two devices."
         val linked = android.text.SpannableString(hint).apply {
             val at = hint.indexOf(kofi)
             setSpan(android.text.style.URLSpan(Unlock.KOFI_URL), at, at + kofi.length,
@@ -1135,7 +1724,7 @@ class MainActivity : Activity() {
         // decision 3: on from the factory, switchable off here).
         val over = card(col, "Overlay")
         over.addView(ui.switchRow("Show the dot over the game",
-                                  "Tap it to pause and resume, hold it to open DigiAutotap.",
+                                  "Tap it to stop and start, hold it to open DigiAutotap.",
                                   store.bool(Overlay.KEY_ON, true)) { v ->
             store.put(Overlay.KEY_ON, v)
             if (!v) Overlay.hide()
@@ -1163,6 +1752,13 @@ class MainActivity : Activity() {
                                                     ViewGroup.LayoutParams.WRAP_CONTENT).apply {
             topMargin = ui.dp(10)
         })
+        // The log is a row of the list since 1.3's fourth candidate, the
+        // first one (PLAN_REPORT_RAUS.md 2.2): it stood as a tile beside
+        // "Report a problem" at the foot of the page from 2026-09-23, and
+        // with the report gone a tile of its own said more than a row.
+        list.addView(moreRow("Log", "What DigiAutotap did, line by line.",
+                             R.drawable.ic_chevron) { page = "log"; render() })
+        list.addView(ui.hairline())
         list.addView(moreRow("About", "Legal notice, requirements, privacy",
                              R.drawable.ic_chevron) { page = "about"; render() })
         list.addView(ui.hairline())
@@ -1180,7 +1776,7 @@ class MainActivity : Activity() {
         version.addView(ui.mono(version(), 11f, ui.p.TEXT_2))
         list.addView(version)
 
-        // Which app is the game (NOTES.md, of that name): a thin line in the
+        // Which app is the game (notes/director.md, of that name): a thin line in the
         // Version row's shape, in a box of its own because the Version row
         // is not tappable and this one is. The app's name on the right, the
         // package only in the sheet; "not found" in WARN, because then no
@@ -1196,26 +1792,6 @@ class MainActivity : Activity() {
             (layoutParams as LinearLayout.LayoutParams).leftMargin = ui.dp(8)
         })
         gameBox.addView(ui.tappable(gameRow) { gameSheet() })
-
-        // The log and the debug package, as a pair of tiles at the foot
-        // (2026-09-23, design B3): the package *is* the log plus the last
-        // frames, so the two stand side by side. The log was a button in the
-        // app bar and the package a text link on the page until that day.
-        val pair = ui.row()
-        col.addView(pair, marginTop(10))
-        fun half(v: View, first: Boolean) = pair.addView(v, LinearLayout.LayoutParams(
-            0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply { if (!first) leftMargin = ui.dp(8) })
-        half(ui.squareTile(R.drawable.ic_tab_log, ui.p.STATE_FG, ui.p.STATE_BG, ui.p.STATE_EDGE,
-                           "Log", "What DigiAutotap did, line by line.") {
-            page = "log"; render()
-        }, first = true)
-        half(ui.squareTile(R.drawable.ic_share, ui.p.STATE_FG, ui.p.STATE_BG, ui.p.STATE_EDGE,
-                           "Debug package", "Share the log if something goes wrong.") {
-            thread {
-                runCatching { DebugPackage.share(this) }
-                    .onFailure { HelperLog.line("debug package failed: $it") }
-            }
-        }, first = false)
     }
 
     /** An installed app's name as the launcher shows it, or its package when it has none. */
@@ -1309,9 +1885,6 @@ class MainActivity : Activity() {
         about(col, "What it needs",
               "Android 11 or later, with the game in portrait. Tablets and foldables are not " +
                   "supported.")
-        about(col, "What it cannot do",
-              "The Midsummer skewer stand: it moves faster than a phone can take pictures " +
-                  "of the screen.")
         about(col, "Phone makers",
               "Samsung, Xiaomi, Huawei and others close background apps by their own rules. " +
                   "Turn off battery optimisation for DigiAutotap (the set-up line at the bottom " +
@@ -1319,13 +1892,17 @@ class MainActivity : Activity() {
                   "or \"background activity\" setting and allow DigiAutotap there. When the " +
                   "notification disappears, DigiAutotap has been stopped.")
         about(col, "Privacy",
-              "Everything DigiAutotap sees on the screen stays on the phone. It goes online " +
-                  "for three things: when it is opened, it asks GitHub whether a newer version is " +
-                  "out, and that request carries nothing about you or the phone; once a day it " +
-                  "tells our server the app version, with nothing that identifies you or the " +
-                  "phone; and once, to redeem a supporter code. The debug package is sent only " +
-                  "where you share it. The source code is public on GitHub, so you can check " +
-                  "for yourself exactly what the app sends and when.")
+              "What DigiAutotap sees on the screen stays on the phone: it keeps no pictures " +
+                  "of the game and sends none. It goes online for three things: when it is " +
+                  "opened, it asks GitHub whether a newer version is out, and that request " +
+                  "carries nothing about you or the phone; once a day it tells our server the " +
+                  "app version, and once a month what kind of phone it is (make and model, " +
+                  "Android version, screen size, camera cutout and the screenshot colour " +
+                  "format), with nothing that identifies you or your phone in particular; and " +
+                  "once, to redeem a supporter code. Share on the Log page makes a ZIP of the " +
+                  "log, the settings and the phone model and hands it to the app you pick -- " +
+                  "nothing is sent by itself. The source code is public on GitHub, so you can " +
+                  "check for yourself exactly what the app sends and when.")
         about(col, "Type",
               "The names are set in Chakra Petch, copyright 2018 The Chakra Petch Project " +
                   "Authors, under the SIL Open Font License 1.1; the licence travels inside " +
@@ -1523,7 +2100,7 @@ class MainActivity : Activity() {
     companion object {
         const val ONBOARDING_SEEN = "onboarding_seen"
         /** A permanent invite: bugs, help, feedback, supporter devices. */
-        const val DISCORD_INVITE = "https://discord.gg/WBrnSpwrR"
+        const val DISCORD_INVITE = "https://discord.gg/mJFXtPuXng"
 
         /** The one version the player ticked "Don't remind me" for; a newer one is said again. */
         const val UPDATE_MUTED = "update_muted"
@@ -1581,6 +2158,15 @@ object Supporter {
 
     /** The token behind [Have.BOUND] -- the page shows which of the two devices this is. */
     @Volatile var token: Unlock.Token? = null
+        private set
+
+    /**
+     * The code behind [Have.BOUND], normalised, where this phone keeps it
+     * (Unlock.CODE_FILE, since 2026-10-02) -- null on a phone that redeemed
+     * before, which kept the token alone. For the Settings card and nothing
+     * else: never logged, never in a shared log.
+     */
+    @Volatile var code: String? = null
         private set
 
     /** Unchanged in meaning for every caller that had it: null while it is not known yet. */
@@ -1649,8 +2235,20 @@ object Supporter {
         // hold, the file is the word (PLAN_SUPPORTER_SERVER.md 2.2).
         if (!Unlock.holds(read, installId(c))) return Have.BROKEN
         token = read
+        code = savedCode(c)
         return Have.BOUND
     }
+
+    /**
+     * The code file, read and not hashed again: its digest against the
+     * token's would be a second of PBKDF2 on every start, and [unlocked]
+     * waits for this function. It is written with the token it belongs to
+     * and removed where it could not be ([keep]), so it is never another
+     * code's.
+     */
+    private fun savedCode(c: android.content.Context): String? =
+        runCatching { Paths.supporterCodeFile(c).readText() }.getOrNull()
+            ?.let { Unlock.normalise(it) }?.takeIf { it.length == Unlock.LENGTH }
 
     /**
      * Hash, bind, believe, write, read back -- and only then say yes. On a
@@ -1661,9 +2259,9 @@ object Supporter {
      * installation's id, and that the digest is the one just hashed -- a
      * token for some other code would otherwise unlock this one.
      *
-     * The log gets the pretty code and one word, and never the digest or the
-     * token: digiautotap.log goes into the debug package, and players share
-     * that in Discord.
+     * The log gets the code covered but for its first group and one word, and
+     * never the digest or the token: digiautotap.log goes into the ZIP that
+     * Share on the Log page makes, and players share it in Discord.
      */
     fun redeem(c: android.content.Context, code: String): Redeemed {
         val plain = Unlock.normalise(code)
@@ -1674,24 +2272,111 @@ object Supporter {
             is Activation.Result.InUse -> say(plain, Redeemed.IN_USE)
             is Activation.Result.Busy -> say(plain, Redeemed.BUSY, answer.why)
             is Activation.Result.Unreachable -> say(plain, Redeemed.NO_SERVER, answer.why)
-            is Activation.Result.Bound -> say(plain, keep(c, answer.token, digest, install))
+            is Activation.Result.Bound -> say(plain, keep(c, answer.token, digest, install, plain))
         }
     }
 
     private fun keep(c: android.content.Context, token: String,
-                     digest: String, install: String): Redeemed {
+                     digest: String, install: String, plain: String): Redeemed {
         val read = Unlock.parseToken(token) ?: return Redeemed.REFUSED
         if (!Unlock.holds(read, install) || read.digest != digest) return Redeemed.REFUSED
         runCatching { Paths.supporterFile(c).writeText(token + "\n") }.getOrElse { return Redeemed.NOT_KEPT }
         if (savedText(c) != token) return Redeemed.NOT_KEPT
+        // The code itself, beside the token, for the Settings card (question
+        // 14 of PLAN_ABSCHLUSS_1_3.md): the unlock does not hang on it, so a
+        // file that cannot be written costs the card its line and no more --
+        // and goes, so that an older code's file is not shown as this one.
+        val file = Paths.supporterCodeFile(c)
+        val kept = runCatching { file.writeText(plain + "\n") }.isSuccess && savedCode(c) == plain
+        if (!kept) runCatching { file.delete() }
         Supporter.token = read
+        code = if (kept) plain else null
         have = Have.BOUND
         return Redeemed.BOUND
     }
 
+    /**
+     * The log gets the code covered but for its first group ([Unlock.masked])
+     * since 2026-10-02 -- it was the whole code until then, and the log goes
+     * into every shared ZIP -- and one word; never the digest or the token.
+     */
     private fun say(plain: String, said: Redeemed, why: String? = null): Redeemed {
-        HelperLog.line("supporter code ${Unlock.pretty(plain)}: ${said.sentence}" +
+        HelperLog.line("supporter code ${Unlock.masked(plain)}: ${said.sentence}" +
                        if (why == null) "" else " ($why)")
         return said
+    }
+}
+
+/**
+ * The scroll a bottom sheet stands in. It is never taller than its window
+ * less [gap] of it, so a tap above the sheet always lands outside and closes
+ * it; and a drag down that begins with the sheet scrolled to its top pulls
+ * the whole sheet down, and lets it go ([onGone]) past a third of its height
+ * or on a quick flick, or springs back. The drag is taken in
+ * [dispatchTouchEvent], before a switch, a field or the scroll itself, so it
+ * is the same pull wherever the finger came down; whoever held the gesture
+ * until then is sent a cancel.
+ */
+private class SheetScroll(
+    ctx: Context,
+    private val gap: (Int) -> Int,
+    private val onGone: () -> Unit,
+) : ScrollView(ctx) {
+    private val slop = ViewConfiguration.get(ctx).scaledTouchSlop
+    private val flick = 600 * ctx.resources.displayMetrics.density  // px/s
+    private var downX = 0f
+    private var downY = 0f
+    private var fromY = Float.NaN  // raw y where the pull began; NaN while there is none
+    private var speed: VelocityTracker? = null
+    /** A child asked for this gesture for itself (the order's grip, [OrderList]): no pull. */
+    private var held = false
+
+    override fun requestDisallowInterceptTouchEvent(disallow: Boolean) {
+        if (disallow) held = true
+        super.requestDisallowInterceptTouchEvent(disallow)
+    }
+
+    override fun onMeasure(widthSpec: Int, heightSpec: Int) {
+        val h = MeasureSpec.getSize(heightSpec)
+        super.onMeasure(widthSpec,
+            if (MeasureSpec.getMode(heightSpec) == MeasureSpec.UNSPECIFIED) heightSpec
+            else MeasureSpec.makeMeasureSpec(maxOf(0, h - gap(h)), MeasureSpec.AT_MOST))
+    }
+
+    override fun dispatchTouchEvent(e: MotionEvent): Boolean {
+        if (e.actionMasked == MotionEvent.ACTION_DOWN) {
+            downX = e.rawX; downY = e.rawY; fromY = Float.NaN; held = false
+            animate().cancel()
+            speed?.recycle(); speed = VelocityTracker.obtain()
+        }
+        // In screen pixels: the sheet moves under the finger while it is pulled.
+        MotionEvent.obtain(e).also { it.setLocation(e.rawX, e.rawY); speed?.addMovement(it); it.recycle() }
+        val end = e.actionMasked == MotionEvent.ACTION_UP || e.actionMasked == MotionEvent.ACTION_CANCEL
+        if (fromY.isNaN() && !held && e.actionMasked == MotionEvent.ACTION_MOVE && scrollY == 0) {
+            val dy = e.rawY - downY
+            if (dy > slop && dy > Math.abs(e.rawX - downX)) {
+                fromY = e.rawY
+                MotionEvent.obtain(e).also {
+                    it.action = MotionEvent.ACTION_CANCEL
+                    super.dispatchTouchEvent(it)
+                    it.recycle()
+                }
+            }
+        }
+        if (fromY.isNaN()) {
+            if (end) { speed?.recycle(); speed = null }
+            return super.dispatchTouchEvent(e)
+        }
+        if (e.actionMasked == MotionEvent.ACTION_MOVE) translationY = maxOf(0f, e.rawY - fromY)
+        if (end) {
+            val v = speed?.run { computeCurrentVelocity(1000); yVelocity } ?: 0f
+            speed?.recycle(); speed = null
+            val gone = e.actionMasked == MotionEvent.ACTION_UP &&
+                (translationY > height / 3f || (v > flick && translationY > slop))
+            if (gone) animate().translationY(height.toFloat()).setDuration(160).withEndAction { onGone() }
+            else animate().translationY(0f).setDuration(160)
+            fromY = Float.NaN
+        }
+        return true
     }
 }

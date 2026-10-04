@@ -24,22 +24,36 @@ const val PLAY_GLYPH = "►"
  */
 enum class HelperState(val word: String, val action: String, val glyph: String) {
     /** The loop is reading and there is nothing on the screen for it. */
-    IDLE("Idle", "Pause", PAUSE_GLYPH),
+    IDLE("Idle", "Stop", PAUSE_GLYPH),
 
     /** The three-second clock is running: the player has just touched the game. */
-    WAITING("Waiting for you", "Pause", PAUSE_GLYPH),
+    WAITING("Waiting for you", "Stop", PAUSE_GLYPH),
 
     /** The loop is reading and `recognise` knows the screen. */
-    RUNNING("Running", "Pause", PAUSE_GLYPH),
+    RUNNING("Running", "Stop", PAUSE_GLYPH),
 
-    /** The main switch is off. */
-    PAUSED("Paused", "Resume", PLAY_GLYPH),
+    /**
+     * The main switch is off. A Pause that went on where it stood until
+     * 2026-10-02; since then the dot's tap stops the task and the chain and
+     * the next one starts afresh (PLAN_BEFUNDE_1_3.md N5 b), so the word is
+     * the one the tap says. The enum keeps its name: it is still the
+     * switch, and the whole of core asks it by that name.
+     */
+    PAUSED("Stopped", "Start", PLAY_GLYPH),
 
-    /** Something is in the way that DigiAutotap did not put there. */
-    PARKED("Parked", "Try again", "↻"),
+    /**
+     * Something is in the way that DigiAutotap did not put there. The tap
+     * was "Try again" until 2026-10-02; it stops now, as in every other
+     * running state, and the start after it is the fresh look.
+     */
+    PARKED("Parked", "Stop", "↻"),
 
-    /** The service was stopped, from the app or the notification: no loop, no notification. */
-    STOPPED("Stopped", "Start", PLAY_GLYPH);
+    /**
+     * The service was turned off, from the app or the notification: no
+     * loop, no notification, no dot. "Stopped" until 2026-10-02, when that
+     * word went to the dot's tap.
+     */
+    STOPPED("Off", "Start", PLAY_GLYPH);
 }
 
 /**
@@ -111,7 +125,7 @@ object Shell {
         val (screen, note) = seen()
         return when (state) {
             HelperState.STOPPED -> "The service is off."
-            HelperState.PAUSED -> "Paused. Nothing happens until you resume."
+            HelperState.PAUSED -> "Stopped. The next Start begins afresh."
             HelperState.PARKED -> parked() ?: "Something unexpected is on the screen."
             HelperState.WAITING -> {
                 val left = (takeOverAt - clock() + 999) / 1000

@@ -33,11 +33,22 @@ object Runner {
     // Measured on 2026-09-19 from the device taps that worked, converted with
     // game_rect_wh(1080, 1920). The three on the way in -- the Events icon,
     // the Gekkomon Run card, Play Game -- are readers since 2026-09-24
-    // ([eventsIcon], [eventCard], [eventPage]); these are what is left.
+    // ([eventsIcon], the card since 2026-09-30 Events.cards, [eventPage]);
+    // these are what is left.
     val MISSIONS = Explore.Target(0.284, 0.786)
     val PAUSE = Explore.Target(0.781, 0.105)
-    val QUIT_RESULT = Explore.Target(0.475, 0.611)
-    val QUIT_PAUSE = Explore.Target(0.343, 0.610)
+    /**
+     * Where the run's dialogs stand on a display taller than the canvas
+     * ceiling (Dungeon.Anchor, PLAN_FORMATE.md V4): in the middle. Measured
+     * 2026-09-27 over the V3 rows of the corpus against the 1920 twin:
+     * [resultDialog] answered at the middle on all five result windows and at
+     * the bottom only with 40 and 80 rows of headroom, null with 180 to 278.
+     * The pause menu sits on the same blue box and was not in the tour; it
+     * is taken to stand where the result window does.
+     */
+    val DIALOG = Dungeon.Anchor.MIDDLE
+    val QUIT_RESULT = Explore.Target(0.475, 0.611, DIALOG)
+    val QUIT_PAUSE = Explore.Target(0.343, 0.610, DIALOG)
     val JUMP = Explore.Target(0.260, 0.897)
     val SLIDE = Explore.Target(0.692, 0.897)
     val DAILY_TAB = Explore.Target(0.354, 0.822)
@@ -62,8 +73,9 @@ object Runner {
      * back in whole-window fractions.
      */
     internal fun blobs(img: Mat, colour: Dungeon.Hsv, band: DoubleArray? = null,
-                       minShare: Double = 0.0002): List<Blob> {
-        val (x0, y0, gw, gh) = Dungeon.gameRect(img)
+                       minShare: Double = 0.0002,
+                       anchor: Dungeon.Anchor = Dungeon.Anchor.BOTTOM): List<Blob> {
+        val (x0, y0, gw, gh) = Dungeon.gameRect(img, anchor)
         val top = if (band == null) 0 else maxOf(0, Py.int(y0 + band[0] * gh))
         val bottom = if (band == null) img.rows() else minOf(img.rows(), Py.int(y0 + band[1] * gh))
         val sub = Py.crop(img, top, bottom, 0, img.cols()) ?: return emptyList()
@@ -115,7 +127,7 @@ object Runner {
     // constants until 2026-09-24, "measured from the device taps that
     // worked" on a 9:16 frame, and the HUD is not the canvas: on the long
     // display it stands elsewhere in window space, as the Bond bubble did
-    // (NOTES.md, "The token is not only ever drawn in the middle"). The
+    // (notes/bond.md, "The token is not only ever drawn in the middle"). The
     // Events tile's own star, read on the frames of both shapes:
     //
     //                                   fx0 - fx1         fy0 - fy1
@@ -215,15 +227,13 @@ object Runner {
         return null
     }
 
-    // The card stands at a fixed place in the box: the tap that worked,
-    // 0.476/0.332, is the box's own middle across and 0.087 under its top
-    // edge on the frame the box was measured on (0.245). Hung off the top
-    // edge rather than the height, because the card is one card high
-    // however far the box reaches down.
-    const val EVENT_CARD_BELOW = 0.087
-
-    /** Where to tap the Gekkomon Run card in the Events window [box]. */
-    fun eventCard(box: Blob): Explore.Target = Explore.Target(box.cx, box.fy0 + EVENT_CARD_BELOW)
+    // The card was a fixed place in the box until 2026-09-30, `eventCard`,
+    // 0.087 under the box's top edge, and tapped blind: the Events window
+    // holds another minigame's card on the days Gekkomon Run is not in it
+    // (notes/runner.md, "The Events window has held another minigame's
+    // card, and a card tapped blind is that minigame's"). The cards are read
+    // by Events.cards now, and the place went with the last caller
+    // (PLAN_SKEWER.md SK2).
 
     // "Play Game" is pink text on a translucent band; the three rows below it
     // are the same pink. Together with the white X plate at the bottom right
@@ -255,15 +265,15 @@ object Runner {
     val CONTINUE_CYAN = Dungeon.Hsv(intArrayOf(95, 200, 150), intArrayOf(108, 255, 255))
     val BUTTON_ROW = doubleArrayOf(0.585, 0.640)
 
-    private fun quitButton(img: Mat): Blob? {
-        for (b in blobs(img, QUIT_PINK, band = BUTTON_ROW, minShare = 0.004)) {
+    private fun quitButton(img: Mat, anchor: Dungeon.Anchor): Blob? {
+        for (b in blobs(img, QUIT_PINK, band = BUTTON_ROW, minShare = 0.004, anchor = anchor)) {
             if (b.width in 0.16..0.24 && b.fill >= 0.75) return b
         }
         return null
     }
 
-    private fun continueButton(img: Mat): Blob? {
-        for (b in blobs(img, CONTINUE_CYAN, band = BUTTON_ROW, minShare = 0.004)) {
+    private fun continueButton(img: Mat, anchor: Dungeon.Anchor): Blob? {
+        for (b in blobs(img, CONTINUE_CYAN, band = BUTTON_ROW, minShare = 0.004, anchor = anchor)) {
             if (b.width in 0.16..0.24 && b.fill >= 0.70) return b
         }
         return null
@@ -315,8 +325,9 @@ object Runner {
     const val PLATE_H = 0.03
     const val PLATE_V_MAX = 105
 
-    internal fun darkPlate(img: Mat, quitFy0: Double): Boolean {
-        val (x0, y0, gw, gh) = Dungeon.gameRect(img)
+    internal fun darkPlate(img: Mat, quitFy0: Double,
+                           anchor: Dungeon.Anchor = Dungeon.Anchor.BOTTOM): Boolean {
+        val (x0, y0, gw, gh) = Dungeon.gameRect(img, anchor)
         val fx0 = PLATE_BAND[0]; val fx1 = PLATE_BAND[1]
         val fy0 = quitFy0 - PLATE_ABOVE_QUIT; val fy1 = fy0 + PLATE_H
         val sub = Py.crop(img, Py.int(y0 + fy0 * gh), Py.int(y0 + fy1 * gh),
@@ -328,18 +339,18 @@ object Runner {
     }
 
     /** 'Current Record' after a death, or null. Its Quit is centred and stands alone. */
-    fun resultDialog(img: Mat): Explore.Target? {
-        val q = quitButton(img)
+    fun resultDialog(img: Mat, anchor: Dungeon.Anchor = DIALOG): Explore.Target? {
+        val q = quitButton(img, anchor)
         if (q == null || q.cx !in 0.42..0.53) return null
-        if (continueButton(img) != null || !darkPlate(img, q.fy0)) return null
+        if (continueButton(img, anchor) != null || !darkPlate(img, q.fy0, anchor)) return null
         return QUIT_RESULT
     }
 
     /** The pause menu, or null: Quit on the left, Continue on the right. */
-    fun pauseDialog(img: Mat): Explore.Target? {
-        val q = quitButton(img)
+    fun pauseDialog(img: Mat, anchor: Dungeon.Anchor = DIALOG): Explore.Target? {
+        val q = quitButton(img, anchor)
         if (q == null || q.cx !in 0.29..0.40) return null
-        if (continueButton(img) == null || !darkPlate(img, q.fy0)) return null
+        if (continueButton(img, anchor) == null || !darkPlate(img, q.fy0, anchor)) return null
         return QUIT_PAUSE
     }
 
@@ -414,12 +425,21 @@ object Runner {
     val REWARD_V = doubleArrayOf(130.0, 165.0)
     val CLOSE_LINE = doubleArrayOf(0.39, 0.56, 0.808, 0.832)
     const val CLOSE_WHITE_MIN = 0.04
+    const val REWARD_W_MIN = 0.90
+    const val REWARD_W_SLACK = 0.02
 
     /** The 'Reward -- Tap to close' sheet a Claim raises, or null. */
     fun rewardOverlay(img: Mat): Explore.Target? {
         val (x0, y0, gw, gh) = Dungeon.gameRect(img)
+        // The sheet runs across the whole picture, and on a long display the
+        // picture is narrower than the rectangle (the cover cuts the sides):
+        // on the Pixel Fold's outer 1080 x 2092 the band is 0.864 of it, on
+        // 1080 x 2340 it would be 0.77, and 0.90 refused it on every phone
+        // longer than 9:16 (PLAN_FORMATE.md 9). So "full width" is what the
+        // picture holds, less 0.02, where that is under 0.90.
+        val full = minOf(REWARD_W_MIN, img.cols() / gw.toDouble() - REWARD_W_SLACK)
         for (b in blobs(img, REWARD_BLUE, minShare = 0.18)) {
-            if (!(b.width >= 0.90 && b.fy0 in 0.20..0.26 && b.fy1 >= 0.66)) continue
+            if (!(b.width >= full && b.fy0 in 0.20..0.26 && b.fy1 >= 0.66)) continue
             val box = Py.crop(img, Py.int(y0 + b.fy0 * gh), Py.int(y0 + b.fy1 * gh),
                               Py.int(x0 + b.fx0 * gw), Py.int(x0 + b.fx1 * gw)) ?: continue
             val hsv = Cv.hsv(box)
@@ -632,7 +652,7 @@ object Runner {
     const val ORB_CLEARANCE = 0.9
     // The PC saw an obstacle at 50 frames a second and had six sightings
     // within a tenth of a second. The phone sees one every 0.35 s at best
-    // (NOTES.md, "takeScreenshot has a floor"), and the same obstacle at
+    // (notes/director.md, "takeScreenshot has a floor"), and the same obstacle at
     // one width a second crosses the lane in 0.6 s: two sightings, one of
     // them often still entering at the edge. So a track with one clean
     // sighting is not thrown away here; it is timed with the last speed

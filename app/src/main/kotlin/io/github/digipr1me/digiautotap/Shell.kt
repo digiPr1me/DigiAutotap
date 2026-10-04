@@ -118,6 +118,15 @@ class Alt(val label: String, val go: (Activity) -> Unit)
 object Setup {
     const val REQ_NOTIFY = 1
 
+    /**
+     * The accessibility ask is answered by the bound service and by nothing
+     * else: `DigiAutotapService.instance` is what can see and tap, and the
+     * system setting is only a second opinion, for the sentence. Until
+     * 2026-10-02 the ask wanted both, so a bound service whose entry the
+     * setting spelled another way stood on the page as missing (PLAN_BEFUNDE_1_3.md
+     * N5 a; notes/director.md, "The bound service is the answer, and a start
+     * without it is refused out loud").
+     */
     fun asks(a: Activity): List<Ask> {
         val a11yOn = DigiAutotapService.enabledInSettings(a)
         val a11yRunning = DigiAutotapService.instance != null
@@ -135,8 +144,10 @@ object Setup {
                     "unavailable for your security, open App info, tap the three dots at " +
                     "the top right, choose \"Allow restricted settings\", then come back.",
                 "◎", "Open settings",
-                a11yOn && a11yRunning,
-                "The accessibility service is off, so DigiAutotap cannot see the game",
+                a11yRunning,
+                if (a11yOn) "The accessibility service is switched on but Android has not " +
+                    "started it -- switch it off and on again"
+                else "The accessibility service is off, so DigiAutotap cannot see the game",
                 Alt("Open app info") {
                     it.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
                                             Uri.parse("package:${it.packageName}")))
@@ -145,11 +156,11 @@ object Setup {
             },
             Ask("notif", "Notifications",
                 "Keep the switch in reach",
-                "A notification stays while DigiAutotap runs, with Pause, Stop and Open. " +
+                "A notification stays while DigiAutotap runs, with Stop, Turn off and Open. " +
                     "Without it there is no switch outside the app.",
                 "◈", "Allow notifications",
                 notifyOk,
-                "Without notifications there is no pause switch outside the app") {
+                "Without notifications there is no switch outside the app") {
                 it.requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQ_NOTIFY)
             },
             Ask("batt", "Battery optimisation",

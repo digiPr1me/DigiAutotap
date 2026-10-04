@@ -11,7 +11,7 @@ import java.net.URL
  * "Check for updates": one GET to GitHub's list of this project's releases,
  * which carries nothing about the phone -- no id, no settings, no code. What
  * comes back is read for its tags, `android-v<versionName>` as the release
- * recipe writes them (NOTES.md, "A release, by hand"), and the highest one
+ * recipe writes them (notes/publishing.md, "A release, by hand"), and the highest one
  * is compared with the version that is installed.
  *
  * The list and not `releases/latest`: the recipe publishes `--prerelease`

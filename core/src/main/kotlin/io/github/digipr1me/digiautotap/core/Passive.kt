@@ -13,11 +13,11 @@ import kotlin.math.abs
  * `holo_counter`. The skill's loop is not here; it comes with its own
  * session, under the director.
  *
- * Every constant keeps its Python name and value, and the sentence that says
- * where it came from. A number here is changed in passive.py first, with a
- * measurement, then the oracle is written again, then this file follows --
- * never the other way round (NOTES.md, "Two implementations, one
- * direction"). The frame is BGR, uint8, as `cv2.imread` gives it.
+ * Every constant came over with its Python name and value, and the sentence
+ * that says where it came from; a number is changed in this file, with a
+ * measurement and its sentence, and then `writeOracle` writes the oracle
+ * (NOTES.md, "One project"). The frame is BGR, uint8, as `cv2.imread`
+ * gives it.
  */
 object Passive {
 
@@ -577,6 +577,29 @@ object Passive {
     // between them, 0.017 over the widest window and 0.014 under the panel.
     // The height is no use, 0.039 to 0.046 against 0.052.
     const val PARTNER_W_MAX = 0.27
+    // **The daily dungeon's panel draws the pair narrower still, and lower.**
+    // Reset (violet) beside Attempt (blue), fw 0.252 to 0.2528 at fy 0.7934
+    // -- under the ceiling above and inside the Buddy window's row -- and
+    // the director called that panel `partner_window` on all seven format
+    // rows of 2026-09-29 and on the corpus's one daily panel of another day
+    // (corpus/quest/no-x-to-get-out-with_094514, "Attack Type", the one
+    // answer of this reader under 0.045 in the oracle). The height parts
+    // them where the width does not: every other answer of this reader over the corpus,
+    // 45 Partner and Buddy windows from 573 x 1056 to 2076 x 2152, is 0.0452
+    // to 0.0466 tall; the daily panel's pair 0.0394 to 0.0398. The floor is
+    // the middle, 0.0425, 6 % from either side (PLAN_DAILY_LOST_SECTOR_
+    // PRESETS.md G5).
+    const val PARTNER_H_MIN = 0.0425
+
+    /**
+     * Where the Partner window stands on a display taller than the canvas
+     * ceiling (Dungeon.Anchor, PLAN_FORMATE.md V4): in the middle. Measured
+     * 2026-09-27 over the V3 rows of the corpus against the 1920 twin: the
+     * menu at fy 0.7341 there, 0.7337 to 0.7342 at the middle on all five;
+     * at the bottom 0.7213 and 0.7218 with 40 and 80 rows of headroom and
+     * null with 180 to 278, where `classify` called the window a dialog.
+     */
+    val PARTNER = Dungeon.Anchor.MIDDLE
 
     // Whose window it is and how it is closed -- PARTNER_OWN, PARTNER_CLOSE,
     // PARTNER_TAPS -- belong to the skill's loop and come over with it.
@@ -596,15 +619,16 @@ object Passive {
      * screen that was not the Partner window at all, so the caller decides
      * by what the helper itself did, not by what this recognised.
      */
-    fun partnerMenu(img: Mat): Dungeon.Button? {
-        val violets = Dungeon.findButtons(img, Dungeon.VIOLET, minArea = 0.004, minY = 0.0)
+    fun partnerMenu(img: Mat, anchor: Dungeon.Anchor = PARTNER): Dungeon.Button? {
+        val violets = Dungeon.findButtons(img, Dungeon.VIOLET, minArea = 0.004, minY = 0.0, anchor = anchor)
             .filter { b ->
                 Dungeon.near(b.fx, PARTNER_VIOLET_X, PARTNER_TOL) &&
                     PARTNER_ROW[0] <= b.fy && b.fy <= PARTNER_ROW[1] &&
-                    b.fw <= PARTNER_W_MAX               // the dungeon panel's pair is wider
+                    b.fw <= PARTNER_W_MAX &&            // the dungeon panel's pair is wider
+                    b.fh >= PARTNER_H_MIN               // the daily dungeon's pair is flatter
             }
         if (violets.isEmpty()) return null
-        val blues = Dungeon.findButtons(img, Dungeon.BLUE, minArea = 0.004, minY = 0.0)
+        val blues = Dungeon.findButtons(img, Dungeon.BLUE, minArea = 0.004, minY = 0.0, anchor = anchor)
         for (violet in violets) {
             for (blue in blues) {
                 if (abs(blue.fy - violet.fy) > PARTNER_ROW_TOL) continue

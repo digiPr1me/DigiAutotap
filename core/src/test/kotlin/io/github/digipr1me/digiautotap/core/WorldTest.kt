@@ -115,6 +115,84 @@ class WorldTest {
         assertNull(w.at(2, 1), "collected items stay gone")
     }
 
+    // ---- the cell over the figure (PLAN_WORLD_SEARCH_FORMATE.md F16;
+    // notes/world-search.md, "The cell over the figure is not read as empty")
+    // Not in test_world.py.
+
+    /**
+     * A pyramid read two over the figure, then over it after a step up: a
+     * tall partner's head covers its lower half, and the empty readings
+     * there are no readings. Once the figure stands elsewhere, two misses
+     * forget it as anywhere.
+     */
+    @Test
+    fun `what was seen over the figure stays for as long as the figure stands under it`() {
+        val w = World()
+        val pyramid = grid(Triple(1, 1, "pyramid"))
+        w.observe(pyramid, fig(3, 1))
+        w.observe(pyramid, fig(3, 1))
+        assertEquals("pyramid", w.at(1, 1), "two sightings confirm")
+        w.applyStep("up")
+        assertEquals(1 to 1, w.overFigure())
+        repeat(4) { w.observe(empty(), null) }
+        assertEquals("pyramid", w.at(1, 1), "four covered looks forget nothing")
+        // The figure steps down again: now the cell is read clear of it.
+        w.applyStep("down")
+        w.observe(empty(), null)
+        assertEquals("pyramid", w.at(1, 1), "one miss is not enough")
+        w.observe(empty(), null)
+        assertNull(w.at(1, 1), "two misses away from the figure forget it")
+    }
+
+    @Test
+    fun `what shows over the head still counts, with two sightings running`() {
+        val w = World()
+        val chip = grid(Triple(1, 1, "ticket_orange"))
+        w.observe(chip, fig(2, 1))
+        w.observe(empty(), fig(2, 1))
+        w.observe(chip, fig(2, 1))
+        assertNull(w.at(1, 1), "a covered look between two sightings is no second sighting")
+        w.observe(chip, fig(2, 1))
+        assertEquals("ticket_orange", w.at(1, 1), "two running confirm, over the figure too")
+        assertTrue(!w.hidden(1, 1), "an object is not hidden")
+    }
+
+    /**
+     * Hidden is the cell over the figure that was never read clear of it: at
+     * the start of a pass, and not after a move, because the cell over the
+     * new place was in view beside or above it, or is where the figure came
+     * from. A cell cleared on the board -- a destroyed pyramid -- is seen.
+     */
+    @Test
+    fun `the cell over the figure is hidden until it has been seen clear of it`() {
+        val w = World()
+        w.observe(empty(), fig(2, 1))
+        w.observe(empty(), fig(2, 1))
+        assertTrue(w.hidden(1, 1), "the start: over the figure, never read clear")
+        for (c in 0 until Vision.COLS) for (r in 0 until Vision.ROWS) {
+            if (r == 1 && c == 1) continue
+            assertTrue(!w.hidden(c, r), "r${r + 1}c${c + 1} is not over the figure")
+        }
+        // A step down: the cell over the new place is where the figure stood,
+        // and was never read -- the figure's own cell is skipped.
+        w.applyStep("down")
+        w.observe(empty(), null)
+        assertEquals(1 to 2, w.overFigure())
+        assertTrue(!w.hidden(1, 2), "the figure stood on it")
+        // A step right out of the second column scrolls: the cell over the new
+        // place stood up and to the right, in view.
+        w.applyStep("right")
+        w.observe(empty(), null)
+        assertEquals(2 to 2, w.overFigure())
+        assertTrue(!w.hidden(2, 2), "read up and beside before the step")
+        // A pyramid destroyed over the figure is cleared, and seen.
+        val v = World()
+        v.observe(empty(), fig(4, 1))
+        assertTrue(v.hidden(1, 3))
+        v.forget(1, 3)
+        assertTrue(!v.hidden(1, 3), "cleared by a claw")
+    }
+
     /**
      * The names shown on the pages. They are meant to be edited, and the
      * keys beside them are template filenames that are not -- so this checks

@@ -140,14 +140,20 @@ class OracleFilesTest {
                               // the narrowest window frame there is, corpus/passive/bond-3.png
                               497 to 914,
                               // the long displays: LDPlayer at 1080 x 2340, a 20:9 and a 21:9 phone
-                              1080 to 2340, 1080 to 2400, 1080 to 2520)) {
+                              1080 to 2340, 1080 to 2400, 1080 to 2520,
+                              // PLAN_FORMATE.md 3b: Tab A7 Lite, Tab A8, Xiaomi Pad 7, OnePlus
+                              // Pad, Pixel 9 Pro Fold inside, Z Fold5 and Z Fold3 outside
+                              800 to 1340, 1200 to 1920, 2136 to 3200, 2000 to 2800,
+                              2076 to 2152, 904 to 2316, 832 to 2268,
+                              // a landscape display with the game upright in it (V19): 16:9, 20:9
+                              1920 to 1080, 2400 to 1080)) {
             assertTrue(OracleFamilies.isFrame(w, h), "$w x $h is a frame")
         }
-        for ((w, h) in listOf(210 to 42, 1920 to 1080, 303 to 269, 300 to 450,
+        for ((w, h) in listOf(210 to 42, 303 to 269, 300 to 450, 1920 to 1400,
                               // portrait but a crop: under the floor
                               399 to 720,
-                              // portrait and too square, or too tall
-                              1080 to 1700, 1080 to 2800)) {
+                              // landscape, if only just (a Fold's inner display on its side), or too tall
+                              2152 to 2076, 1080 to 3060)) {
             assertTrue(!OracleFamilies.isFrame(w, h), "$w x $h is not a frame")
         }
     }

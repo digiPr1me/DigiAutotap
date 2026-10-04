@@ -49,7 +49,7 @@ class RunnerSkillTest {
         val events = PaintRunner.eventsDialog()
         assertNotNull(Runner.eventsDialog(events), "the Events window")
         assertNull(Runner.eventPage(events), "not the event page: no X, no Play Game")
-        val card = Runner.eventCard(Runner.eventsDialog(events)!!)
+        val card = Events.card(events, Events.GEKKOMON_RUN)!!
         val c = PaintRunner.EVENT_CARD
         assertTrue(card.fx in c[0]..c[2] && card.fy in c[1]..c[3], "the card is tapped on the card: $card")
         assertNull(Runner.eventsIcon(events), "no Events icon under the window")
@@ -289,9 +289,15 @@ class RunnerSkillTest {
                 /** A window over the event page that eats Play Game. */
                 var playGameDead: Boolean = false,
                 /** The main screen has its Events tile. */
-                var eventsIcon: Boolean = true) : Capture {
+                var eventsIcon: Boolean = true,
+                /** The one card in the Events window (Events.GEKKOMON_RUN, CHEFS_SPECIAL, UNKNOWN). */
+                var eventCard: String = Events.GEKKOMON_RUN,
+                /** A second card under it (PaintRunner.EVENT_CARD_2), or none. */
+                var cardBelow: String? = null) : Capture {
         var t = 100.0
         var screen = "page"
+        /** The next looks at the main screen that find the hologram device lit ([Paint.holoLight]). */
+        var lit = 0
         var runStart = 0.0
         /** When the run died, or null while it goes on. */
         var deadAt: Double? = null
@@ -327,8 +333,12 @@ class RunnerSkillTest {
         }
 
         private fun paint(at: Double): Mat = when (screen) {
-            "main" -> PaintRunner.mainScreen(eventsIcon)
-            "events" -> PaintRunner.eventsDialog()
+            "main" -> if (lit == 0) PaintRunner.mainScreen(eventsIcon) else {
+                lit -= 1
+                val main = PaintRunner.mainScreen(eventsIcon)
+                Paint.holoLight(main).also { main.release() }
+            }
+            "events" -> PaintRunner.eventsDialog(eventCard, cardBelow)
             "page" -> PaintRunner.eventPage()
             "run" -> runFrame(at)
             "result" -> PaintRunner.resultDialog()
@@ -379,8 +389,21 @@ class RunnerSkillTest {
                 "main" -> if (eventsIcon && inside(fx, fy, PaintRunner.EVENTS_TILE)) {
                     taps += "Events icon"; screen = "events"
                 } else taps += "main %.3f/%.3f".format(fx, fy)
-                "events" -> if (inside(fx, fy, PaintRunner.EVENT_CARD)) { taps += "card"; screen = "page" }
-                    else taps += "events %.3f/%.3f".format(fx, fy)
+                "events" -> when {
+                    // Only Gekkomon Run's card leads to this page; another
+                    // minigame's card is a tap the skill must never send.
+                    inside(fx, fy, PaintRunner.EVENT_CARD) -> {
+                        taps += if (eventCard == Events.GEKKOMON_RUN) "card" else "card $eventCard"
+                        if (eventCard == Events.GEKKOMON_RUN) screen = "page"
+                    }
+                    cardBelow != null && inside(fx, fy, PaintRunner.EVENT_CARD_2) -> {
+                        taps += if (cardBelow == Events.GEKKOMON_RUN) "card below" else "card below $cardBelow"
+                        if (cardBelow == Events.GEKKOMON_RUN) screen = "page"
+                    }
+                    // Beside the window, left of its rim: the game closes it.
+                    fx < 0.156 -> { taps += "beside"; screen = "main" }
+                    else -> taps += "events %.3f/%.3f".format(fx, fy)
+                }
                 "page" -> when {
                     inside(fx, fy, PaintRunner.PLAY_BAND) -> {
                         taps += "Play Game"
@@ -505,8 +528,15 @@ class RunnerSkillTest {
     }
 
     @Test
-    fun `the main switch leaves a run through the pause menu`() {
-        val world = World(obstacles = listOf(Coming("cube", 30.0, 0.6)))
+    fun `the main switch lets a run end by itself, and the pass stops on its result`() {
+        // Changed on 2026-09-30 (PLAN_RELEASE_1_3.md B4): the switch off in a
+        // run went through the pause menu, Pause and Quit -- taps the service
+        // has held back since 2026-09-22, so "the pause menu did not open" and
+        // a frame; and a run quit there banks nothing. Now nothing is pressed
+        // any more, the obstacle ends the run, and the pass stops on the
+        // result window, where the pass that goes on taps its Quit. The cube
+        // comes 10 s in, inside DIE_TIMEOUT of the switch going off.
+        val world = World(obstacles = listOf(Coming("cube", 10.0, 0.6)))
         val log = ArrayList<String>()
         var frames = 0
         // The switch goes off after a few frames of the run.
@@ -517,8 +547,62 @@ class RunnerSkillTest {
                                 on = { frames < 8 }, sleep = { world.sleep(it) }, now = { world.t })
         val why = skill.playRun()
         assertEquals("stopped", why, "$log / ${world.taps}")
-        assertEquals(listOf("pause", "Quit"), world.taps.takeLast(2), world.taps.toString())
-        assertTrue(world.runs == 1 && world.screen == "page")
+        assertTrue(world.taps.none { it == "pause" || it == "Quit" }, world.taps.toString())
+        assertEquals(1, world.runs)
+        assertEquals("result", world.screen, "the result window stands where the run left it")
+        assertTrue(log.any { it.contains("the run is left to end by itself") }, log.toString())
+    }
+
+    /**
+     * Two pauses in one pass (PLAN_RELEASE_1_3.md B4): the day wants two
+     * Fever Times. The switch goes off five seconds into the first run: the
+     * run is let die, the pass stops on its result window; back on, the pass
+     * goes on from there (the window's Quit), and the switch goes off again in
+     * the second run just after its Fever Time; back on once more, the pass
+     * plays for the one Fever Time the day still owes and ends on the event
+     * page. Two Fever Times in all, counted as they came -- not two for each
+     * pass that went on.
+     */
+    @Test
+    fun `Gekkomon Run paused twice plays what the day still owes and nothing twice`() {
+        val world = World(obstacles = fourThings(), fevers = listOf(16.0 to 17.5))
+        val log = ArrayList<String>()
+        var done = 0
+        var offIn: Pair<Int, Double>? = 1 to 5.0
+        val on = {
+            val o = offIn
+            !(o != null && world.runs == o.first && world.screen in setOf("run", "result") &&
+                world.t - world.runStart >= o.second)
+        }
+        val skill = RunnerSkill(world, { RunnerSkill.Settings(fevers = 2, doneToday = done) },
+                                log = { log += it }, on = on, feverCounted = { done += 1 },
+                                sleep = { world.sleep(it) }, now = { world.t })
+        val page = world.grab()
+        val first = skill.work(page)
+        assertEquals(Result.STOPPED, first.result, log.joinToString("\n"))
+        assertEquals("result", world.screen, "the run let die, its window left standing")
+        assertTrue(world.taps.none { it == "pause" || it == "Quit" }, world.taps.toString())
+        assertEquals(0, done)
+
+        val result = world.grab()
+        assertTrue(skill.resumesOn(Director.UNKNOWN, result), "the result window is the pass's own")
+        offIn = 2 to 17.6
+        val second = skill.resume(result, whole = false)
+        assertEquals(Result.STOPPED, second.result, log.joinToString("\n"))
+        assertEquals(1, done, "the second run's Fever Time is the day's")
+        assertEquals("result", world.screen)
+
+        val again = world.grab()
+        assertTrue(skill.resumesOn(Director.UNKNOWN, again))
+        offIn = null
+        val third = skill.resume(again, whole = false)
+        val said = log.joinToString("\n")
+        assertEquals(Result.DONE, third.result, said)
+        assertEquals(2, done, "two Fever Times in all, as the day asked\n$said")
+        assertEquals(3, world.runs, said)
+        assertEquals("page", world.screen, "the semi-automatic work ends on the event page")
+        assertEquals(3, world.taps.count { it == "Quit" }, "each result window closed by its Quit: ${world.taps}")
+        assertTrue(world.taps.none { it == "pause" }, world.taps.toString())
     }
 
     @Test
@@ -550,9 +634,30 @@ class RunnerSkillTest {
     /**
      * The way in hangs off a reader, and a main screen the reader does not
      * answer on -- no Events tile that day, or a boss's name banner across
-     * it -- is not tapped where the tile used to be (NOTES.md, "A constant
+     * it -- is not tapped where the tile used to be (notes/runner.md, "A constant
      * is a place on one display"). Kept, so that the frame says why.
      */
+    @Test
+    fun `a main screen lit for a moment is waited out on the way in, twice running`() {
+        // K2 of PLAN_ABSCHLUSS_1_3.md: one look at the auto button, and the
+        // hologram device's light over it said "not the plain main screen,
+        // cannot open the event" (MainScreen).
+        val world = World().apply { screen = "main" }
+        val rig = Rig(world)
+        for (way in 1..2) {
+            world.screen = "main"
+            world.lit = way
+            val before = world.taps.size
+            assertTrue(rig.skill.goToEvent(), "way $way: ${rig.log} / ${world.taps}")
+            assertEquals(listOf("Events icon", "card"), world.taps.drop(before), "way $way")
+            assertEquals("page", world.screen)
+            assertEquals(0, world.lit, "way $way looked at every lit frame")
+        }
+        assertEquals(2, rig.log.count { it.startsWith("  the plain main screen after ") }, rig.log.toString())
+        assertTrue(rig.log.none { it.contains("cannot open") }, rig.log.toString())
+        assertTrue(rig.kept.none { it == "not_main_screen" }, rig.kept.toString())
+    }
+
     @Test
     fun `a main screen without the Events icon is refused without a tap`() {
         val world = World(eventsIcon = false).apply { screen = "main" }
@@ -570,6 +675,103 @@ class RunnerSkillTest {
         val outcome = rig2.skill.run()
         assertEquals(Result.PARKED, outcome.result)
         assertEquals(emptyList<String>(), world2.taps)
+    }
+
+    /**
+     * The Events window is read before its card is tapped (PLAN_SKEWER.md
+     * 3.2): the painted card of each kind is named by the real reader, and
+     * the tap for Gekkomon Run lands on its card.
+     */
+    @Test
+    fun `the Events window's card is named by its art`() {
+        for (kind in listOf(Events.GEKKOMON_RUN, Events.CHEFS_SPECIAL, Events.UNKNOWN)) {
+            val img = PaintRunner.eventsDialog(kind)
+            val cards = Events.cards(img)
+            assertNotNull(cards, "the Events window, painted with $kind")
+            assertEquals(listOf(kind), cards.map { it.kind }, "$cards")
+            val c = PaintRunner.EVENT_CARD
+            val target = cards.single().target
+            assertTrue(target.fx in c[0]..c[2] && target.fy in c[1]..c[3], "the card is tapped on the card: $target")
+            assertEquals(if (kind == Events.GEKKOMON_RUN) target else null, Events.card(img, Events.GEKKOMON_RUN))
+            val out = Events.outside(img)
+            assertNotNull(out)
+            assertTrue(out.fx < 0.156, "beside the window, left of its rim: $out")
+            img.release()
+        }
+        val main = PaintRunner.mainScreen()
+        assertNull(Events.cards(main), "no Events window on the main screen")
+        assertNull(Events.outside(main))
+        main.release()
+    }
+
+    /**
+     * Chef's Special in the Events window, and no Gekkomon Run: the card is
+     * never tapped, the log says why, the window is closed beside it, and the
+     * pass is RETIRED -- which the chain takes as "not in this run" and not as
+     * a park (DirectorLoop.full, Result.RETIRED).
+     */
+    @Test
+    fun `a Events window without Gekkomon Run is left without a tap on the other card`() {
+        for (other in listOf(Events.CHEFS_SPECIAL, Events.UNKNOWN)) {
+            val world = World(eventCard = other).apply { screen = "main" }
+            val rig = Rig(world)
+            val outcome = rig.skill.run()
+            assertEquals(Result.RETIRED, outcome.result, "$outcome / ${rig.log} / ${world.taps}")
+            assertEquals(RunnerSkill.NOT_IN_WINDOW_WHY, outcome.why)
+            assertTrue(world.taps.none { it.startsWith("card") }, "tapped a card: ${world.taps}")
+            assertEquals(listOf("Events icon", "beside"), world.taps)
+            assertEquals("main", world.screen, "home again: ${world.taps}")
+            assertTrue(rig.log.any { it.startsWith("Gekkomon Run is not in the Events window (cards: $other)") },
+                       rig.log.toString())
+            assertEquals(0, world.runs)
+        }
+        // And the same skill, two passes: the day the window has Gekkomon Run
+        // back, the next pass plays -- what the first pass found is its own,
+        // cleared at the top of the next (notes/director.md, "A counter
+        // nothing clears is counted again at the end of every pass").
+        val world = World(obstacles = listOf(Coming("cube", 9.0, 0.6)), fevers = listOf(6.0 to 7.5),
+                          eventCard = Events.CHEFS_SPECIAL).apply { screen = "main" }
+        val rig = Rig(world, fevers = 1)
+        assertEquals(Result.RETIRED, rig.skill.run().result, "${rig.log} / ${world.taps}")
+        world.eventCard = Events.GEKKOMON_RUN
+        world.taps.clear()
+        val second = rig.skill.run()
+        assertEquals(Result.DONE, second.result, "${rig.log} / ${world.taps}")
+        assertEquals(listOf("Events icon", "card", "Play Game"), world.taps.take(3))
+        assertEquals(1, world.runs)
+        assertEquals("main", world.screen)
+    }
+
+    /**
+     * Two cards in the Events window, Chef's Special on top and Gekkomon Run
+     * under it (PLAN_SKEWER.md 4.2 point 4). The game has not been seen with
+     * two (question 12), and the window's reader is measured on one:
+     * `Runner.eventsDialog` asks the event's blue box for a fill of 0.65,
+     * which one card leaves at 0.74 (the ADB frame, and this painted window,
+     * 0.737) and a second card of the same size takes to about 0.47. So a
+     * window with two cards is no Events window today, and the pass taps no
+     * card at all -- never the other one -- and says the window did not
+     * open. What it would take to read two is a frame of them (SK2's
+     * report). Where the reader does answer, Events.cards names both and
+     * the lower one is Gekkomon Run's.
+     */
+    @Test
+    fun `with two cards in the Events window no card is tapped, the other one least of all`() {
+        val img = PaintRunner.eventsDialog(Events.CHEFS_SPECIAL, Events.GEKKOMON_RUN)
+        assertNull(Runner.eventsDialog(img), "the box's blue under 0.65 with two cards")
+        assertNull(Events.cards(img))
+        img.release()
+
+        val world = World(obstacles = listOf(Coming("cube", 9.0, 0.6)), fevers = listOf(6.0 to 7.5),
+                          eventCard = Events.CHEFS_SPECIAL, cardBelow = Events.GEKKOMON_RUN)
+            .apply { screen = "main" }
+        val rig = Rig(world, fevers = 1)
+        val outcome = rig.skill.run()
+        assertEquals(Result.PARKED, outcome.result, "${rig.log} / ${world.taps}")
+        assertTrue(world.taps.none { it.startsWith("card") }, "a card was tapped: ${world.taps}")
+        assertTrue(world.taps.all { it == "Events icon" }, world.taps.toString())
+        assertTrue(rig.log.any { it == "the Events window did not open" }, rig.log.toString())
+        assertEquals(0, world.runs)
     }
 
     /** Called by nothing since 2026-09-23, and kept working for the day it is wanted back. */
@@ -703,8 +905,14 @@ class RunnerSkillTest {
         assertEquals(3, Stored.runner(s, NOON).left)
         repeat(4) { Stored.addRunnerFever(s, NOON + 3600) }
         assertEquals(0, Stored.runner(s, NOON + 3600).left, "ten played, nine wanted")
-        assertTrue(!RunnerSkill(World(), { Stored.runner(s, NOON + 3600) }).hasBudget(),
-                   "a day that has its Fever Times is nothing to do")
+        val done = RunnerSkill(World(), { Stored.runner(s, NOON + 3600) })
+        assertTrue(!done.hasBudget(), "a day that has its Fever Times is nothing to do")
+        // ...and the chain's skip says so, as Chef's Special's does
+        // (PLAN_ABSCHLUSS_1_3.md A2), where it said "on the settings as they stand".
+        assertEquals("10 of 9 Fever Times played today; the count starts again at the daily reset",
+                     done.noBudgetWhy())
+        assertNull(RunnerSkill(World(), { Stored.runner(s, NOON + 20 * 3600) }).noBudgetWhy(),
+                   "the next game day owes its Fever Times again")
         // 23:30 is still the same game day, 08:00 the next morning is not.
         assertEquals(10, Stored.runner(s, NOON + 11.5 * 3600).doneToday)
         assertEquals(0, Stored.runner(s, NOON + 20 * 3600).doneToday)

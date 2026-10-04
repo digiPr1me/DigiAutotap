@@ -21,7 +21,6 @@ import android.view.ViewConfiguration
 import android.view.WindowManager
 import io.github.digipr1me.digiautotap.core.Director
 import io.github.digipr1me.digiautotap.core.Dot
-import io.github.digipr1me.digiautotap.core.Dungeon
 import io.github.digipr1me.digiautotap.core.HelperLog
 import io.github.digipr1me.digiautotap.core.HelperState
 import io.github.digipr1me.digiautotap.core.Shell
@@ -33,10 +32,12 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * The dot over the game (PLAN_ANDROID_DESIGN.md 3): one window of the
- * accessibility service's own, of type TYPE_ACCESSIBILITY_OVERLAY, holding a
+ * The dot over the game (PLAN_ANDROID_DESIGN.md 3): two windows of the
+ * accessibility service's own, of type TYPE_ACCESSIBILITY_OVERLAY -- a
  * 48 dp square with the dot in it and, beside it, a plate with one line --
  * what DigiAutotap is doing, and after a dot the name of the screen it sees.
+ * Two and not one because a window takes every tap inside its frame, drawn
+ * or not ([DotView.flags] has the measurement).
  *
  * It does four things and no more: it shows the state in colour and with a
  * ring that is the three-second clock, a tap is the main switch, a long
@@ -52,7 +53,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  * reader gets has something in it the game never drew, and [footprint] is
  * what `Capture.grab` takes back out of it. Everything drawn here stays
  * inside those two rectangles: a shadow or a glow that spilled past them
- * would be measured by the readers as the game (NOTES.md, "A tool that
+ * would be measured by the readers as the game (notes/overlay.md, "A tool that
  * draws outside the rectangle it masks measures its own spill").
  *
  * **No fourth thing to ask the player for.** The window went up with no
@@ -199,9 +200,26 @@ object Overlay {
         if (view != null) return true
         var ok = false
         onMain("show") {
+            // Asked again here, on the main thread, where [fitted] builds a
+            // window again too. Asked only on the caller's thread, a round's
+            // `if (!up) show()` that fell between a refit's hide and its show
+            // (`DigiAutotapService.displayChanged` refits from the reading
+            // thread) put up a second pair of windows over the first, and the
+            // first was nobody's any more: measured on LDPlayer 2026-09-27
+            // after a `wm size` under a pass, four windows in the dump, an
+            // orphaned dot drawn over this app's own page and taking its taps.
+            if (view != null) { ok = true; return@onMain }
             val v = DotView(svc)
+            val wm = windowManager(svc)
             try {
-                windowManager(svc).addView(v, v.params())
+                wm.addView(v, v.params())
+                // The plate hangs off the dot's window, so it goes up second.
+                try {
+                    wm.addView(v.plate, v.plateParams())
+                } catch (e: Throwable) {
+                    runCatching { wm.removeView(v) }
+                    throw e
+                }
                 view = v
                 service = svc
                 shown = v.footprint()
@@ -222,6 +240,7 @@ object Overlay {
         service = null
         shown = Footprint(0, 0, emptyList())
         onMain("hide") {
+            runCatching { windowManager(svc).removeView(v.plate) }
             runCatching { windowManager(svc).removeView(v) }
             HelperLog.line("overlay: off")
         }
@@ -389,15 +408,17 @@ object Overlay {
         }
     }
 
-    /**
-     * Portrait only, as the whole app is (PLAN_ANDROID_APP.md 3.4). A
-     * display that is wider than it is tall is one the game does not run on
-     * and one the readers were never measured on, and it is also the state
-     * in which the window's coordinates and the frame's part company -- see
-     * [Footprint]. The dot goes away rather than stand somewhere it cannot
-     * be masked out of.
-     */
-    fun portrait(w: Int, h: Int): Boolean = h >= w
+    // Portrait only, until 2026-09-27: a display wider than it is tall drew
+    // no dot, because the game was thought not to run on one and because it
+    // is where the window's coordinates and the frame's once parted company
+    // (see [Footprint]). The game does run on one -- upright, the full
+    // height, in the middle, on a player's emulator that does not turn
+    // (PLAN_FORMATE.md V19) -- and the player's call was to support it. The
+    // dot stands flush with the display's edge beside the canvas there, as
+    // on a tablet (Dot.square, Dungeon.pillared), and the second concern is
+    // answered where it arises: `grab` masks only a frame of the window's
+    // size, and ends a pass on the first frame of another
+    // (`DigiAutotapService.displayChanged`), which fits the window again.
 
     private fun windowManager(c: Context) = c.getSystemService(WindowManager::class.java)
 
@@ -418,16 +439,18 @@ object Overlay {
     }
 
     /**
-     * Is ([x], [y]), in display pixels, inside the window -- where a
-     * gesture of the service's own would land on the dot rather than on the
-     * game? Read off the window's own layout, which is what the system hands
-     * a touch to, drawn or not.
+     * Is ([x], [y]), in display pixels, inside one of the two windows --
+     * where a gesture of the service's own would land on the dot or the
+     * plate rather than on the game? Read off the windows' own layout, which
+     * is what the system hands a touch to, drawn or not.
      */
     fun covers(x: Int, y: Int): Boolean {
         val v = view ?: return false
-        val lp = v.layoutParams as? WindowManager.LayoutParams ?: return false
-        if (lp.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE != 0) return false
-        return x >= lp.x && x < lp.x + lp.width && y >= lp.y && y < lp.y + lp.height
+        return listOf<View>(v, v.plate).any {
+            val lp = it.layoutParams as? WindowManager.LayoutParams ?: return@any false
+            lp.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE == 0 &&
+                x >= lp.x && x < lp.x + lp.width && y >= lp.y && y < lp.y + lp.height
+        }
     }
 
     /**
@@ -453,7 +476,10 @@ object Overlay {
     /**
      * The place, remembered per device in `digiautotap.json` -- the side and
      * the centre fy, which is the vocabulary the overlay probe measured in
-     * (PLAN_ANDROID_DESIGN.md 3.2).
+     * (PLAN_ANDROID_DESIGN.md 3.2) and every reader's band is written in: a
+     * fraction of the game's window (`Dungeon.gameRectWh`) in the frame the
+     * readers get, which on a phone with a camera cutout starts below it
+     * (Dot.displayY).
      */
     class Place(val left: Boolean, val fy: Double)
 
@@ -499,11 +525,24 @@ object Overlay {
     // --- the view -----------------------------------------------------------
 
     /**
-     * The dot, its ring and the plate. One view so that a drag moves both and
-     * so that the mask has one window's rectangles to work from rather than
-     * two windows to keep in step.
+     * The plate's window. It draws and takes taps through its [dot], which
+     * holds every piece of state, so that a drag on either moves both and the
+     * mask's two rectangles are worked out in one place ([DotView.footprint]).
+     */
+    class PlateView(private val dot: DotView) : View(dot.svc) {
+        override fun onDraw(canvas: Canvas) = dot.drawPlateOn(canvas)
+        override fun onTouchEvent(event: MotionEvent): Boolean = dot.onTouchEvent(event)
+    }
+
+    /**
+     * The dot and its ring, in a window of its own, and the owner of the
+     * [plate] beside it. One view holds the state so that a drag moves both
+     * and so that the mask has one pair of rectangles to work from.
      */
     class DotView(val svc: AccessibilityService) : View(svc) {
+
+        /** The plate, in the second window (see [flags] for why there are two). */
+        val plate = PlateView(this)
 
         private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
         private val text = TextPaint(Paint.ANTI_ALIAS_FLAG)
@@ -521,12 +560,6 @@ object Overlay {
         /** Fully automatic? Green if so, blue if not ([HelperState.dot]). */
         private var full = false
 
-        /**
-         * Is the display still portrait? Read once a round rather than in
-         * `onDraw`, which runs twenty times a second while the ring fills.
-         */
-        private var upright = true
-
         private val density = svc.resources.displayMetrics.density
 
         /**
@@ -538,14 +571,37 @@ object Overlay {
          * that display.
          */
         private val measured = display()
-        private val screenPx = measured.width()
+
+        /**
+         * Rows at the top of [measured] that are not the game's canvas: the
+         * strip over the camera that `DigiAutotapService.grab` cuts off every
+         * frame. The place's fy is read in what is below it
+         * (Dot.displayY), because that is the picture the readers get, and a
+         * place that is one place of it stands on the same part of the game
+         * with a cutout and without. Taken with the display, and part of
+         * what [stale] asks.
+         */
+        private val canvasFrom = canvasTop(measured)
+
+        /**
+         * What every size below is a fraction of: the screen on a phone, the
+         * game's canvas on a display wider than the game (Dot.shownWidth) --
+         * a tablet's own width drew the plate half across the canvas.
+         */
+        private val screenPx = Math.round(
+            Dot.shownWidth(measured.width(), measured.height() - canvasFrom)).toInt()
+
+        private fun canvasTop(d: Rect): Int =
+            (svc as? DigiAutotapService)?.canvasTop(d.width(), d.height()) ?: 0
 
         /** What the window was measured on, for the log. */
-        fun measuredOn(): String = "${measured.width()} x ${measured.height()}"
+        fun measuredOn(): String = "${measured.width()} x ${measured.height()}" +
+            if (canvasFrom > 0) ", canvas from y $canvasFrom" else ""
 
-        /** Is the display no longer the one [measured] on? */
+        /** Is the display no longer the one [measured] on -- in size, or in its cutout? */
         fun stale(): Boolean = display().let {
-            it.width() != measured.width() || it.height() != measured.height()
+            it.width() != measured.width() || it.height() != measured.height() ||
+                canvasTop(it) != canvasFrom
         }
 
         /** What is drawn and what is masked: a fraction of the screen. */
@@ -575,11 +631,10 @@ object Overlay {
 
         /**
          * Does the window draw anything at all? [onDraw] returns before its
-         * first stroke while the game is not in front or the display is not
-         * portrait, and those are the two states [flags] has to know about.
+         * first stroke while the game is not in front, and that is the state
+         * [flags] has to know about.
          */
-        private fun drawing(): Boolean =
-            visible && display().let { portrait(it.width(), it.height()) }
+        private fun drawing(): Boolean = visible
 
         /**
          * Does the display have to stay on? Only while there is something
@@ -614,12 +669,25 @@ object Overlay {
          * So a window that draws nothing takes nothing either. The flag is
          * the whole fix: the window stays up, and with it FLAG_KEEP_SCREEN_ON,
          * which is the reason [Overlay.update] keeps it up rather than
-         * hiding it while the game is away. What is left is the tap that
-         * lands on the plate, or in the transparent corners beside it, while
-         * both are drawn -- one window is what lets a drag move the plate
-         * and the dot together and gives the mask one rectangle pair to work
-         * from ([DotView]), and a touchable region of its own would want the
-         * hidden `OnComputeInternalInsetsListener`.
+         * hiding it while the game is away.
+         *
+         * **And a window that draws a little takes the whole of its frame.**
+         * Until 2026-09-25 the plate and the dot were one window, 478 x 126
+         * px on LDPlayer's 1080 x 1920 at the measured place, `[602,52]
+         * [1080,178]` in the system's window dump, and its touchable region
+         * was all of it. What it draws is the plate, 336 x 47 at y 92 to
+         * 139, and the dot's halo, a circle of 53 px around (1017,115): 41 %
+         * of the frame. The rest -- a band 40 px tall above and below the
+         * plate, the gap, the square's corners -- took taps meant for the
+         * game. Measured the same day on the Digivice screen, whose preset
+         * bar stands at y 140 to 200: `input tap 911 171` on its arrow
+         * threw the main switch, and a tap on the bar at (585,171), left of
+         * the window, opened the list. So the plate and the dot are two
+         * windows, each the size of what it draws, and what is left is the
+         * dot's corners, which are the 48 dp a thumb needs. A touchable
+         * region inside one window would want the hidden
+         * `OnComputeInternalInsetsListener`, and hidden is what a later
+         * Android takes away.
          */
         private fun flags(drawing: Boolean, awake: Boolean): Int {
             var f = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
@@ -634,22 +702,84 @@ object Overlay {
             return f
         }
 
-        /** The window: as wide as the plate, the gap and the dot together, as tall as the touch area. */
+        /**
+         * The dot's window: the touch area, square, on the edge; centred on
+         * the place's fy, the readers' fy of the frame they get (Dot.displayY).
+         */
         fun params(): WindowManager.LayoutParams {
             val lp = WindowManager.LayoutParams(
-                plateW + gap + touch, maxOf(touch, plateH),
+                touch, touch,
                 WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
                 flags(drawing(), awake()),
                 PixelFormat.TRANSLUCENT)
             lp.gravity = Gravity.TOP or Gravity.START
+            onDisplay(lp)
             val d = display()
             lp.x = if (place.left) 0 else d.width() - lp.width
-            lp.y = Math.round(place.fy * d.height() - lp.height / 2.0).toInt()
+            lp.y = Math.round(Dot.displayY(place.fy, d.width(), d.height(), canvasFrom) - lp.height / 2.0).toInt()
             return lp
         }
 
         /**
-         * Are the window's flags still the ones its picture and its state
+         * The window's x and y are the display's, as the mask and [covers]
+         * take them. Not by default, and that was measured, not read: on
+         * LDPlayer at 1080 x 2340 with the `hole` cutout (safe inset 136, a
+         * status bar of 42), 2026-09-26, the system's window dump gave both
+         * windows `parent=[0,136][1080,2340]` -- a window that does not ask
+         * is laid out below a cutout its status bar does not cover -- so the
+         * dot asked for at y 301 was drawn at 437, and the mask filled 136 px
+         * of game above a dot the readers then saw whole. Always is the one
+         * mode whose answer does not hang on the phone's status bar.
+         */
+        private fun onDisplay(lp: WindowManager.LayoutParams) {
+            lp.layoutInDisplayCutoutMode =
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+        }
+
+        /**
+         * The plate's window: exactly the plate, beside the dot's window with
+         * the gap between them, centred on it. The display is kept on by the
+         * dot's window alone.
+         */
+        fun plateParams(): WindowManager.LayoutParams {
+            val lp = WindowManager.LayoutParams(
+                plateW, plateH,
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                flags(drawing(), false),
+                PixelFormat.TRANSLUCENT)
+            lp.gravity = Gravity.TOP or Gravity.START
+            onDisplay(lp)
+            placePlate(lp)
+            return lp
+        }
+
+        /** The plate's corner, from the dot's window -- the one arithmetic for window and mask. */
+        private fun plateX(dot: WindowManager.LayoutParams) =
+            if (place.left) dot.x + touch + gap else dot.x - gap - plateW
+        private fun plateY(dot: WindowManager.LayoutParams) = dot.y + (touch - plateH) / 2
+
+        private fun placePlate(p: WindowManager.LayoutParams) {
+            val lp = layoutParams as? WindowManager.LayoutParams ?: return
+            p.x = plateX(lp); p.y = plateY(lp)
+        }
+
+        /** The dot's window has moved: the plate follows it. */
+        private fun syncPlate() {
+            val p = plate.layoutParams as? WindowManager.LayoutParams ?: return
+            placePlate(p)
+            runCatching {
+                svc.getSystemService(WindowManager::class.java).updateViewLayout(plate, p)
+            }
+        }
+
+        /** Both pictures: the dot's and the plate's. */
+        private fun redraw() {
+            invalidate()
+            plate.invalidate()
+        }
+
+        /**
+         * Are the windows' flags still the ones their picture and their state
          * deserve -- touchable while drawn, keeping the display on while
          * [awake]? Asked once a round, beside the picture itself, and the
          * system is only called when the answer has changed --
@@ -658,7 +788,15 @@ object Overlay {
          */
         private fun touchable() {
             val lp = layoutParams as? WindowManager.LayoutParams ?: return
-            val drawn = visible && upright
+            val drawn = visible
+            val pl = plate.layoutParams as? WindowManager.LayoutParams
+            val plateWant = flags(drawn && !passing(), false)
+            if (pl != null && pl.flags != plateWant) {
+                pl.flags = plateWant
+                runCatching {
+                    svc.getSystemService(WindowManager::class.java).updateViewLayout(plate, pl)
+                }
+            }
             val want = flags(drawn && !passing(), awake())
             if (lp.flags == want) return
             val was = lp.flags
@@ -687,8 +825,7 @@ object Overlay {
             // Nothing is drawn while the game is not in front, so there is
             // nothing to take out of the frame either -- and an empty list
             // is cheaper than a mask that fills the frame with itself.
-            if (!visible || !portrait(d.width(), d.height()))
-                return Footprint(d.width(), d.height(), emptyList())
+            if (!visible) return Footprint(d.width(), d.height(), emptyList())
             // The dot's own square, from the same arithmetic the corpus
             // probe uses -- except for its size, which is the one number the
             // two cannot share: a stored frame carries no density, so the
@@ -701,22 +838,38 @@ object Overlay {
             // the touch area 48 dp on a narrow phone has nothing drawn in
             // it, and a mask over it would flatten a part of the game the
             // dot was never on.
+            // The plate's rectangle is its window's, from the same two lines
+            // that place the window.
             val inset = (touch - disc) / 2
-            val dotX = inset + if (place.left) lp.x else lp.x + plateW + gap
-            val dotY = lp.y + (lp.height - disc) / 2
-            val plateX = if (place.left) lp.x + touch + gap else lp.x
-            val plateY = lp.y + (lp.height - plateH) / 2
+            val dotX = lp.x + inset
+            val dotY = lp.y + inset
+            val plateX = plateX(lp)
+            val plateY = plateY(lp)
             return Footprint(d.width(), d.height(), listOf(
                 Dot.Box(dotX.toDouble(), dotY.toDouble(), disc.toDouble()),
                 Dot.Box(plateX.toDouble(), plateY.toDouble(), plateW.toDouble(), plateH.toDouble())))
         }
 
+        /**
+         * For the log: the place, both windows in display pixels, and -- the
+         * numbers a reader's band is written in, fy of the game's window
+         * (`Dungeon.gameRectWh`) -- where the dot's disc and the plate stand
+         * in the frame the readers get, the display less the [canvasFrom]
+         * rows over the camera.
+         */
         fun where(): String {
             val lp = layoutParams as? WindowManager.LayoutParams ?: return "nowhere yet"
+            val d = display()
+            val inset = (touch - disc) / 2
+            fun fy(y: Int) = Dot.fyAt(y.toDouble(), d.width(), d.height(), canvasFrom)
             return String.format(Locale.ROOT,
-                "%s edge, fy %.4f -- window %d,%d %d x %d px on a %d x %d display",
+                "%s edge, fy %.4f -- dot window %d,%d %d x %d px, plate window %d,%d %d x %d px " +
+                    "on a %d x %d display, canvas from y %d: in the readers' fy the dot stands at " +
+                    "%.4f to %.4f and the plate at %.4f to %.4f",
                 if (place.left) "left" else "right", place.fy,
-                lp.x, lp.y, lp.width, lp.height, display().width(), display().height())
+                lp.x, lp.y, lp.width, lp.height, plateX(lp), plateY(lp), plateW, plateH,
+                d.width(), d.height(), canvasFrom,
+                fy(lp.y + inset), fy(lp.y + inset + disc), fy(plateY(lp)), fy(plateY(lp) + plateH))
         }
 
         fun set(s: HelperState, screen: String?, t: String?, gameInFront: Boolean, full: Boolean) {
@@ -726,9 +879,7 @@ object Overlay {
             if (t != task) taskSince = SystemClock.elapsedRealtime()
             task = t
             visible = gameInFront
-            val d = display()
-            upright = portrait(d.width(), d.height())
-            invalidate()
+            redraw()
             touchable()
             shown = footprint()
             if (s == HelperState.WAITING || (s == HelperState.PARKED && !stillness()))
@@ -739,17 +890,17 @@ object Overlay {
         fun glimpsed(name: String) {
             if (name == screenName) return
             screenName = name
-            invalidate()
+            plate.invalidate()
         }
 
         // --- the heartbeat ----------------------------------------------------
 
         private var blipAt = 0L
-        private val unblip = Runnable { invalidate() }
+        private val unblip = Runnable { plate.invalidate() }
 
         fun blip() {
             blipAt = SystemClock.elapsedRealtime()
-            invalidate()
+            plate.invalidate()
             main.removeCallbacks(unblip)
             main.postDelayed(unblip, BLIP_MS)
         }
@@ -759,7 +910,7 @@ object Overlay {
                 val filling = state == HelperState.WAITING
                 val blinking = state == HelperState.PARKED && !stillness()
                 if (!filling && !blinking) return
-                invalidate()
+                redraw()
                 main.postDelayed(this, if (filling) TICK_MS else BLINK_MS / 2)
             }
         }
@@ -793,7 +944,7 @@ object Overlay {
         // --- drawing --------------------------------------------------------
 
         /** The task once its turn has lasted [TASK_GRACE_MS]; a redraw is booked for the moment it has. */
-        private val nameTask = Runnable { invalidate() }
+        private val nameTask = Runnable { redraw() }
 
         private fun taskShown(now: Long): String? {
             val t = task ?: return null
@@ -812,8 +963,9 @@ object Overlay {
          * the one word that tells a player why nothing happens.
          */
         private fun status(now: Long, shownTask: String?): String = when (state) {
-            HelperState.PAUSED -> "Paused"
-            HelperState.STOPPED -> "Stopped"
+            // The state's own word: "Stopped" since the tap stops the task
+            // (2026-10-02, PLAN_BEFUNDE_1_3.md N5 b), "Paused" before.
+            HelperState.PAUSED, HelperState.STOPPED -> state.word
             // "Parked", and the screen's name after it -- not "tap to
             // retry", which is the same length as the name and crowds it
             // out. Measured live on 2026-09-21: "Parked · tap to retry"
@@ -835,9 +987,8 @@ object Overlay {
 
         override fun onDraw(canvas: Canvas) {
             // Asked once a round in [set] and remembered, never here: onDraw
-            // runs twenty times a second while the ring fills, and
-            // currentWindowMetrics is a call into the system.
-            if (!visible || !upright) return
+            // runs twenty times a second while the ring fills.
+            if (!visible) return
             val now = SystemClock.elapsedRealtime()
             // Asked once for the whole draw: it books the redraw for the
             // moment the grace is over, and asking twice would book it twice.
@@ -846,15 +997,19 @@ object Overlay {
             // a narrow phone is the smaller of the two: what is drawn stays
             // the fraction of the screen the corpus was measured with, and
             // the rest of the window is transparent room for a thumb.
+            // The inset in whole pixels, as the mask takes it (footprint).
             val size = disc.toFloat()
-            val dotLeft = if (place.left) (touch - disc) / 2f
-                          else (plateW + gap + (touch - disc) / 2).toFloat()
-            val cx = dotLeft + size / 2f
+            val cx = ((touch - disc) / 2).toFloat() + size / 2f
             val cy = height / 2f
             val working = state == HelperState.RUNNING && shownTask != null
-
-            drawPlate(canvas, status(now, shownTask), now)
             drawDot(canvas, cx, cy, size, working)
+        }
+
+        /** The plate's window draws through here: the same state, the same moment. */
+        fun drawPlateOn(canvas: Canvas) {
+            if (!visible) return
+            val now = SystemClock.elapsedRealtime()
+            drawPlate(canvas, status(now, taskShown(now)), now)
         }
 
         /**
@@ -970,8 +1125,9 @@ object Overlay {
          */
         private fun drawPlate(canvas: Canvas, first: String, now: Long) {
             val p = Theme.LIGHT
-            val x = if (place.left) (touch + gap).toFloat() else 0f
-            val top = (height - plateH) / 2f
+            // The canvas is the plate's own window, which is the plate.
+            val x = 0f
+            val top = 0f
             val h = plateH.toFloat()
             val w = plateW.toFloat()
             val inset = 1f
@@ -1069,6 +1225,7 @@ object Overlay {
                             svc.getSystemService(WindowManager::class.java)
                                 .updateViewLayout(this, lp)
                         }
+                        syncPlate()
                         shown = footprint()
                     }
                     return true
@@ -1103,13 +1260,20 @@ object Overlay {
 
         fun clearOf(fy0: Double, fy1: Double) {
             val d = display()
-            val r = Dungeon.gameRectWh(d.width(), d.height())
-            val top = r.y0 + fy0 * r.gh
-            val bottom = r.y0 + fy1 * r.gh
+            // The rows are the readers', in the frame the service handed
+            // them: the display less the strip it cuts off over the camera --
+            // the same vocabulary the place is in, so the same seam.
+            val top = Dot.displayY(fy0, d.width(), d.height(), canvasFrom)
+            val bottom = Dot.displayY(fy1, d.width(), d.height(), canvasFrom)
             fun inTheWay() = footprint().boxes.any { it.y < bottom && it.y + it.h > top }
             if (!inTheWay()) return
             val was = place.fy
-            moveTo(Place(place.left, Dot.MEASURED_FY_MIN))
+            // The top of the strip, or just above the rows where that is on
+            // them too -- the Digivice bar over the canvas ceiling
+            // (PLAN_FORMATE.md V14) -- or just below them: Dot.clearFy.
+            val to = Dot.clearFy(place.fy, fy0, fy1, d.width(), d.height(), canvasFrom)
+                ?: Dot.MEASURED_FY_MIN
+            moveTo(Place(place.left, to))
             aside = true
             HelperLog.line(String.format(Locale.ROOT,
                 "overlay: moved from fy %.4f to %.4f for a counter under it%s", was, place.fy,
@@ -1132,6 +1296,7 @@ object Overlay {
             runCatching {
                 svc.getSystemService(WindowManager::class.java).updateViewLayout(this, lp)
             }
+            syncPlate()
             shown = footprint()
         }
 
@@ -1145,7 +1310,7 @@ object Overlay {
         private fun letGo(lp: WindowManager.LayoutParams) {
             val d = display()
             val wantLeft = lp.x + lp.width / 2 < d.width() / 2
-            val fy = (lp.y + lp.height / 2.0) / d.height()
+            val fy = Dot.fyAt(lp.y + lp.height / 2.0, d.width(), d.height(), canvasFrom)
             val moved = wouldMove(wantLeft, fy)
             place = drop(wantLeft, fy)
             store.put(KEY_LEFT, place.left)
@@ -1155,6 +1320,7 @@ object Overlay {
             runCatching {
                 svc.getSystemService(WindowManager::class.java).updateViewLayout(this, lp)
             }
+            syncPlate()
             shown = footprint()
             HelperLog.line(String.format(Locale.ROOT,
                 "overlay: dropped at %s fy %.4f, %s",
@@ -1169,11 +1335,12 @@ object Overlay {
          * can never mean three different things. It had a second meaning
          * until 2026-09-22: while Tower & Ruins was arming it, the tap wrote
          * that skill's point instead. The feature left the interface and the
-         * tap is one thing again.
+         * tap is one thing again. Since 2026-10-02 that thing is Stop and
+         * Start, where it was Pause and Resume ([ActionReceiver.press]).
          */
         private fun pressed() {
             HelperLog.line("overlay: tapped -- the main switch")
-            ActionReceiver.press(svc)
+            ActionReceiver.press(svc, "the dot")
             // At once, not at the end of whatever round is running.
             refresh()
         }

@@ -15,13 +15,27 @@ import kotlin.math.abs
  * with its character count, View Ads and its counter. The skill's loop is
  * not here; it comes with its own session, under the director.
  *
- * Every constant keeps its Python name and value, and the sentence that says
- * where it came from. A number here is changed in summon.py first, with a
- * measurement, then the oracle is written again, then this file follows --
- * never the other way round (NOTES.md, "Two implementations, one
- * direction"). The frame is BGR, uint8, as `cv2.imread` gives it.
+ * Every constant came over with its Python name and value, and the sentence
+ * that says where it came from; a number is changed in this file, with a
+ * measurement and its sentence, and then `writeOracle` writes the oracle
+ * (NOTES.md, "One project"). The frame is BGR, uint8, as `cv2.imread`
+ * gives it.
  */
 object Summon {
+
+    /**
+     * Where Special Summon's page stands on a display taller than the canvas
+     * ceiling (Dungeon.Anchor, PLAN_FORMATE.md V4): at the top. Measured
+     * 2026-09-27 over the V3 rows of the corpus (1080 x 2520 and 2540, 1644 x
+     * 3840, 720 x 1600, 1440 x 3200, General and Buddy each) by asking every
+     * reader at each of the three anchors against its 1920 twin: at the
+     * bottom `general_tab`, `summon_button` and `view_ads_button` missed on
+     * all five and `ticket_counter` read 8663 for 1470 on three; at the top
+     * every one of them met its twin, and so did `mode_dots`. The X that
+     * closes the page is not the page's: it stands at the bottom, where
+     * [exitButton] has always looked, and met its twin only there.
+     */
+    val PAGE = Dungeon.Anchor.TOP
 
     /** `exit_button`'s dict: where the X is, and the two shares that found it. */
     data class ExitButton(val fx: Double, val fy: Double, val plate: Double, val mark: Double) {
@@ -65,7 +79,7 @@ object Summon {
     val YELLOW_DIMMED = Dungeon.Hsv(intArrayOf(10, 150, 20), intArrayOf(35, 255, 150))
 
     private fun yellowButton(img: Mat, band: Dungeon.Hsv): Dungeon.Button? {
-        val (x0, y0, gw, gh) = Dungeon.gameRect(img)
+        val (x0, y0, gw, gh) = Dungeon.gameRect(img, PAGE)
         val mask = Cv.hsvMask(img, band)
         val (n, stats) = Cv.components(mask)
         mask.release()
@@ -376,7 +390,7 @@ object Summon {
      * reader rather than read off the orange one's own position.
      */
     fun modeDots(img: Mat): Int? {
-        val (x0, y0, gw, gh) = Dungeon.gameRect(img)
+        val (x0, y0, gw, gh) = Dungeon.gameRect(img, PAGE)
         val top = maxOf(0, Py.int(y0 + DOT_Y_BAND[0] * gh))
         val bottom = Py.int(y0 + DOT_Y_BAND[1] * gh)
         val sub = Py.crop(img, top, bottom, maxOf(0, x0), x0 + gw) ?: return null
@@ -452,14 +466,28 @@ object Summon {
     // frame shapes and both sources -- and two of those eight impostors measure
     // 1.281 and 1.309. Six thousandths of air is the same non-fence the bond
     // bubble's band was, so it is written down here rather than coded.
-    const val TAB_FH_TOL = 0.08
+    //
+    // 0.08 was set on those four, and the phone tour of 2026-09-26 put real
+    // pairs over it (corpus/formats, the Summon frames of 21 formats): General
+    // is 0.0313 to 0.0320 tall and Buddy 0.0291 to 0.0308 on every one,
+    // whichever of the two is selected, so a real pair measures 0.029 to
+    // 0.0845 -- and on 1080 x 2160, 1440 x 2880 (Buddy page, 0.0845 and
+    // 0.0842) and 720 x 1560 (General page, 0.0816) that is over 0.08: a tab
+    // two pixels taller than its twin at 70 px, and walkIn had nothing to tap
+    // on a Pixel 3 or a Pixel 2 XL. An uncut pair measures 0.0794 on 1080 x
+    // 1920 itself; it never had to bring its height. The impostors with a cut
+    // member, over the whole corpus of 1355 frames: 0.0968 (a bond window at
+    // fy 0.72, which walkIn's TAB_ROW_FY_MAX refuses anyway) and 0.222 to
+    // 0.423 (the main screens at fy 0.066). 0.09 is the middle of 0.0845 and
+    // 0.0968, 6 % from either -- thin, and said so.
+    const val TAB_FH_TOL = 0.09
 
     /**
      * `summon._mend`: a blob a side of the picture cut, put back with its
      * twin's width.
      *
      * On a long display the game covers rather than letterboxes, so 118 px of
-     * 1316 go off each side at 1080 x 2340 (NOTES.md) -- and the tab row is
+     * 1316 go off each side at 1080 x 2340 (notes/formats.md) -- and the tab row is
      * wide enough that one end of it is always among them. The cut takes the
      * blob's outer edge with it, so neither its width nor its centre is the
      * thing's any more; its *inner* edge is untouched, and the two tabs are
@@ -504,9 +532,9 @@ object Summon {
      */
     fun generalTab(img: Mat): Dungeon.Button? {
         val blues = Dungeon.findButtons(img, Dungeon.BLUE, minArea = TAB_MIN_AREA,
-                                        minY = 0.0, edge = false)
+                                        minY = 0.0, edge = false, anchor = PAGE)
         val greens = Dungeon.findButtons(img, GREEN, minArea = TAB_MIN_AREA,
-                                         minY = 0.0, edge = false)
+                                         minY = 0.0, edge = false, anchor = PAGE)
         for (b in blues) {
             for (g in greens) {
                 if (b.cut != null && g.cut != null) continue
@@ -646,7 +674,7 @@ object Summon {
     val TICKET_H_OF_GAME = doubleArrayOf(0.009, 0.013)
 
     private fun ticketMask(img: Mat, band: DoubleArray): Mat? {
-        val (x0, y0, gw, gh) = Dungeon.gameRect(img)
+        val (x0, y0, gw, gh) = Dungeon.gameRect(img, PAGE)
         val (fx0, fx1, fy0, fy1) = band.toList()
         val left = maxOf(0, Py.int(x0 + fx0 * gw))
         val top = maxOf(0, Py.int(y0 + fy0 * gh))
@@ -685,9 +713,38 @@ object Summon {
         }
         if (out.isEmpty()) return emptyList()
         val tallest = out.maxOf { it[3] }
+        // The ticket icon itself is refused by TICKET_ASPECT, and what it
+        // holds is not refused with it. See TICKET_ICON_H.
+        val icons = (1 until n).map { stats[it] }.filter {
+            val aspect = it[2] / it[3].toDouble()
+            TICKET_ICON_ASPECT[0] <= aspect && aspect <= TICKET_ICON_ASPECT[1] &&
+                TICKET_ICON_H[0] * tallest <= it[3] && it[3] <= TICKET_ICON_H[1] * tallest
+        }
+        fun inIcon(g: IntArray) = icons.any { i ->
+            i !== g && g[0] >= i[0] && g[1] >= i[1] &&
+                g[0] + g[2] <= i[0] + i[2] && g[1] + g[3] <= i[1] + i[3]
+        }
         // Python's list.sort is stable, and so is sortedBy.
-        return out.filter { it[3] >= TICKET_MIN_REL_H * tallest }.sortedBy { it[0] }
+        return out.filter { it[3] >= TICKET_MIN_REL_H * tallest && !inIcon(it) }.sortedBy { it[0] }
     }
+
+    // What the ticket icon holds is not a character, and on a long display it
+    // stops looking like dirt. Measured on the phone tour (corpus/formats,
+    // summon_general_*, "1,470"): the white stroke between the icon's two
+    // cards is 14 x 20 at x4 on 1080 x 1920, 0.23 of the digits and under
+    // TICKET_MIN_REL_H, but one glyph of 21 x 49 at 1080 x 2424 (0.46, a
+    // comma's height) and 16 x 26 at 720 x 1600 (0.36). Both joined the row
+    // left of the "1", commasHold found an empty group in front of that
+    // "comma", and the counter read null where its twin read 1470. Height
+    // cannot tell the stroke from a comma, and "a comma stands between two
+    // digits" was tried first and let junk through: seven frames off the
+    // Summon screens and a Buddy page read 11 to 509, because the stray on
+    // the left had been what refused them. What the stroke has is a place:
+    // inside the icon's own box. The icon is square, 1.73 to 1.80 of a digit
+    // tall on 1920, 2424 and 1600 (155/89, 193/107, 126/73), and the band
+    // leaves room either side.
+    val TICKET_ICON_ASPECT = doubleArrayOf(0.8, 1.25)
+    val TICKET_ICON_H = doubleArrayOf(1.4, 2.2)
 
     /**
      * Glyphs belonging to the counter, anchored on its tallest one.
@@ -829,7 +886,7 @@ object Summon {
     const val PRICE_HALF_W = 0.55
 
     private fun priceCrop(img: Mat, button: Dungeon.Button): Mat? {
-        val (x0, y0, gw, gh) = Dungeon.gameRect(img)
+        val (x0, y0, gw, gh) = Dungeon.gameRect(img, PAGE)
         val cx = x0 + button.fx * gw
         val topOfButton = y0 + (button.fy - button.fh / 2.0) * gh
         val halfW = PRICE_HALF_W * button.fw * gw
@@ -904,7 +961,7 @@ object Summon {
      */
     fun viewAdsButton(img: Mat, button: Dungeon.Button? = null): Dungeon.Button? {
         val found = button ?: summonButton(img) ?: return null
-        val row = Dungeon.findButtons(img, Dungeon.BLUE, minArea = 0.003, minY = 0.0)
+        val row = Dungeon.findButtons(img, Dungeon.BLUE, minArea = 0.003, minY = 0.0, anchor = PAGE)
             .filter { Dungeon.near(it.fy, found.fy, 0.04) }
             .sortedBy { it.fx }
         return if (row.size >= 2) row[0] else null
@@ -955,7 +1012,7 @@ object Summon {
      */
     fun adsLeft(img: Mat, button: Dungeon.Button? = null): Int? {
         val adsButton = viewAdsButton(img, button) ?: return null
-        val (x0, y0, gw, gh) = Dungeon.gameRect(img)
+        val (x0, y0, gw, gh) = Dungeon.gameRect(img, PAGE)
         val cx = x0 + adsButton.fx * gw
         val topOfButton = y0 + (adsButton.fy - adsButton.fh / 2.0) * gh
         val halfW = ADS_HALF_W * adsButton.fw * gw

@@ -11,16 +11,22 @@ import kotlin.math.abs
  * board's X (`close_button`). The navigator (`Nav`) is not here; it comes
  * with the Digital World Search skill's own session, under the director.
  *
- * Every constant keeps its Python name and value, and the sentence that says
- * where it came from. A number here is changed in explore.py first, with a
- * measurement, then the oracle is written again, then this file follows --
- * never the other way round (NOTES.md, "Two implementations, one
- * direction"). The frame is BGR, uint8, as `cv2.imread` gives it.
+ * Every constant came over with its Python name and value, and the sentence
+ * that says where it came from; a number is changed in this file, with a
+ * measurement and its sentence, and then `writeOracle` writes the oracle
+ * (NOTES.md, "One project"). The frame is BGR, uint8, as `cv2.imread`
+ * gives it.
  */
 object Explore {
 
-    /** A tap target: centre of a thing, as fractions of the reference window. */
-    data class Target(val fx: Double, val fy: Double) {
+    /**
+     * A tap target: centre of a thing, as fractions of the reference window
+     * -- of the rectangle at [anchor] (Dungeon.Anchor), which is where the
+     * thing's window stands on a display with headroom and the one rectangle
+     * there is on any other. Not in the oracle's dict.
+     */
+    data class Target(val fx: Double, val fy: Double,
+                      val anchor: Dungeon.Anchor = Dungeon.Anchor.BOTTOM) {
         fun toOracle(): Map<String, Any?> = mapOf("fx" to fx, "fy" to fy)
     }
 
@@ -304,7 +310,11 @@ object Explore {
             if (share < minShare) continue
             val fy = (y + h / 2.0 - y0) / gh
             if (!(MENU_DARK_BAND[0] <= fy && fy <= MENU_DARK_BAND[1])) continue
-            blobs.add(Blob((x + w / 2.0 - x0) / gw, fy, share))
+            val fx = (x + w / 2.0 - x0) / gw
+            // The body's columns as well as its rows: beside the canvas of a
+            // tablet stands the game's background (Dungeon.inCanvasFx).
+            if (!Dungeon.inCanvasFx(fx)) continue
+            blobs.add(Blob(fx, fy, share))
         }
         if (blobs.isEmpty()) return Rivals(null, null)
         val biggest = blobs.maxByOrNull { it.share }!!
@@ -444,8 +454,23 @@ object Explore {
     const val CLOSE_PLATE_MIN = 0.60
     val CLOSE_MARK_BAND = doubleArrayOf(0.10, 0.30)
 
-    /** `close_button`'s answer: where the X is and how much of it is plate and mark. */
-    data class CloseButton(val fx: Double, val fy: Double, val plate: Double, val mark: Double) {
+    /**
+     * Where the World Search board stands on a display taller than the canvas
+     * ceiling (Dungeon.Anchor, PLAN_FORMATE.md V4): in the middle. Measured
+     * 2026-09-27 over the V3 rows of the corpus against the 1920 twin: its X
+     * at 0.799/0.949 answered at the middle on all five, at the bottom only
+     * on the two with 40 and 80 rows of headroom (the crop is 0.35 of the X
+     * wide either side), and `classify` read the board as `unknown` at 180,
+     * 200 and 278.
+     */
+    val BOARD = Dungeon.Anchor.MIDDLE
+
+    /**
+     * `close_button`'s answer: where the X is and how much of it is plate and
+     * mark, in the rectangle at [anchor] (not in the oracle's dict).
+     */
+    data class CloseButton(val fx: Double, val fy: Double, val plate: Double, val mark: Double,
+                           val anchor: Dungeon.Anchor = Dungeon.Anchor.BOTTOM) {
         fun toOracle(): Map<String, Any?> =
             mapOf("fx" to fx, "fy" to fy, "plate" to plate, "mark" to mark)
     }
@@ -456,8 +481,8 @@ object Explore {
      * Null also answers "is the board (or whatever it left up) in front" --
      * every other screen on this path measures 0.000 on both halves.
      */
-    fun closeButton(img: Mat): CloseButton? {
-        val (x0, y0, gw, gh) = Dungeon.gameRect(img)
+    fun closeButton(img: Mat, anchor: Dungeon.Anchor = BOARD): CloseButton? {
+        val (x0, y0, gw, gh) = Dungeon.gameRect(img, anchor)
         val r = CLOSE_CROP * CLOSE_FW * gw
         val cx = x0 + CLOSE_FX * gw
         val cy = y0 + CLOSE_FY * gh
@@ -479,6 +504,6 @@ object Explore {
         plateMask.release(); markMask.release()
         if (plate < CLOSE_PLATE_MIN) return null
         if (!(CLOSE_MARK_BAND[0] <= mark && mark <= CLOSE_MARK_BAND[1])) return null
-        return CloseButton(CLOSE_FX, CLOSE_FY, plate, mark)
+        return CloseButton(CLOSE_FX, CLOSE_FY, plate, mark, anchor)
     }
 }

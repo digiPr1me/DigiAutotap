@@ -36,3 +36,6 @@ server.properties
 server/node_modules/
 server/.wrangler/
 server/.dev.vars
+
+# Bug reports unpacked by report_unpack.py: personal data, 30 days (PLAN_BUG_REPORT.md 13).
+reports/

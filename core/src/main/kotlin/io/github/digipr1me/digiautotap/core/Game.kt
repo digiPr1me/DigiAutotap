@@ -1,10 +1,10 @@
 package io.github.digipr1me.digiautotap.core
 
 /**
- * Which installed package is the game. Nothing ships a package name: it is
- * found at runtime, by ldplayer.py's rule, hint by hint in this order --
- * measured as the single hit among 103 packages on one machine (NOTES.md,
- * "Capture and ADB").
+ * Which installed package is the game. Once nothing shipped a package name:
+ * it was found at runtime, by ldplayer.py's rule, hint by hint in its order
+ * -- measured as the single hit among 103 packages on one machine (the
+ * laboratory's notes, "Capture and ADB").
  *
  * **The name comes first, and the hints only after it.** The game is
  * `com.bandainamcoent.dgup_ww`, and "digimon" is not in it: a player wrote

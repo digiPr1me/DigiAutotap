@@ -10,8 +10,8 @@ import java.util.Locale
  * one `"%.3f".format(0.437)` writes **0,437** and `"%,d"` writes 5.000 for
  * five thousand. That was found on the passive helper's first test run and
  * fixed there, in that one file, by naming [Locale.US] at each call
- * (NOTES.md, "Jede Zahl im Log geht durch Locale.US") -- and then a live
- * run of the director printed
+ * (PLAN_ANDROID_APP.md, "Jede Zahl im Log geht durch Locale.US") -- and then a
+ * live run of the director printed
  *
  *   something bubble-shaped at 0,437/0,377
  *

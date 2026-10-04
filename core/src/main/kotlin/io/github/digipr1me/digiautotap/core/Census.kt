@@ -16,8 +16,9 @@ import java.time.temporal.IsoFields
  * and says nothing that would tell one phone from another. It remembers
  * which day, ISO week and month it has already been counted in, and the
  * first time it runs in a new one it sends the Worker the version and which
- * of the three are new, as four booleans. The Worker adds one to each
- * counter and stores nothing else: no install id, no Android id, no hash of
+ * of the three are new, as four booleans -- and, with the month's, a
+ * description of the phone ([Device]). The Worker adds one to each counter
+ * and stores nothing else: no install id, no Android id, no hash of
  * either, no address. Counting once per period is done here, on the phone,
  * which is why the server needs nothing to recognise a phone by.
  *
@@ -37,13 +38,45 @@ object Census {
     const val WEEK_KEY = "census_week"
     const val MONTH_KEY = "census_month"
 
+    /**
+     * The name of the colour space of the last screenshot, written by the
+     * service when it grabs one and read here: the census is asked from the
+     * app and cannot take a screenshot itself. Empty until the first grab,
+     * and sent as "unknown" then.
+     */
+    const val COLOR_SPACE_KEY = "census_colorspace"
+
+    /**
+     * What kind of phone this is, as a description and not as a person: the
+     * model, the Android version, the display and the name of the colour space
+     * the screenshots come in. It says which formats and which Android
+     * versions the players have (PLAN_FORMATE.md 11), and it is sent once per
+     * month with the month's counter, so a row is a number of phones. Nothing
+     * here is an id: two phones of one model and one setting send the same.
+     */
+    data class Device(val manufacturer: String, val model: String, val sdk: Int,
+                      val width: Int, val height: Int, val dpi: Int,
+                      val insetTop: Int, val insetBottom: Int, val insetLeft: Int, val insetRight: Int,
+                      val colorSpace: String) {
+        fun json() =
+            """{"manufacturer":"${text(manufacturer)}","model":"${text(model)}","sdk":$sdk,""" +
+                """"width":$width,"height":$height,"dpi":$dpi,""" +
+                """"insetTop":$insetTop,"insetBottom":$insetBottom,"insetLeft":$insetLeft,"insetRight":$insetRight,""" +
+                """"colorSpace":"${text(colorSpace)}"}"""
+
+        private fun text(s: String) =
+            s.filter { it.isLetterOrDigit() || it in " .-_+" }.trim().take(40).ifEmpty { "unknown" }
+    }
+
     /** Which counters this phone has not been added to yet. */
     data class Visit(val day: Boolean, val week: Boolean, val month: Boolean, val first: Boolean) {
         val any get() = day || week || month || first
 
-        fun json(version: String) =
+        /** [device] goes along only with the month's counter: once a month, once per phone. */
+        fun json(version: String, device: Device? = null) =
             """{"version":"${version.filter { it.isLetterOrDigit() || it == '.' || it == '-' }.take(20)}",""" +
-                """"day":$day,"week":$week,"month":$month,"first":$first}"""
+                """"day":$day,"week":$week,"month":$month,"first":$first""" +
+                (if (month && device != null) ""","device":${device.json()}""" else "") + "}"
     }
 
     /** "2026-09-24", "2026-W39", "2026-09" -- the Worker's spelling ([Visit] is about these). */
@@ -85,10 +118,10 @@ object Census {
      */
     @Synchronized
     fun count(s: Settings, version: String, known: Boolean, now: Instant = Instant.now(),
-              url: String = URL, timeoutMs: Int = 8_000): String? {
+              url: String = URL, timeoutMs: Int = 8_000, device: Device? = null): String? {
         val visit = due(s, now, known)
         if (!visit.any) return null
-        val code = send(visit, version, url, timeoutMs)
+        val code = send(visit, version, url, timeoutMs, device)
         if (code !in 200..299) return "census: not counted (${code?.let { "server answered $it" } ?: "no connection"})"
         val p = Periods.of(now)
         s.put(DAY_KEY, p.day)
@@ -99,7 +132,7 @@ object Census {
     }
 
     /** The POST itself; the HTTP status, or null when there was no answer. */
-    fun send(visit: Visit, version: String, url: String = URL, timeoutMs: Int = 8_000): Int? {
+    fun send(visit: Visit, version: String, url: String = URL, timeoutMs: Int = 8_000, device: Device? = null): Int? {
         var conn: HttpURLConnection? = null
         return try {
             conn = (URL(url).openConnection() as HttpURLConnection).apply {
@@ -111,7 +144,7 @@ object Census {
                 setRequestProperty("User-Agent", "DigiAutotap")
                 setRequestProperty("Content-Type", "application/json")
             }
-            OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { it.write(visit.json(version)) }
+            OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { it.write(visit.json(version, device)) }
             conn.responseCode
         } catch (e: Exception) {
             null

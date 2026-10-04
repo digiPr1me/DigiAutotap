@@ -22,7 +22,7 @@ import org.opencv.core.Mat
  *  - **There is no window and no ADB here.** The PC took its frames from the
  *    emulator window at 50 a second because an ADB screenshot took 0.6 s;
  *    the phone has one capture, `takeScreenshot`, at one frame every 0.35 s
- *    at best (NOTES.md, "takeScreenshot has a floor"). MixedCapture, the
+ *    at best (notes/director.md, "takeScreenshot has a floor"). MixedCapture, the
  *    freeze watch, the mouse nudge and `sources_agree` are the PC's and are
  *    not here; a frame that cannot be taken is a CaptureError, and a run
  *    that loses its frames is left.
@@ -107,6 +107,18 @@ class RunnerSkill(
     override fun hasBudget(): Boolean = settings().left > 0
 
     /**
+     * The day's Fever Times played, said as Chef's Special says its combos
+     * (SkewerSkill.noBudgetWhy): the chain skipped this step "on the settings
+     * as they stand" until 2026-10-02 (PLAN_ABSCHLUSS_1_3.md 3.2), which read
+     * as a page with nothing on it.
+     */
+    override fun noBudgetWhy(): String? {
+        val s = settings()
+        if (s.fevers <= 0 || s.left > 0) return null
+        return "${s.doneToday} of ${s.fevers} Fever Times played today; the count starts again at the daily reset"
+    }
+
+    /**
      * True on the event page until a pass has finished, and it reads
      * nothing; null from then on, and the director's own rules hold.
      *
@@ -183,13 +195,18 @@ class RunnerSkill(
         /**
          * How old a frame is by the time `grab` hands it over: the spike
          * measured the picture itself at 10 ms and turning it into a BGR Mat
-         * at 77 ms (NOTES.md, "takeScreenshot has a floor"). The obstacle
+         * at 77 ms (notes/director.md, "takeScreenshot has a floor"). The obstacle
          * in the frame stood where it stood this long before the clock was
          * read, and the track is fed that time, not the later one.
          */
         const val FRAME_AGE = 0.08
         /** What the loop takes for the gap to its next look before it has measured one. */
         const val GAP_GUESS = 0.4
+        /** Why a run is left to die: the main switch went off in it ([playRun]). */
+        const val PAUSED = "paused"
+        /** The reason of a pass whose Events window had no Gekkomon Run card ([openCard]). */
+        const val NOT_IN_WINDOW = "not in the Events window"
+        const val NOT_IN_WINDOW_WHY = "Gekkomon Run is not in the Events window today."
     }
 
     /** What one session did, `RunnerBot.stats` key for key. */
@@ -207,6 +224,8 @@ class RunnerSkill(
 
     /** The reference rect of the last frame read, which is what a tap is aimed with. */
     private var rect: Dungeon.GameRect? = null
+    /** The headroom of the frame [rect] was taken off (Dungeon.CanvasFrame). */
+    private var room = 0
 
     private var fever = Runner.FeverCounter()
     private var stats = Stats()
@@ -225,6 +244,9 @@ class RunnerSkill(
     /** A pass ended by reaching its target or [runsMax] -- not stopped, not lost ([seesWork]). */
     private var finished = false
 
+    /** This pass found the Events window without a Gekkomon Run card ([openCard]). */
+    private var notInWindow = false
+
     /** What the last session found; null before the first. */
     var lastSession: Stats? = null
         private set
@@ -239,15 +261,24 @@ class RunnerSkill(
         get() = lastSession?.let { mapOf("runs" to it.runs, "fevers" to it.fevers, "best" to it.best) }
             ?: emptyMap()
 
-    private fun grab(): Mat = cap.grab().also { rect = Dungeon.gameRect(it) }
+    private fun grab(): Mat = cap.grab().also { rect = Dungeon.gameRect(it); room = Dungeon.headroom(it) }
 
-    /** A tap by fraction of the reference window, as DungeonBot.tap sends one. */
-    private fun tap(fx: Double, fy: Double, was: String) {
+    /**
+     * A tap by fraction of the reference window, as DungeonBot.tap sends one,
+     * in the rectangle at [anchor] (Dungeon.Anchor): the run's dialogs
+     * are tapped where they stand (Runner.DIALOG), the road and the pages at
+     * the bottom.
+     */
+    private fun tap(fx: Double, fy: Double, was: String,
+                    anchor: Dungeon.Anchor = Dungeon.Anchor.BOTTOM) {
+        // Not with the main switch off: the service would hold it back.
+        if (!on()) return
         val r = rect ?: return
-        cap.tap(Py.roundInt(r.x0 + fx * r.gw), Py.roundInt(r.y0 + fy * r.gh))
+        val y0 = r.y0 - Py.roundInt(room * anchor.share)
+        cap.tap(Py.roundInt(r.x0 + fx * r.gw), Py.roundInt(y0 + fy * r.gh))
     }
 
-    private fun tap(target: Explore.Target, was: String) = tap(target.fx, target.fy, was)
+    private fun tap(target: Explore.Target, was: String) = tap(target.fx, target.fy, was, target.anchor)
 
     private fun px(fx: Double, fy: Double): Pair<Int, Int> {
         val r = rect ?: return 0 to 0
@@ -258,6 +289,8 @@ class RunnerSkill(
     private fun pauseGate(): Boolean = on()
 
     private fun dump(img: Mat, tag: String) {
+        // Nothing failed where the switch cut a step short (PLAN_RELEASE_1_3.md B4).
+        if (!on()) return
         keep(img, tag)
         log("    kept what it saw as $tag")
     }
@@ -343,11 +376,13 @@ class RunnerSkill(
                 return true
             }
             if (Runner.eventsDialog(img) != null) return openCard()
-            if (Dungeon.autoButton(img) == null) {
-                log("not the plain main screen, cannot open the event")
-                dump(img, "not_main_screen")
-                return false
-            }
+            // Over a few seconds, not on one frame: the game draws over the
+            // auto button by itself (MainScreen, K2 of PLAN_ABSCHLUSS_1_3.md).
+            val main = MainScreen.settle(img, ::grab, sleep, now, ::pauseGate, log) { last, waited ->
+                log("not the plain main screen after %.0f s, cannot open the event".format(waited))
+                dump(last, "not_main_screen")
+            } ?: return false
+            if (main !== img) main.release()
         } finally {
             img.release()
         }
@@ -375,8 +410,34 @@ class RunnerSkill(
         return openCard()
     }
 
+    /**
+     * The Events window, and in it the Gekkomon Run card and nothing else.
+     *
+     * The card was tapped blind until 2026-09-30, the top one of the window
+     * (Runner.eventCard, gone since), and on that day the window held Chef's Special
+     * instead: the minigames rotate, one at a time (PLAN_SKEWER.md 7,
+     * question 12). So the cards are read on two looks running
+     * ([Events.cards]), and where none of them is Gekkomon Run nothing is
+     * tapped: the pass says so and goes home, and the chain retires the step
+     * for its run ([notInWindow], [end]).
+     */
     private fun openCard(): Boolean {
-        val page = tapRead("Gekkomon Run card", { img -> Runner.eventsDialog(img)?.let { Runner.eventCard(it) } }) {
+        val window = waitFor { Events.cards(it) != null }
+        if (window == null) {
+            if (on()) {
+                log("the Events window did not settle")
+                onFrame { dump(it, "no_events_cards") }
+            }
+            return false
+        }
+        val cards = try { Events.cards(window)!! } finally { window.release() }
+        if (cards.none { it.kind == Events.GEKKOMON_RUN }) {
+            log("Gekkomon Run is not in the Events window (cards: " +
+                (if (cards.isEmpty()) "none" else cards.joinToString { it.kind }) + ")")
+            notInWindow = true
+            return false
+        }
+        val page = tapRead("Gekkomon Run card", { img -> Events.card(img, Events.GEKKOMON_RUN) }) {
             Runner.eventPage(it) != null
         }
         if (page == null) {
@@ -429,10 +490,21 @@ class RunnerSkill(
         var firstSeen = -1.0
         var costDialogs = 0.0; var costBar = 0.0; var costScore = 0.0; var costRoad = 0.0
         var reads = 0; var sawRoad = 0; var orbPresses = 0
+        var paused = false
         while (true) {
-            if (!on()) {
-                quitRun("stopped")
-                return "stopped"
+            // **The switch off in a run lets the run end by itself.** Until
+            // 2026-09-30 it went through the pause menu (quitRun), which the
+            // service holds back since 2026-09-22 -- Pause and Quit withheld,
+            // "the pause menu did not open", a frame kept -- and which banks
+            // nothing even where it goes through. Now nothing is pressed any
+            // more, the next obstacle ends the run as it ends one that has
+            // what it came for, its Fever Times are the day's, and the pass
+            // stops on the result window, where the pass that goes on after
+            // the pause taps its Quit (PLAN_RELEASE_1_3.md B4; notes/runner.md).
+            if (!on() && !paused) {
+                paused = true
+                log("  the main switch is off -- nothing pressed any more, the run is left to end by itself")
+                if (dying == null) dying = PAUSED
             }
             val img = try {
                 grab()
@@ -516,7 +588,7 @@ class RunnerSkill(
                     } else if (now() - dyingSince!! > DIE_TIMEOUT) {
                         log("  no obstacle ended the run in ${DIE_TIMEOUT.toInt()} s -- quitting it")
                         quitRun(dying)
-                        return dying
+                        return if (!on()) "stopped" else if (dying == PAUSED) "died" else dying
                     }
                     continue
                 }
@@ -605,8 +677,13 @@ class RunnerSkill(
             "dialogs %.0f, bar %.0f, score %.0f, road %.0f ms").format(sawRoad, reads, orbPresses,
             costDialogs / reads * 1000, costBar / reads * 1000,
             costScore / reads * 1000, costRoad / reads * 1000))
+        // Paused: the result window stays where the run left it, and the
+        // pass stops there ([resume] taps its Quit).
+        if (!on()) return "stopped"
         tapUntil(Runner.QUIT_RESULT, "Quit") { Runner.eventPage(it) != null }?.release()
-        return dying ?: "died"
+        // A run the switch let end, with the switch back by now: an ordinary
+        // death, and the session goes on.
+        return if (dying == PAUSED) "died" else dying ?: "died"
     }
 
     /**
@@ -658,17 +735,27 @@ class RunnerSkill(
     /**
      * Pause, then Quit. Lands on the event page.
      *
-     * Not gated on the main switch, unlike runner.py's `_quit_run`: there
-     * every wait asks the Stop flag first, so a run the player stopped got
-     * its Pause tapped and was then left standing in the pause menu, with
+     * It was not gated on the main switch, unlike runner.py's `_quit_run`:
+     * there every wait asks the Stop flag first, so a run the player stopped
+     * got its Pause tapped and was then left standing in the pause menu, with
      * "the pause menu did not open" in the log. On the phone the switch is
      * the notification's Pause, pressed without looking, and what a resume
-     * must find is the event page -- the pause menu is a prompt to the
-     * director, and a prompt it did not raise is a park. So the way out is
-     * walked whatever the switch says, as [leave] is; it is bounded, and it
-     * taps only what it has recognised.
+     * had to find was the event page -- the pause menu is a prompt to the
+     * director, and a prompt it did not raise is a park. So the way out was
+     * walked whatever the switch said.
+     *
+     * Gated since 2026-09-30 (PLAN_RELEASE_1_3.md B4), because the reason
+     * above had gone: since 2026-09-22 the service holds back every tap with
+     * the switch off, so Pause and Quit never went out after a pause and
+     * this ended in "the pause menu did not open" and a `no_pause` frame --
+     * and a run quit through the pause menu banks nothing anyway. The
+     * switch off in a run now lets the run end by itself ([playRun], [PAUSED])
+     * and never reaches this; its other callers -- a run with no frame, one
+     * that will not end -- are with the switch on, and with it off in the
+     * middle of this it taps nothing more and leaves the game where it is.
      */
     private fun quitRun(why: String) {
+        if (stays.now()) return
         log("  leaving the run ($why)")
         val pause = tapUntil(Runner.PAUSE, "pause", rounds = 4, gated = false) { Runner.pauseDialog(it) != null }
         if (pause == null) {
@@ -678,6 +765,7 @@ class RunnerSkill(
                     tapUntil(Runner.QUIT_RESULT, "Quit", gated = false) { Runner.eventPage(it) != null }?.release()
                     return
                 }
+                if (stays.now()) return
                 log("  the pause menu did not open")
                 dump(img, "no_pause")
             } finally {
@@ -780,6 +868,7 @@ class RunnerSkill(
      */
     private fun closeToEventPage(): Boolean {
         for (i in 0 until 4) {
+            if (stays.now()) return false
             val img = grab()
             try {
                 if (Runner.eventPage(img) != null) return true
@@ -800,17 +889,26 @@ class RunnerSkill(
 
     /**
      * Event page -> X -> main screen, the globe as the fallback. A Missions
-     * window or Reward sheet still up is closed on the way. Not gated on the
-     * main switch: it runs on the way out whatever else happened, as every
-     * skill's way home does.
+     * window or Reward sheet still up is closed on the way, and so is an
+     * Events window the pass did not find its card in. It runs on the way
+     * out whatever else happened, as every skill's way home does -- and
+     * asks the switch first, as every one does since 2026-09-30 ([Stays]).
      */
     override fun leave(): Boolean {
         for (i in 0 until 6) {
+            if (stays.now()) return false
             val img = try { grab() } catch (e: CaptureError) { return false }
             try {
+                // One of the game's own windows is the director's ([Stays.over], B60).
+                if (stays.over(img)) return false
                 if (Dungeon.autoButton(img) != null) return true
                 if (Dungeon.homeButton(img) != null) return goHome()
-                if (Runner.rewardOverlay(img) != null) {
+                val outside = Events.outside(img)
+                if (outside != null) {
+                    // The Events window has no X: a tap beside it closes it
+                    // (Events.outside), and nothing on a card is touched.
+                    tap(outside, "beside the Events window")
+                } else if (Runner.rewardOverlay(img) != null) {
                     tap(Runner.NEUTRAL, "Tap to close")
                 } else {
                     val x = Runner.missionsX(img)?.target
@@ -823,6 +921,7 @@ class RunnerSkill(
             sleep(pauseLong)
         }
         if (goHome()) return true
+        if (stays.now() || stays.met != null) return false
         log("could not get back to the main screen -- the game is left where it stands")
         onFrame { dump(it, "no_way_home") }
         return false
@@ -832,8 +931,10 @@ class RunnerSkill(
     private fun goHome(rounds: Int = FarmSkill.HOME_ROUNDS): Boolean {
         var pressed = 0
         for (i in 0 until rounds) {
+            if (stays.now()) return false
             val img = grab()
             try {
+                if (stays.over(img)) return false
                 if (Dungeon.autoButton(img) != null) {
                     if (pressed > 0) log("back on the main screen")
                     return true
@@ -891,6 +992,8 @@ class RunnerSkill(
         fever = Runner.FeverCounter()
         wanted = null
         finished = false
+        stays.reset()
+        notInWindow = false
     }
 
     private fun end(): Outcome {
@@ -898,13 +1001,67 @@ class RunnerSkill(
         log("Gekkomon Run: ${stats.runs} run" + (if (stats.runs == 1) "" else "s") +
             ", ${stats.fevers} of ${target()} Fever Time" + (if (target() == 1) "" else "s") +
             (if (stats.best > 0) ", best ${stats.best}" else "") + " -- ${stats.reason}")
+        carried = stats.reason == "stopped"
         return when (stats.reason) {
             "stopped" -> Outcome.STOPPED
+            // Not a park: the game has another minigame in the Events window
+            // today, and no round of this chain can change that. The chain
+            // retires the step for its run (DirectorLoop.full, Result.RETIRED).
+            NOT_IN_WINDOW -> Outcome.retired(NOT_IN_WINDOW_WHY)
             "could not open the event" -> Outcome.parked("I could not open the Gekkomon Run event from here.")
             "lost" -> Outcome.parked("Play Game did not start a run, or the run was ended from outside. " +
                 "Is a window open over the event page?")
             else -> Outcome.DONE
         }
+    }
+
+    // ------------------------------------------------------------------------
+    // After a pause (PLAN_RELEASE_1_3.md B4, the player's rule of 2026-09-30)
+    // ------------------------------------------------------------------------
+    /** The last pass was stopped by the main switch and has not been gone on with or begun afresh since. */
+    internal var carried = false
+        private set
+
+    /** Every way home, and the way out of a run, asks the switch first ([Stays]). */
+    private val stays = Stays(on) { log(it) }
+
+    /**
+     * The event page, and the result window a run the switch let end stands
+     * on (`unknown` to the director, [Runner.resultDialog] on the frame).
+     * What the pass is owed is the day's count on the page's number
+     * ([Settings.left], written as each Fever Time comes, [feverCounted]), so
+     * a pass that goes on plays what is left of it and nothing twice.
+     */
+    override fun resumesOn(screen: String, img: Mat): Boolean =
+        carried && (screen == Director.EVENT_PAGE ||
+            (screen == Director.UNKNOWN && Runner.resultDialog(img) != null))
+
+    /**
+     * The pass the switch stopped, gone on with: the result window of the run
+     * it let end closed by its Quit, then the runs the day still owes. [whole]
+     * goes home after it, as [run] does; from the main screen (a chain step
+     * whose claim ended) the way in is [run]'s.
+     */
+    override fun resume(img: Mat, whole: Boolean): Outcome {
+        if (!carried) return if (whole) run() else work(img)
+        rect = Dungeon.gameRect(img)
+        room = Dungeon.headroom(img)
+        begin()
+        log("going on with the Gekkomon Run pass the main switch stopped")
+        try {
+            if (whole && Dungeon.autoButton(img) != null) {
+                if (!goToEvent()) stats.reason = if (!on()) "stopped" else if (notInWindow) NOT_IN_WINDOW else "could not open the event"
+                else session()
+            } else {
+                if (Runner.resultDialog(img) != null) {
+                    tapUntil(Runner.QUIT_RESULT, "Quit") { Runner.eventPage(it) != null }?.release()
+                }
+                if (!on()) stats.reason = "stopped" else session()
+            }
+        } finally {
+            if (whole) leave() else if (stats.reason != "lost") closeToEventPage()
+        }
+        return end()
     }
 
     /**
@@ -913,6 +1070,7 @@ class RunnerSkill(
      */
     override fun work(img: Mat): Outcome {
         rect = Dungeon.gameRect(img)
+        room = Dungeon.headroom(img)
         begin()
         try {
             session()
@@ -929,7 +1087,7 @@ class RunnerSkill(
         begin()
         try {
             if (!goToEvent()) {
-                stats.reason = "could not open the event"
+                stats.reason = if (!on()) "stopped" else if (notInWindow) NOT_IN_WINDOW else "could not open the event"
             } else {
                 session()
             }

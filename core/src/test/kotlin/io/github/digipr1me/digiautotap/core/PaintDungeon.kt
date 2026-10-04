@@ -100,6 +100,37 @@ object PaintDungeon {
     }
 
     /**
+     * The daily dungeon's panel (PLAN_DAILY_LOST_SECTOR_PRESETS.md 4.1 point
+     * 3, Dungeon.dailyPanel): the body, and at the bottom Reset (violet,
+     * left) and Attempt (blue, right) as DL1a measured them on 2026-09-29 --
+     * fx 0.337 and 0.616, fy 0.7934, 0.252 wide and 0.0396 tall, flatter
+     * than the Partner window's pair (Passive.PARTNER_H_MIN).
+     *
+     * With [prefab] it is the panel's prefab instead, which the game shows
+     * for about a second before the panel after a run: three buttons 0.034
+     * tall at fy 0.7548 -- Clear and Reset violet, 0.23 wide, Attempt blue
+     * far right -- none of them where the panel's stand
+     * (corpus/dungeon/daily_panel_prefab_053129 once DL1b has put it there).
+     */
+    fun dailyPanel(prefab: Boolean = false): Mat {
+        val w = Paint.W
+        val h = Paint.H
+        val img = Mat(h, w, CvType.CV_8UC3, Scalar(18.0, 18.0, 18.0))
+        rect(img, (0.12 * w).toInt(), (0.19 * h).toInt(), (0.88 * w).toInt(), (0.83 * h).toInt(), Paint.BODY)
+        val violet = Paint.hsv(130, 200, 200)
+        val blue = Scalar(230.0, 150.0, 40.0)
+        val buttons = if (prefab) listOf(Triple(0.32, 0.23, violet), Triple(0.575, 0.23, violet),
+                                         Triple(0.83, 0.23, blue))
+                      else listOf(Triple(0.337, 0.252, violet), Triple(0.616, 0.2525, blue))
+        val (fy, fh) = if (prefab) 0.7548 to 0.034 else 0.7934 to 0.0396
+        for ((fx, fw, colour) in buttons) {
+            rect(img, ((fx - fw / 2) * w).toInt(), ((fy - fh / 2) * h).toInt(),
+                 ((fx + fw / 2) * w).toInt(), ((fy + fh / 2) * h).toInt(), colour)
+        }
+        return img
+    }
+
+    /**
      * The dungeon list at its top or its bottom: blue cards centred at
      * [Dungeon.CARD_X], 0.77 wide, at the centres and heights the oracle
      * reads on the real frames (DungeonSkillTest.TOP_VIEW, BOTTOM_VIEW).

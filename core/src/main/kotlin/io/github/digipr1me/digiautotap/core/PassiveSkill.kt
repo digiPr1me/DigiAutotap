@@ -29,8 +29,8 @@ import java.util.Locale
  * pixel of its own. What is here is the loop -- the aim, the fences around
  * it, the clocks -- carried over from passive.py constant by constant, each
  * with the sentence that says where it came from. A number is changed in
- * passive.py first, with a measurement, then here (NOTES.md, "Two
- * implementations, one direction").
+ * this file, with a measurement and its sentence (NOTES.md, "One
+ * project").
  *
  * **What the director takes off this skill's hands.** The PC's helper looks
  * at the whole screen every two seconds and has to work out for itself
@@ -68,7 +68,7 @@ class PassiveSkill(
     /** The main switch, asked between two actions and never in the middle of one. */
     private val on: () -> Boolean = { MainSwitch.on },
     /**
-     * Keep a frame that could not be read, for a bug report: passive.py's
+     * Keep a frame that could not be read, for a look afterwards: passive.py's
      * `_dump`, which writes into `debug_passive/`. core writes no files, so
      * the app passes the same callable the director is given. Rate limited
      * here, by [DUMP_MAX] and [DUMP_EVERY], because that limit is part of
@@ -92,6 +92,14 @@ class PassiveSkill(
      */
     override fun worksOn(screen: String): Boolean =
         screen == Director.MAIN || screen == Director.PARTNER_WINDOW
+
+    /**
+     * The Partner window, for [PARTNER_OWN] after this skill's own tap on
+     * the figure: the same clock [partnerRound] asks, so the director hands
+     * over exactly the window this round would close and never the player's.
+     */
+    override fun opened(screen: String): Boolean =
+        screen == Director.PARTNER_WINDOW && now() - openedPartner <= PARTNER_OWN
 
     /**
      * There is nothing left to ask. The page had a switch of its own,
@@ -136,7 +144,7 @@ class PassiveSkill(
         // button took with it: STALL_AFTER (20 s, "has the counter stopped"),
         // PRESS_CHECK, PRESS_GAPS and the state they were read against. The
         // 20 s is still worth knowing as a number -- it is the third of the
-        // three thresholds NOTES.md keeps apart, beside Director.IDLE_SHARE
+        // three thresholds notes/director.md keeps apart, beside Director.IDLE_SHARE
         // and MOVING_SHARE -- and Director and DungeonSkill name it in their
         // own sentences where they say what they are *not*.
 
@@ -353,7 +361,7 @@ class PassiveSkill(
          * written wherever this runs. Every number this skill logs goes
          * through [Locale.US] for that reason: a German phone would
          * otherwise group with dots and put a comma where the decimal point
-         * belongs, and the log of a bug report would no longer read like
+         * belongs, and a log a player shares would no longer read like
          * the log the PC writes.
          */
         fun num(value: Int): String = String.format(Locale.US, "%,d", value)
@@ -427,7 +435,7 @@ class PassiveSkill(
         log(text)
     }
 
-    /** Keep one frame that could not be read, for a bug report (passive._dump). */
+    /** Keep one frame that could not be read, for a look afterwards (passive._dump). */
     private fun dump(img: Mat, tag: String) {
         if (dumps >= DUMP_MAX || now() < nextDump) return
         dumps += 1
@@ -525,7 +533,7 @@ class PassiveSkill(
         val img = try {
             cap.grab()
         } catch (e: CaptureError) {
-            return Outcome.parked("no frame: ${e.message}")
+            return Outcome.noFrame(e)
         }
         return try {
             work(img)
@@ -553,7 +561,8 @@ class PassiveSkill(
         partnerTries += 1
         if (partnerTries <= PARTNER_TAPS) {
             say("  the Partner window is open, tapping above it")
-            tap(img, PARTNER_CLOSE[0], PARTNER_CLOSE[1])
+            // Above the window, so in the window's rectangle (Passive.PARTNER).
+            tap(img, PARTNER_CLOSE[0], PARTNER_CLOSE[1], Passive.PARTNER)
         } else {
             say("  the Partner window will not go, using the back key")
             cap.back()
@@ -740,8 +749,12 @@ class PassiveSkill(
      * fresher one: a second grab here would be a second picture inside one
      * round, which is the thing "one tap a round" exists to stop.
      */
-    private fun tap(img: Mat, fx: Double, fy: Double) {
-        val r = Dungeon.gameRect(img)
+    private fun tap(img: Mat, fx: Double, fy: Double,
+                    anchor: Dungeon.Anchor = Dungeon.Anchor.BOTTOM) {
+        // A fraction is a place only in the rectangle it was read in
+        // (Dungeon.Anchor): a window's answer is tapped at its anchor, the
+        // HUD's at the bottom. One rectangle under the canvas ceiling.
+        val r = Dungeon.gameRect(img, anchor)
         cap.tap(Py.roundInt(r.x0 + fx * r.gw), Py.roundInt(r.y0 + fy * r.gh))
     }
 

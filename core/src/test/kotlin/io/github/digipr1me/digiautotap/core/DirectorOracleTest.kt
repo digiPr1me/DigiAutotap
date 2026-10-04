@@ -19,9 +19,10 @@ import kotlin.test.fail
  * file names it by. The order of the questions is in the oracle and
  * binding: a reader that tips a second frame's screen fails here. A frame
  * that answers differently is a reader change to look at, never a reason
- * to edit the oracle by hand (NOTES.md, "The oracle is the seam"): if the
- * change was meant, with a measurement, `gradlew :core:writeOracle` writes
- * the file again and its diff is the list of frames that tipped.
+ * to edit the oracle by hand (NOTES.md, "The oracle is the contract, and
+ * `writeOracle` writes it"): if the change was meant, with a measurement,
+ * `gradlew :core:writeOracle` writes the file again and its diff is the list of
+ * frames that tipped.
  */
 @Tag(OracleFamilies.CORPUS_TAG)
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
@@ -40,7 +41,7 @@ class DirectorOracleTest {
 
     @Test
     fun `classify names the oracle's screen on every frame`() {
-        val report = OracleFamilies.check(OracleFamilies.DIRECTOR, oracle, repo, Vision(ClassPathAssets))
+        val report = OracleFamilies.check(OracleFamilies.DIRECTOR, oracle, repo)
         report.print()
         val screens = HashMap<String, Int>()
         for (entry in oracle["frames"]!!.jsonObject.values) {

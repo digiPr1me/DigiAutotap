@@ -78,6 +78,14 @@ class Route(
  *                   row. It only shows on a tie and must never outweigh a
  *                   real saving
  * @param canDestroy false when there are no claws
+ * @param keepLeft   no step right out of column [figColMax]: the one edge
+ *                   of the visible frame that scrolls the world. Not in
+ *                   router.py; see [search].
+ * @param closed     one (row, col) no way enters: the planner's question
+ *                   whether the cell over the figure, which the World has
+ *                   never seen clear, can be gone round for nothing
+ *                   (Planner.search, PLAN_WORLD_SEARCH_FORMATE.md F16). Not
+ *                   in router.py.
  */
 class Router(
     private val isPyramid: (Int, Int) -> Boolean,
@@ -87,8 +95,10 @@ class Router(
     middleBias: Double = 1.0,
     private val rows: Int = Vision.ROWS,
     private val cols: Int = Vision.COLS,
-    @Suppress("unused") private val figColMax: Int = 1,
+    private val figColMax: Int = 1,
     private val canDestroy: Boolean = true,
+    private val keepLeft: Boolean = false,
+    private val closed: Pair<Int, Int>? = null,
 ) {
     private val costStep = costStep
     private val costDestroy = costDestroy
@@ -144,6 +154,21 @@ class Router(
                 val nrow = row + delta.first
                 val ncol = col + delta.second
                 if (!(nrow in 0 until rows && ncol in 0 until cols)) continue
+                // The visible frame above is the same as the world for every
+                // path but one: a path to something in the left column that
+                // steps right out of column figColMax on its way. That step
+                // scrolls the target off the board, and the cell the path
+                // comes back to is not the target any more. The planner's
+                // fetchLeft asked for exactly that path and got one that
+                // began with that step -- where a pyramid stood in the way
+                // below -- and asked again without end: a StackOverflowError
+                // at the first decision on the format tour's board, 23 of the
+                // corpus's positions on 23 boards (PLAN_WORLD_SEARCH_FORMATE.md
+                // 4.2, F1; router.py has it too). So with keepLeft the edge
+                // does not exist, and no way to the target is what the
+                // planner is told -- which is the truth.
+                if (keepLeft && direction == "right" && col >= figColMax) continue
+                if (closed != null && nrow == closed.first && ncol == closed.second) continue
                 val extra = enterCost(nrow, ncol, direction) ?: continue
                 val new = cost + extra
                 val cell = nrow to ncol

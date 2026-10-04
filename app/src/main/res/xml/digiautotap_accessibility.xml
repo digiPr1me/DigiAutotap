@@ -4,9 +4,14 @@
      canRetrieveWindowContent only so that a service that has just connected
      can ask which package is in front before the next window change comes:
      after a reinstall it said "not in front" over a game that was. The
-     content itself is never read. -->
+     content itself is never read. flagRetrieveInteractiveWindows since
+     PLAN_FORMATE.md S6: the game's window bounds are the part of the
+     screenshot that is the game's (GameWindow), and `getWindows` answers
+     only a service that asks this way; typeWindowsChanged keeps the
+     system's cached answer fresh, and onAccessibilityEvent ignores it. -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
-    android:accessibilityEventTypes="typeWindowStateChanged"
+    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowsChanged"
+    android:accessibilityFlags="flagRetrieveInteractiveWindows"
     android:accessibilityFeedbackType="feedbackGeneric"
     android:canTakeScreenshot="true"
     android:canPerformGestures="true"

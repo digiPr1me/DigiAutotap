@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test
 import org.opencv.core.Core
 import org.opencv.core.Mat
 import java.time.ZonedDateTime
+import java.util.TimeZone
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
@@ -59,6 +60,8 @@ class QuestSkillTest {
          * say so (QuestSkill.modeDots).
          */
         val dots: Int? = null,
+        /** The Reward sheet, "Tap to close", in front (QuestSkill.rewardSheet). */
+        val sheet: Boolean = false,
     )
 
     /** test_quest_flow.Screen: frames in, taps out. */
@@ -116,8 +119,9 @@ class QuestSkillTest {
 
     /** test_quest_flow.FakeSummonBot. */
     class FakeSummon(val events: MutableList<String>, var drew: Int = 0,
-                     var adsToWatch: Int = 0) : QuestSkill.SummonRun {
-        override fun watchAds(mode: Int) { events += "ads"; adsWatched += adsToWatch }
+                     var adsToWatch: Int = 0, val parkOnAd: String? = null) : QuestSkill.SummonRun {
+        override fun watchAds(mode: Int) { events += "ads"; adsWatched += adsToWatch; adPark = parkOnAd }
+        override var adPark: String? = null
         override fun spam(mode: Int): Int { events += "spam"; return drew }
         override fun leaveSummons() { events += "leave" }
         override var adsWatched: Int = 0
@@ -152,10 +156,12 @@ class QuestSkillTest {
         val said: MutableList<String> = ArrayList(),
         val kept: MutableList<String> = ArrayList(),
         val wall: Wall = Wall(set),
+        /** The director's look for the other rounds between two of the step's ([QuestSkill]'s `aside`). */
+        aside: () -> Unit = {},
     ) : QuestSkill(DirectorTest.FakeCapture(), { wall.settings },
                    lock = { until, why -> wall.lock(until, why) },
                    log = { said += it }, keep = { _, tag -> kept += tag },
-                   sleep = {}, now = { clock.read() }, clock = { wall.t }) {
+                   sleep = {}, now = { clock.read() }, clock = { wall.t }, aside = aside) {
 
         var dungeon: FakeDungeon = FakeDungeon(Dungeon.Budget(2, null, null))
         var summon: FakeSummon = FakeSummon(ArrayList())
@@ -178,7 +184,7 @@ class QuestSkillTest {
         fun tick() = tick(look())
 
         override fun grab(): Mat = look()
-        override fun tap(img: Mat, fx: Double, fy: Double) { screen.taps.add(fx to fy) }
+        override fun tap(img: Mat, fx: Double, fy: Double, anchor: Dungeon.Anchor) { screen.taps.add(fx to fy) }
 
         override fun questCard(img: Mat): Quest.Card? {
             val p = screen.last.progress ?: return null
@@ -193,14 +199,18 @@ class QuestSkillTest {
 
         override fun stageFailed(img: Mat): Boolean = screen.last.failed
         override fun closeX(img: Mat): Quest.CloseX? = screen.last.x
+        override fun rewardSheet(img: Mat): Boolean = screen.last.sheet
         override fun modeDots(img: Mat): Int? = screen.last.dots
 
         /** What each dungeon step asked for: the card and the tickets it still wanted. */
         val dungeonAsked = ArrayList<Pair<Int, Int>>()
 
+        /** A dungeon step of the case's own making, where [dungeon] will not do (the pause's case). */
+        var dungeonRun: DungeonRun? = null
+
         override fun dungeonFor(arg: Int, needed: Int): DungeonRun {
             dungeonAsked += arg to needed
-            return dungeon
+            return dungeonRun ?: dungeon
         }
         override fun summonBot(): SummonRun = summon
     }
@@ -600,6 +610,108 @@ class QuestSkillTest {
     }
 
     /**
+     * A Reward sheet nobody here opened -- the phone's over Network Defense
+     * Ops on 2026-10-01 -- has no X, and stood for minutes on "no X on it to
+     * get out with". It is given the same [QuestSkill.STUCK_AFTER] as any
+     * screen, then tapped at the dead spot, one tap a round, the main screen
+     * coming back the proof.
+     */
+    @Test
+    fun `a Reward sheet the loop did not open is tapped closed, after the wait and at the dead spot`() {
+        val (screen, loop) = stuckLoop()
+        repeat(4) {
+            screen.push(Frame(progress = null, clear = false, sheet = true))
+            loop.tick()
+            loop.clock.jump(5.0)
+        }
+        assertTrue(screen.taps.isEmpty(), "a sheet that has only just appeared is left alone: ${screen.taps}")
+
+        loop.clock.jump(QuestSkill.STUCK_AFTER)
+        screen.push(Frame(progress = null, clear = false, sheet = true))
+        loop.tick()
+        assertEquals(1, deadTaps(screen).size, "${screen.taps}")
+        assertEquals(1, screen.taps.size, "the dead spot and nothing else: ${screen.taps}")
+        assertTrue(loop.said.none { it.contains("no X on it") }, "${loop.said}")
+
+        screen.push(demidevimon(1))
+        loop.tick()
+        assertTrue(loop.said.any { it.contains("the main screen is back") }, "${loop.said}")
+        assertEquals(0, loop.step, "a sheet the loop did not open claims nothing")
+    }
+
+    /** The same sheet that will not go is given up on, as an X is. */
+    @Test
+    fun `a Reward sheet that will not close is given up on, not hammered`() {
+        val (screen, loop) = stuckLoop()
+        repeat(QuestSkill.STUCK_TAPS_MAX + 4) {
+            loop.clock.jump(QuestSkill.STUCK_AFTER)
+            screen.push(Frame(progress = null, clear = false, sheet = true))
+            loop.tick()
+        }
+        assertEquals(QuestSkill.STUCK_TAPS_MAX, deadTaps(screen).size)
+        assertTrue(loop.kept.contains("sheet-would-not-close"), "${loop.kept}")
+    }
+
+    /**
+     * The claim's own window, late: the claim gave up on an unmoved card, and
+     * the next round finds the sheet. Closed at once -- no wait, it is the
+     * loop's own -- and the claim counted when the card has moved on.
+     */
+    @Test
+    fun `the sheet of a claim that gave up is closed at once and the claim counted`() {
+        val screen = Screen()
+        val loop = Loop(screen)
+        screen.push(*claimFrames(2 to 2))
+        loop.tick()
+        assertEquals(0, loop.step)
+        screen.push(Frame(progress = null, clear = false, sheet = true),
+                    Frame(progress = null, clear = true),
+                    bakemon(0))
+        loop.tick()
+        assertEquals(1, loop.step, "${loop.said}")
+        assertTrue(loop.did.claimed)
+        assertNull(loop.parkedBecause)
+    }
+
+    /**
+     * The same late window over an unknown finished card: counted when the
+     * card has moved on, and the step stays, as an unknown card's claim
+     * leaves it ([QuestSkill.claimUnknown]).
+     */
+    @Test
+    fun `a late window over an unknown card is counted and leaves the step where it was`() {
+        val screen = Screen()
+        val loop = Loop(screen, set = QuestSkill.Settings(step = 2))
+        screen.push(f(10, 10, name = 0, after = 5))
+        loop.tick()
+        screen.push(f(10, 10, name = 0, after = 5), Frame(progress = null, clear = false),
+                    Frame(progress = null, clear = true), f(10, 10, name = 0, after = 5))
+        loop.tick()
+        assertFalse(loop.did.claimed)
+        screen.push(Frame(progress = null, clear = false, sheet = true),
+                    Frame(progress = null, clear = true), f(15, 15, name = 6))
+        loop.tick()
+        assertTrue(loop.did.claimed, "${loop.said}")
+        assertEquals(2, loop.step, "the step stays: ${loop.said}")
+        assertNull(loop.parkedBecause)
+    }
+
+    /**
+     * And where a frame without the auto button is not the sheet, the
+     * claim's late look taps nothing: a blink is not a window.
+     */
+    @Test
+    fun `a claim's late look taps nothing that is not the sheet`() {
+        val screen = Screen()
+        val loop = Loop(screen)
+        screen.push(*claimFrames(2 to 2))
+        screen.push(6) { Frame(progress = null, clear = false) }
+        loop.tick()
+        assertEquals(1, deadTaps(screen).size, "the claim's own tap and no other: ${screen.taps}")
+        assertEquals(0, loop.step)
+    }
+
+    /**
      * The other half of that, and the half that makes tapping it safe: where
      * the main screen is up, there is no X to find. Measured over all 249
      * stored frames -- not one carries an X and a crisp auto button at once
@@ -666,6 +778,65 @@ class QuestSkillTest {
         loop.tick()
         loop.tick()
         assertNotNull(loop.parkedBecause)
+    }
+
+    /**
+     * notes/director.md, "A finished quest card the routine does not know is
+     * claimed, not parked on": a Poco F3's report of 2026-09-30, 10/10 with
+     * five characters behind the number and 15/15 with six in front, two
+     * passes of the director's ([QuestSkill.work]) each. Claimed on the
+     * second frame, never the first, the count is each pass's own, the step
+     * does not move, and an unknown card that is not finished parks as
+     * before.
+     */
+    @Test
+    fun `a finished card the routine does not know is claimed, pass by pass, not parked on`() {
+        val screen = Screen()
+        val loop = Loop(screen, set = QuestSkill.Settings(step = 2))
+        fun pass(): Map<String, Int> {
+            loop.work(loop.look())
+            return loop.lastCounts
+        }
+        // Pass 1: 10/10 "times", twice; the reward window opens and closes, then 15/15.
+        screen.push(f(10, 10, name = 0, after = 5))
+        assertEquals(0, pass()["claimed"], "one frame is not proof of anything")
+        assertTrue(cardTaps(screen).isEmpty())
+        screen.push(f(10, 10, name = 0, after = 5), Frame(progress = null, clear = false),
+                    Frame(progress = null, clear = true), f(15, 15, name = 6))
+        assertEquals(1, pass()["claimed"])
+        assertEquals(1, cardTaps(screen).size)
+        assertNull(loop.parkedBecause)
+        assertEquals(2, loop.step, "the step stays; the next card is matched afresh")
+        // Pass 2: 15/15 "Defeat", twice; claimed, and the count is this pass's own.
+        screen.push(f(15, 15, name = 6))
+        assertEquals(0, pass()["claimed"])
+        screen.push(f(15, 15, name = 6), Frame(progress = null, clear = false),
+                    Frame(progress = null, clear = true), f(0, 15, name = 6))
+        assertEquals(1, pass()["claimed"])
+        assertEquals(2, cardTaps(screen).size)
+        assertTrue(loop.said.any { "it is finished, so claiming it all the same" in it })
+        // 0/15: unknown and not finished -- parked, nothing tapped.
+        screen.push(f(0, 15, name = 6), f(0, 15, name = 6))
+        pass()
+        pass()
+        assertEquals("the card and the script disagree", loop.parkedBecause)
+        assertEquals(2, cardTaps(screen).size)
+    }
+
+    @Test
+    fun `an unknown finished card that does not go parks, and is not claimed again at once`() {
+        val screen = Screen()
+        val loop = Loop(screen, set = QuestSkill.Settings(step = 2))
+        screen.push(f(10, 10, name = 0, after = 5), f(10, 10, name = 0, after = 5),
+                    Frame(progress = null, clear = false), Frame(progress = null, clear = true),
+                    f(10, 10, name = 0, after = 5))
+        loop.tick()
+        loop.tick()
+        assertEquals("an unknown finished card did not go when it was claimed", loop.parkedBecause)
+        screen.push(f(10, 10, name = 0, after = 5), f(10, 10, name = 0, after = 5))
+        loop.tick()
+        loop.tick()
+        assertEquals(1, cardTaps(screen).size, "inside the park nothing is claimed again")
     }
 
     // ------------------------------------------------------------------
@@ -739,7 +910,7 @@ class QuestSkillTest {
     @Test
     fun `an empty dungeon parks on the tickets, not on the counter`() {
         val screen = Screen()
-        val loop = Loop(screen, set = QuestSkill.Settings(adPass = true))
+        val loop = Loop(screen, set = QuestSkill.Settings())
         loop.dungeon = FakeDungeon(Dungeon.Budget(0, 0, 0))
         screen.push(20) { demidevimon(1) }
         loop.tick()
@@ -751,28 +922,53 @@ class QuestSkillTest {
     }
 
     /**
-     * Without the Ad Skip Pass the two ads on the card are not the player's
-     * to spend: the film button opens a video. So a card at 0 tickets is
-     * the day being over, whatever its ad counter says -- until 2026-09-24
-     * the loop read "2 ads left" here, handed the card to a Dungeons bot
-     * built with the ads on, and that bot tapped the film button.
+     * The free ads the loop's to take ([QuestSkill.Settings.dungeonAds]: the
+     * Dungeons pick with the Ad Skip Pass): a card at 0 tickets with two ads
+     * left is not the day being over, and the bot it is handed to taps the
+     * film button.
      */
     @Test
-    fun `without the Ad Skip Pass a card at 0 tickets is empty, ads or no ads`() {
+    fun `with the free ads taken a card with ads left is still played`() {
         val screen = Screen()
-        val loop = Loop(screen, set = QuestSkill.Settings(adPass = false))
+        val loop = Loop(screen, set = QuestSkill.Settings(dungeonAds = true))
         loop.dungeon = FakeDungeon(Dungeon.Budget(0, 2, 2))
         screen.push(20) { demidevimon(1) }
         loop.tick()
-        assertTrue(loop.parkedBecause?.contains("out of tickets") == true,
+        assertFalse(loop.parkedBecause?.contains("out of tickets") == true, "${loop.parkedBecause}")
+        assertTrue(loop.dungeon.ran, "the card was handed to the Dungeons bot")
+        assertTrue(loop.dungeonSettings(1, 1).useAds, "the film button is tapped")
+    }
+
+    /**
+     * The Dungeons page's ad switch, off (the player, 2026-09-30: the Quest
+     * Loop follows it): the card's two ads are not the loop's to spend, so a
+     * card at 0 tickets is the day being over, ads left or not, and the bot
+     * it hands a card to never taps the film button.
+     */
+    @Test
+    fun `with the Dungeons ad switch off a card at 0 tickets is the day being over`() {
+        val screen = Screen()
+        val loop = Loop(screen, set = QuestSkill.Settings(dungeonAds = false))
+        loop.dungeon = FakeDungeon(Dungeon.Budget(0, 2, 2))
+        screen.push(20) { demidevimon(1) }
+        loop.tick()
+        assertTrue(loop.parkedBecause?.contains("out of tickets until tomorrow (ads switched off)") == true,
                    "${loop.parkedBecause}")
-        assertTrue(loop.said.any { it.contains("not yours without the Ad Skip Pass") },
-                   "...and says why the ads do not count: ${loop.said}")
-        // The bot it builds is told the same thing, and only with the pass
-        // is it allowed to tap the film button at all.
-        assertFalse(loop.dungeonSettings(1, 1).useAds, "the Dungeons bot must not tap the film button")
-        val withPass = Loop(Screen(), set = QuestSkill.Settings(adPass = true))
-        assertTrue(withPass.dungeonSettings(1, 1).useAds, "...and with the pass it may")
+        assertTrue(loop.said.any { it.contains("its free ads are not taken (the Ad Rewards card)") }, "${loop.said}")
+        assertFalse(loop.dungeonSettings(1, 1).useAds, "the film button is not tapped")
+        assertTrue(Loop(Screen(), set = QuestSkill.Settings(dungeonAds = true)).dungeonSettings(1, 1).useAds,
+                   "...where with the switch on it is")
+    }
+
+    /** Off, the tickets alone are a counted answer: 1 ticket for a quest that wants 2 cannot be finished today. */
+    @Test
+    fun `with the Dungeons ad switch off the tickets alone say whether a quest can be finished`() {
+        val loop = Loop(Screen(), set = QuestSkill.Settings(dungeonAds = false))
+        assertNotNull(loop.dungeonShort(FakeDungeon(Dungeon.Budget(1, null, null)), 2))
+        assertNull(loop.dungeonShort(FakeDungeon(Dungeon.Budget(2, null, null)), 2))
+        val on = Loop(Screen(), set = QuestSkill.Settings(dungeonAds = true))
+        assertNull(on.dungeonShort(FakeDungeon(Dungeon.Budget(1, null, null)), 2),
+                   "with ads on, a card with tickets left says nothing about its ads")
     }
 
     @Test
@@ -813,6 +1009,44 @@ class QuestSkillTest {
     }
 
     /**
+     * Two pauses in one dungeon step (PLAN_RELEASE_1_3.md B4): the quest's
+     * dungeon is stopped by the switch, and stopped again as it goes on. The
+     * round stops with it, the game on the dungeon's screens; each time it
+     * goes on the same dungeon pass goes on ([QuestSkill.DungeonRun.resume]) --
+     * not a second one built afresh with the quest's whole want -- and once it
+     * is done the card is read as after any action.
+     */
+    @Test
+    fun `the quest loop's dungeon step paused twice goes on with the same dungeon pass`() {
+        class Pausing : QuestSkill.DungeonRun {
+            val outcomes = ArrayDeque(listOf(Outcome.STOPPED, Outcome.STOPPED, Outcome.DONE))
+            var runs = 0
+            var resumes = 0
+            override fun run(): Outcome { runs += 1; return outcomes.removeFirst() }
+            override fun resume(img: Mat): Outcome { resumes += 1; return outcomes.removeFirst() }
+            override fun resumesOn(screen: String, img: Mat): Boolean = screen == Director.DUNGEON_LIST
+            override val counted: Map<Pair<String, Int>, Dungeon.Budget> = mapOf(("top" to 1) to Dungeon.Budget(2, null, null))
+        }
+        // The round the director calls is `work`: it hands the stop back.
+        val loop2 = Loop(Screen().push(bakemon(0)), set = QuestSkill.Settings(step = 1))
+        val d2 = Pausing()
+        loop2.dungeonRun = d2
+        assertEquals(Result.STOPPED, loop2.work(loop2.look()).result, loop2.said.toString())
+        assertTrue(loop2.resumesOn(Director.DUNGEON_LIST, loop2.look()))
+        assertTrue(loop2.resumesOn(Director.MAIN, loop2.look()), "the loop lives on the main screen")
+        assertFalse(loop2.resumesOn(Director.SUMMON, loop2.look()), "not the summon step's screen")
+        assertEquals(Result.STOPPED, loop2.resume(loop2.look(), whole = true).result, loop2.said.toString())
+        loop2.screen.push(20) { bakemon(2) }
+        val done = loop2.resume(loop2.look(), whole = true)
+        assertTrue(done.result != Result.STOPPED, "$done ${loop2.said}")
+        assertEquals(1, d2.runs, "one dungeon pass, built once")
+        assertEquals(2, d2.resumes, "gone on with twice")
+        assertEquals(1, loop2.dungeonAsked.size, "no second dungeon for the same step: ${loop2.dungeonAsked}")
+        assertTrue(loop2.said.any { it.contains("progress: 0/2 -> 2/2") }, loop2.said.toString())
+        assertFalse(loop2.resumesOn(Director.DUNGEON_LIST, loop2.look()), "nothing left to go on with")
+    }
+
+    /**
      * The quest's dungeon is handed the tickets the quest still wants, not a
      * fixed two, and the quest's own attempts before Clear Previous
      * Difficulty (2026-09-23): a quest at 1/2 wants one ticket, and a quest
@@ -832,11 +1066,23 @@ class QuestSkillTest {
             .dungeonSettings(2, 1)
         assertEquals(mapOf(2 to 1), set.budgets)
         assertEquals(7, set.attemptsBeforeClear)
+        assertFalse(set.countLostOnly,
+                    "the quest's N counts every attempt; the Dungeons page's the failed ones (2026-10-04)")
         assertTrue(set.survey, "the survey stays on: dungeonShort reads it")
         assertEquals(mapOf(2 to 1), Loop(Screen()).dungeonSettings(2, 0).budgets,
                      "never a budget of 0, which the skill reads as 'do not play'")
         assertEquals(QuestSkill.ATTEMPTS_BEFORE_CLEAR,
                      Loop(Screen()).dungeonSettings(2, 2).attemptsBeforeClear)
+    }
+
+    /**
+     * The quest loop stays as it is (PLAN_DAILY_LOST_SECTOR_PRESETS.md,
+     * question 12): the Dungeons bot it builds for a quest plays no daily
+     * dungeon, whatever the Dungeons page gives it.
+     */
+    @Test
+    fun `the quest's dungeon bot gets no minutes for the daily dungeon`() {
+        assertEquals(0, Loop(Screen()).dungeonSettings(2, 1).dailyMinutes)
     }
 
     @Test
@@ -855,28 +1101,11 @@ class QuestSkillTest {
         // about how many attempts are left, and a loop that stopped on that
         // would stop on a quest it could still finish.
         val screen = Screen()
-        val loop = Loop(screen, set = QuestSkill.Settings(adPass = true))
+        val loop = Loop(screen, set = QuestSkill.Settings())
         loop.dungeon = FakeDungeon(Dungeon.Budget(1, null, null))
         screen.push(20) { demidevimon(0) }
         loop.tick()
         assertNull(loop.stoppedBecause)
-    }
-
-    /**
-     * The same card without the Ad Skip Pass: the unknown ads are nobody's,
-     * one ticket is one ticket, and a quest that wants two clears cannot be
-     * finished today. The loop switches off until the reset, as it does for
-     * a counted total that is short.
-     */
-    @Test
-    fun `without the Ad Skip Pass the tickets alone say whether a quest is short`() {
-        val screen = Screen()
-        val loop = Loop(screen, set = QuestSkill.Settings(adPass = false))
-        loop.dungeon = FakeDungeon(Dungeon.Budget(1, null, null))
-        screen.push(20) { demidevimon(0) }
-        loop.tick()
-        assertNotNull(loop.stoppedBecause, "one ticket, two clears wanted, no ads to count")
-        assertTrue(loop.stoppedBecause!!.contains("had 1 ticket left"), "${loop.stoppedBecause}")
     }
 
     @Test
@@ -920,7 +1149,7 @@ class QuestSkillTest {
     fun `the summon step opens the menu before it counts anything`() {
         val events = ArrayList<String>()
         val screen = Screen()
-        val loop = Loop(screen, set = QuestSkill.Settings(step = 4, adPass = true))
+        val loop = Loop(screen, set = QuestSkill.Settings(step = 4))
         loop.summon = FakeSummon(events)
         screen.push(20) { summonCard(0) }
         loop.tick()
@@ -932,24 +1161,74 @@ class QuestSkillTest {
     }
 
     /**
-     * Without the Ad Skip Pass, View Ads is a video, and the quest step is
-     * the one place a quest ever taps it: the bot is never asked to watch,
-     * the draw is still tried, and the park says why the ads were no help.
-     * Until 2026-09-24 the step watched them whatever the player had.
+     * The Summon page's ad switch, off: the bot the step builds watches no ad
+     * (its watchAds returns at once), and a step with nothing to draw says
+     * why it did not look for ads.
      */
     @Test
-    fun `without the Ad Skip Pass the summon step watches no ad`() {
+    fun `with the Summon ad switch off the step watches no ad and says so when it parks`() {
         val events = ArrayList<String>()
         val screen = Screen()
-        val loop = Loop(screen, set = QuestSkill.Settings(step = 4, adPass = false))
-        loop.summon = FakeSummon(events, adsToWatch = 2)
+        val loop = Loop(screen, set = QuestSkill.Settings(step = 4, summonAds = false))
+        loop.summon = FakeSummon(events)
         screen.push(20) { summonCard(0) }
         loop.tick()
-        assertFalse(events.contains("ads"), "View Ads was never asked for: $events")
-        assertTrue(events.contains("spam"), "the draw itself is still tried: $events")
-        assertTrue(loop.parkedBecause?.contains("not yours without the Ad Skip Pass") == true,
+        assertFalse(loop.summonSettings().watchAdsFirst, "the bot is built without the ad phase")
+        assertTrue(Loop(Screen(), set = QuestSkill.Settings(summonAds = true)).summonSettings().watchAdsFirst)
+        assertTrue(loop.parkedBecause?.contains("the free ads not taken in Summon (the Ad Rewards card)") == true,
                    "${loop.parkedBecause}")
-        assertTrue(events.contains("leave"), "$events")
+    }
+
+    /** The file a phone can carry into 1.3: both picks on, the pass as [pass], and `ad_watch` on, which nothing reads. */
+    private fun adFile(pass: Boolean) = MapSettings(mapOf(
+        SkillSettings.AD_PASS_KEY to pass, "ad_watch" to true,
+        Stored.DUNGEON_ADS_KEY to true, Stored.SUMMON_ADS_KEY to true))
+
+    /**
+     * The Quest Loop's two ways to a free ad are the bots it builds, with
+     * what [Stored.quest] reads (2026-10-03, PLAN_ABSCHLUSS_1_3.md 3.6).
+     * Without the pass -- both picks on, a supporter code, and `ad_watch` on
+     * in the file -- neither bot taps a film button or View Ads, and a card
+     * at 0 tickets is the day being over, over two passes; with the pass the
+     * tap is everybody's. DungeonSkillTest and SummonSkillTest play each
+     * bot through on these settings.
+     */
+    @Test
+    fun `without the pass the quest loop taps no free ad, with a code and ad_watch in the file, over two passes`() {
+        val none = Stored.quest(adFile(pass = false))
+        val screen = Screen()
+        val loop = Loop(screen, set = none)
+        loop.dungeon = FakeDungeon(Dungeon.Budget(0, 2, 2))
+        screen.push(40) { demidevimon(1) }
+        loop.tick()
+        loop.tick()
+        assertTrue(loop.parkedBecause?.contains("out of tickets until tomorrow (ads switched off)") == true,
+                   "${loop.parkedBecause}")
+        // The card is handed to the bot all the same -- its survey is what
+        // reads the counters -- and the bot is built with no film button.
+        assertFalse(loop.dungeonSettings(1, 1).useAds, "no film button")
+        assertFalse(loop.summonSettings().watchAdsFirst, "no View Ads")
+
+        val pass = Loop(Screen(), set = Stored.quest(adFile(pass = true)))
+        assertTrue(pass.dungeonSettings(1, 1).useAds)
+        assertTrue(pass.summonSettings().watchAdsFirst)
+    }
+
+    /**
+     * The summon step's bot met an ad where the pass was taken for granted
+     * and parked on it: nothing is drawn behind it, and the step parks with
+     * the bot's sentence.
+     */
+    @Test
+    fun `an ad in front after View Ads parks the summon step before any draw`() {
+        val events = ArrayList<String>()
+        val screen = Screen()
+        val loop = Loop(screen, set = QuestSkill.Settings(step = 4))
+        loop.summon = FakeSummon(events, parkOnAd = FreeAds.PARK)
+        screen.push(20) { summonCard(0) }
+        loop.tick()
+        assertFalse(events.contains("spam"), "no draw behind the ad: $events")
+        assertEquals(FreeAds.PARK, loop.parkedBecause)
     }
 
     /**
@@ -1012,8 +1291,8 @@ class QuestSkillTest {
     fun `a free ad watched is not 'nothing to draw with' either`() {
         val events = ArrayList<String>()
         val screen = Screen()
-        // With the pass, or the ad would not be watched in the first place.
-        val loop = Loop(screen, set = QuestSkill.Settings(step = 4, adPass = true))
+        // With the pass, or the ad would not be taken in the first place.
+        val loop = Loop(screen, set = QuestSkill.Settings(step = 4))
         loop.summon = FakeSummon(events, adsToWatch = 2)
         screen.push(20) { summonCard(0) }
         loop.tick()
@@ -1112,6 +1391,65 @@ class QuestSkillTest {
             loop.clock.jump(QuestSkill.NO_PROGRESS_AFTER * 0.9)
         }
         assertNull(loop.stoppedBecause)
+    }
+
+    /**
+     * PLAN_RELEASE_1_3.md B70, live on instance 1 on 2026-10-01: the
+     * semi-automatic rounds read the card at 13:15 and parked on it; at
+     * 13:29:32 the chain's quest step began on the same card, and at 13:30:06
+     * -- 34 s in -- it switched itself off with "nothing on the quest card has
+     * moved for 15 minutes": the clock was the rounds' reading's. Two chain
+     * runs over two such starts: each runs its own quarter of an hour before
+     * it gives up, and the second is not handed the first's ending.
+     */
+    @Test
+    fun `a chain step's standstill clock starts with the step, run after run`() {
+        // "Defeat 50 enemies": a card the loop only waits on, as it waited live.
+        val screen = Screen()
+        val loop = Loop(screen, set = QuestSkill.Settings(step = 3))
+        val starts = ArrayList<Double>()
+        val lasted = ArrayList<Double>()
+        repeat(2) { run ->
+            // The round reads the card, and nothing moves for twenty minutes.
+            screen.push(f(10, 50, name = 6))
+            loop.work(loop.look())
+            loop.clock.jump(QuestSkill.NO_PROGRESS_AFTER + 300)
+            starts += loop.clock.t
+            val out = loop.run()
+            lasted += loop.clock.t - starts.last()
+            assertEquals(Result.PARKED, out.result, "run $run: ${loop.said}")
+            assertTrue(out.why.startsWith("nothing on the quest card has moved for"), out.why)
+        }
+        for ((run, seconds) in lasted.withIndex()) {
+            assertTrue(seconds >= QuestSkill.NO_PROGRESS_AFTER,
+                       "run $run gave up after %.0f s, not after its own quarter of an hour: %s".format(seconds, loop.said))
+        }
+        assertEquals(2, loop.said.count { it.contains("switching the quest loop off: nothing on the quest card has moved") },
+                     loop.said.toString())
+    }
+
+    /**
+     * PLAN_BEFUNDE_1_3.md N3 d: "Wenn Quest Loop läuft, sollen zwischendurch
+     * die Bond Tokens collected werden". The chain's step waits on "Defeat
+     * 50 enemies" for minutes inside one turn of the director's, and the
+     * bond token had no round in all that time. Every round of the step
+     * that tapped nothing hands the main screen to the other rounds once
+     * ([QuestSkill]'s `aside`); a semi-automatic round (`work`) does not,
+     * since the director's own round of the main screen ticks them all.
+     * With the call taken out of the loop it is red, 0 looks.
+     */
+    @Test
+    fun `the chain's step gives the other rounds a look between two of its rounds that tapped nothing`() {
+        val screen = Screen()
+        var looks = 0
+        val loop = Loop(screen, set = QuestSkill.Settings(step = 3), aside = { looks += 1 })
+        screen.push(f(10, 50, name = 6))
+        loop.work(loop.look())
+        assertEquals(0, looks, "a round of the semi-automatic mode is not a step")
+        val out = loop.run()
+        assertEquals(Result.PARKED, out.result, loop.said.toString())
+        assertTrue(screen.taps.isEmpty(), screen.taps.toString())
+        assertTrue(looks >= 2, "the other rounds looked $looks times: ${loop.said}")
     }
 
     @Test
@@ -1234,6 +1572,37 @@ class QuestSkillTest {
     }
 
     /**
+     * The TODAY card's day is the game's (PLAN_REPORT_RAUS.md 2.12): one
+     * number from one reset to the next, a new one at 08:00 Vienna and not
+     * at midnight, on the two nights the clocks change as well -- and the
+     * phone's own zone does not come into it, so a phone in Tokyo counts the
+     * same day as one in Vienna.
+     */
+    @Test
+    fun `the TODAY card's day falls at the reset, not at midnight`() {
+        val before = TimeZone.getDefault()
+        try {
+            for (zone in listOf("Europe/Vienna", "Asia/Tokyo", "America/Los_Angeles")) {
+                TimeZone.setDefault(TimeZone.getTimeZone(zone))
+                val evening = QuestSkill.statsDay(at(2026, 9, 22, 23, 59))
+                assertEquals(evening, QuestSkill.statsDay(at(2026, 9, 23, 0, 1)), "$zone: midnight is not a new day")
+                assertEquals(evening, QuestSkill.statsDay(at(2026, 9, 23, 7, 59)), "$zone: still the day before eight")
+                assertEquals(at(2026, 9, 23, 8, 0).toLong(), evening, "$zone: the day is the reset that ends it")
+                val morning = QuestSkill.statsDay(at(2026, 9, 23, 8, 0))
+                assertTrue(morning > evening, "$zone: eight o'clock is a new day")
+                assertEquals(morning, QuestSkill.statsDay(at(2026, 9, 24, 7, 59)), "$zone: and it lasts until the next")
+                // The night the clocks go back (25 hours) and forward (23).
+                assertEquals(QuestSkill.statsDay(at(2026, 10, 24, 8, 0)), QuestSkill.statsDay(at(2026, 10, 25, 7, 59)))
+                assertTrue(QuestSkill.statsDay(at(2026, 10, 25, 8, 0)) > QuestSkill.statsDay(at(2026, 10, 25, 7, 59)))
+                assertEquals(QuestSkill.statsDay(at(2026, 3, 28, 8, 0)), QuestSkill.statsDay(at(2026, 3, 29, 7, 59)))
+                assertTrue(QuestSkill.statsDay(at(2026, 3, 29, 8, 0)) > QuestSkill.statsDay(at(2026, 3, 29, 7, 59)))
+            }
+        } finally {
+            TimeZone.setDefault(before)
+        }
+    }
+
+    /**
      * The whole rule in one run: the stop writes the lock, the lock holds
      * the budget until the reset and not a second less, and at the reset
      * the loop plays again by itself -- nobody restarts anything at eight in
@@ -1293,6 +1662,11 @@ class QuestSkillTest {
         assertFalse(held.hasBudget())
         assertEquals(1, said.count { it.contains("stopped until 2026-09-23 08:00") },
                      "said once, not once a round: $said")
+        // The chain's skip names the lock, where it said "nothing to do, on
+        // the settings as they stand" (PLAN_ABSCHLUSS_1_3.md A2, the Poco at
+        // 19:12:27 on 2026-10-02).
+        assertEquals("stopped until 2026-09-23 08:00: out of dungeon tickets", held.noBudgetWhy())
+        assertNull(loopAt(at(2026, 9, 23, 8, 0), until).noBudgetWhy())
         assertTrue(loopAt(at(2026, 9, 23, 8, 0), until).hasBudget(), "the lock has run out")
         assertTrue(loopAt(at(2026, 9, 22, 23, 30), null).hasBudget(), "no lock, no hold")
         // The player took the lock away by hand (the row's switch): the
@@ -1328,6 +1702,33 @@ class QuestSkillTest {
         assertNotNull(loop.stoppedBecause)
         assertTrue(loop.wall.locked.isEmpty(), "${loop.wall.locked}")
         assertTrue(loop.hasBudget())
+    }
+
+    /**
+     * The row switched off and on (PLAN_ABSCHLUSS_1_3.md A2): the loop's own
+     * ending goes with it, and not only the day's. A stop after three tries
+     * held every semi-automatic round after it until the chain's next quest
+     * step; the switch is the player saying "try now".
+     */
+    @Test
+    fun `the row's switch takes the loop's own ending away`() {
+        val (screen, loop) = parkingLoop(stopWhenStuck = true)
+        repeat(QuestSkill.PARK_GIVE_UP) {
+            screen.push(summonCard())
+            loop.tick()
+            loop.clock.jump(QuestSkill.PARK_RETRY + 1)
+        }
+        val why = assertNotNull(loop.stoppedBecause)
+        screen.push(summonCard())
+        loop.tick()
+        assertEquals(why, loop.stoppedBecause, "a round in the meantime leaves the stop where it is")
+        loop.restarted()
+        assertNull(loop.stoppedBecause)
+        assertNull(loop.parkedBecause)
+        // A loop that never stopped has nothing to forget.
+        val (_, fresh) = parkingLoop(stopWhenStuck = true)
+        fresh.restarted()
+        assertNull(fresh.stoppedBecause)
     }
 
     companion object {

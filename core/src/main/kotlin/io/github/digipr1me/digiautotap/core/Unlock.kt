@@ -37,8 +37,20 @@ import javax.crypto.spec.PBEKeySpec
  * whether it holds is decided here.
  */
 object Unlock {
-    const val KOFI_URL = "https://ko-fi.com/digipr1me"
+    /** The code is a shop item since 2026-10-02, pay what you want from 3 euros; the shop is what the app names. */
+    const val KOFI_URL = "https://ko-fi.com/digipr1me/shop"
     const val SAVED_FILE = "supporter.txt"
+
+    /**
+     * The code itself, in the clear, beside [SAVED_FILE] since 2026-10-02:
+     * the Settings card shows it, small and covered but for its first group
+     * ([masked]), so that a player can find it again (question 14 of
+     * PLAN_ABSCHLUSS_1_3.md). [SAVED_FILE] holds only the token the code was
+     * traded for, which is no code. Written when a code is redeemed, never
+     * into digiautotap.json, never into a shared log, never into the log; a
+     * phone that redeemed before has none.
+     */
+    const val CODE_FILE = "supporter_code.txt"
 
     /**
      * Where a random install id is kept, beside [SAVED_FILE] -- only on a
@@ -62,7 +74,7 @@ object Unlock {
      * (NetworkTest): the Worker in server/, deployed on 2026-09-23 on the
      * workers.dev subdomain it was given. An empty address ends every redeem
      * in [Activation.Result.Unreachable], which is the honest answer for
-     * "there is no server"; a moved Worker is a new release (NOTES.md,
+     * "there is no server"; a moved Worker is a new release (notes/publishing.md,
      * "Publishing", step 1).
      */
     const val ACTIVATION_URL =
@@ -77,7 +89,7 @@ object Unlock {
      * A list, and only ever appended to. If the private half of the key the
      * Worker signs with is lost, a new pair is made, its private half becomes
      * the Worker's `ACTIVATION_KEY`, and its public half goes on the end of
-     * this list in the next release (NOTES.md, "Publishing"). The old key
+     * this list in the next release (notes/publishing.md, "Publishing"). The old key
      * stays: every token a phone already holds was signed with it, and taking
      * it out would lock each of those supporters out at the update. What a
      * list cannot mend is a key that was *stolen* -- a token its thief signs
@@ -100,6 +112,16 @@ object Unlock {
     }
 
     fun pretty(code: String?): String = normalise(code).chunked(GROUP).joinToString("-")
+
+    /**
+     * "ABCD-····-····": the first group, and a dot for every other
+     * character. What the Settings card shows until it is tapped, and what
+     * the log says when a code is redeemed -- the log goes into every
+     * shared ZIP, and a picture of the page into Discord, and a code works on
+     * two devices.
+     */
+    fun masked(code: String?): String = normalise(code).chunked(GROUP)
+        .mapIndexed { i, g -> if (i == 0) g else "·".repeat(g.length) }.joinToString("-")
 
     /** Shape only, and no hashing: a typo answers at once, not after a second. */
     fun looksLikeCode(code: String?): Boolean = normalise(code).length == LENGTH

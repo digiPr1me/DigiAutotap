@@ -52,7 +52,7 @@ class CorpusTest {
         for (p in problems) println("  $p")
         assertTrue(problems.isEmpty(), "${problems.size} write site(s) name the corpus")
         // The scan has to be able to see a write site at all, or a silent
-        // regex would pass everything: the debug package and the oracle
+        // regex would pass everything: the log's ZIP and the oracle
         // writer are what it finds.
         assertTrue(writeSites >= 3, "the write-site scan sees $writeSites write sites, which is too few to trust it")
         println("write sites: $writeSites, none names $corpus/")

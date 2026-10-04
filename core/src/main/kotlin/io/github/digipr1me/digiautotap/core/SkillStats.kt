@@ -20,13 +20,16 @@ import java.util.Locale
  * digiautotap.json rather than a blob, for the reason every other key there
  * is plain -- a player or a bug report can read it.
  *
- * The day is handed in rather than taken: core has no notion of the
- * player's time zone, and a test that had to wait for midnight would not be
- * a test. The app passes `LocalDate.now().toEpochDay()`.
+ * The day is handed in rather than taken: a test that had to wait for the
+ * day to end would not be a test. It is any number that stays the same for
+ * a day and changes when the day does; the app passes
+ * [QuestSkill.statsDay], the game's next reset in epoch seconds, since
+ * 2026-10-04 -- the phone's epoch day before that, and the card fell at
+ * midnight.
  */
 object SkillStats {
 
-    /** The day the numbers below belong to, as an epoch day. */
+    /** The day the numbers below belong to, as the app hands it in ([QuestSkill.statsDay]). */
     const val DAY_KEY = "stats_day"
 
     fun key(skill: String, what: String) = "stats_${skill}_$what"
@@ -60,13 +63,35 @@ object SkillStats {
         // how many were cleared at once through Clear Previous Difficulty
         // (DungeonSkill.book). "cleared at once" rather than the button's
         // name, which [singular] would cut to "Previou".
+        //
+        // The daily dungeon's runs since 2026-09-29, and those the Reward
+        // sheet came in (DungeonSkill.playDaily, PLAN_DAILY_LOST_SECTOR_
+        // PRESETS.md 3.5); a lost one is in the log, because what the day
+        // gave for it is the attempt, and that is the run. The card is to be
+        // reworked later, the player's word: these two lines and no more.
+        //
+        // And the Lost Sector Tower's since the same day (LostSectorSkill,
+        // 3.5), on this card and not one of its own: the tower has no row in
+        // the Tasks list -- it stands or falls with the Dungeons row
+        // (Skills.rowFor) -- and a key with no row is a number nothing shows,
+        // which is why the bond tour counts under the passive helper's name
+        // (notes/director.md, "A number on the card is a thing the day gave
+        // the player"). CoreService adds its pass here under "dungeon".
         "dungeon" to listOf(Line("tickets", "tickets used"), Line("fights", "fights"),
                             Line("lost", "runs lost"), Line("cleared", "cleared at once"),
-                            Line("ads", "ads watched")),
+                            Line("ads", "ads watched"),
+                            Line("daily", "daily dungeon runs"),
+                            Line("daily_won", "daily dungeon runs won"),
+                            Line(LostSectorSkill.CARD_RUNS, "Lost Sector runs"),
+                            Line(LostSectorSkill.CARD_WON, "Lost Sector runs won")),
         "summon" to listOf(Line("summons", "summons"), Line("ads", "ads watched")),
         "mini" to listOf(Line("actions", "moves"), Line("meters", "metres"),
                          Line("rewards", "rewards collected")),
-        "farm" to listOf(Line("harvested", "harvested"), Line("planted", "planted")),
+        // Cans poured and proved, and the field's ads whose reward came,
+        // since 2026-09-28 (PLAN_MEAT_FIELD_GIESSEN.md 6.5). "cans used"
+        // reads "1 can used" for one ([singular]).
+        "farm" to listOf(Line("harvested", "harvested"), Line("planted", "planted"),
+                         Line("watered", "cans used"), Line("ads", "ads watched")),
         "tower" to listOf(Line("clicks", "taps")),
         // The Bond token card counts tokens and nothing else. "times Auto
         // Spend restarted" stood here while the row was called "Bond token,
@@ -84,24 +109,42 @@ object SkillStats {
         // stopped claiming the daily missions ([RETIRED]).
         "runner" to listOf(Line("runs", "runs"), Line("fevers", "Fever Times"),
                            Line("best", "best run", How.BEST)),
+        // Chef's Special, since 2026-09-30 (PLAN_SKEWER.md 3.5): the rounds,
+        // the combos the day's mission counts, and the longest combo of a
+        // round -- the game's own "N Combo", a thing one round is measured by
+        // and the day keeps the best of, as the runner's best run.
+        "skewer" to listOf(Line("rounds", "rounds"), Line("combos", "combos"),
+                           Line("best", "best combo", How.BEST)),
+        // A place already on its slot is not counted: nothing changed there.
+        "preset" to listOf(Line("switched", "presets switched")),
+        // Idle Rewards, since 2026-09-28: the claims and the Extra Rewards
+        // whose reward came (IdleSkill).
+        "idle" to listOf(Line("claims", "idle rewards claimed"), Line("ads", "ads watched")),
+        // EX Missions, since 2026-09-29 (ExMissionsSkill): the Claims that
+        // worked, counted as taps and not as missions -- one tap on the list
+        // claims every claimable row at once, up to five in EX1's measurement
+        // (PLAN_EX_MISSIONS.md 10.2), so "rewards claimed" would count one
+        // where the day gave five. "1 EX mission claim" for one ([singular]).
+        "exmissions" to listOf(Line("claims", "EX mission claims")),
     )
 
     /**
      * Keys a card used to show, and no longer does. [clear] still clears
      * them: it walks [SHOWN], so a key taken out of that table is a key
      * nothing would ever remove again, and yesterday's number would sit in
-     * digiautotap.json for good. Four, each from a card that lost a line
+     * digiautotap.json for good. Five, each from a card that lost a line
      * -- `summon_modes` on 2026-09-22, `passive_auto` with Auto Spend,
-     * `runner_claimed` when Gekkomon Run stopped claiming on 2026-09-23, and
+     * `runner_claimed` when Gekkomon Run stopped claiming on 2026-09-23,
      * `dungeon_attempts` when the dungeon card went over to tickets the same
-     * day.
+     * day, and `ads_closed`, the main page's "free ads" line, gone on
+     * 2026-10-03.
      */
     val RETIRED = listOf("summon" to "modes", "passive" to "auto", "runner" to "claimed",
-                         "dungeon" to "attempts")
+                         "dungeon" to "attempts", "ads" to "closed")
 
     /**
      * Add what one pass counted. The day stamp is rolled here and nowhere
-     * else: the first thing written after midnight clears yesterday, so a
+     * else: the first thing written after the reset clears yesterday, so a
      * card cannot show a number from a day that is over.
      *
      * A pass that counted nothing writes nothing at all. That is not
@@ -219,6 +262,17 @@ class Counted(
 
     override fun run(): Outcome {
         val outcome = inner.run()
+        add(inner.key, counts())
+        return outcome
+    }
+
+    /**
+     * A pass the switch paused and the director goes on with: counted like
+     * any other, because the stopped part handed its own numbers over as it
+     * stopped and the part that goes on counts from its own start (Skill.resume).
+     */
+    override fun resume(img: Mat, whole: Boolean): Outcome {
+        val outcome = inner.resume(img, whole)
         add(inner.key, counts())
         return outcome
     }

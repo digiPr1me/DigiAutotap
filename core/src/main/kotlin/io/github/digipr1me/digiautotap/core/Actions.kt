@@ -91,6 +91,14 @@ class Performed(
     val counters: Map<String, Long>,
     val img: Mat?,
     val deltas: Map<String, Long>,
+    /**
+     * Which look at the counters decided, 1 for the first; 0 where none was
+     * taken (a dry run). What the pace hangs on (Actor.onCleanSuccess), and
+     * until 2026-09-29 said nowhere (PLAN_WORLD_SEARCH_FORMATE.md F15).
+     */
+    val look: Int = 0,
+    /** Seconds after the tap at which each look began, one per look taken. */
+    val lookAt: List<Double> = emptyList(),
 )
 
 /**
@@ -114,6 +122,8 @@ class Actor(
     adaptive: Boolean = true,
     private val log: (String) -> Unit = { HelperLog.line(it) },
     private val sleep: (Double) -> Unit = { Thread.sleep((it * 1000).toLong()) },
+    /** The clock the looks are timed by ([Performed.lookAt]); not in actions.py. */
+    private val now: () -> Double = { System.nanoTime() / 1e9 },
 ) {
     // The three base values, and the three properties below that are those
     // values times the pace factor -- `base_click_delay` against
@@ -234,12 +244,21 @@ class Actor(
 
         if (dryRun) return Performed(Actions.OK, before, null, emptyMap())
 
+        // When each look began, after the tap. "Clean" is a confirmation on
+        // the first look, and nothing said which look it was: the format
+        // tour saw `pace 1.00` from the first action to the last on 31 of 35
+        // passes and could not tell a slow game from a slow bot
+        // (PLAN_WORLD_SEARCH_FORMATE.md F15). The times are not engine.py's;
+        // the looks are the same looks.
+        val tapped = now()
+        val lookAt = ArrayList<Double>()
         sleep(settle)
         var last = Performed(Actions.NO_EFFECT, before, null, emptyMap())
         // Python's loop variable outlives the loop and the tail below reads
         // it; here it is a variable of its own so that the reading is the same.
         var banner: String? = null
         for (attempt in 0 until verifyTries) {
+            lookAt.add(now() - tapped)
             val reading = readCountersMerged(need = Actor.RELEVANT[action.kind])
             val after = reading.counters
             banner = reading.banner
@@ -249,7 +268,15 @@ class Actor(
                 if (v != old) deltas[k] = v - old
             }
             val state = judge(action, worldColAtStart, deltas, banner)
-            last = Performed(state, after, reading.img, deltas)
+            last = Performed(state, after, reading.img, deltas, attempt + 1, lookAt.toList())
+            // Only the first part of the answer: look again while there is a
+            // look left ([whole]); on the last one the judgement stands as it is.
+            val part = (state == Actions.OK || state == Actions.MOVED_INSTEAD) &&
+                !whole(action, worldColAtStart, state, deltas, after.keys.filterTo(HashSet()) { it in before })
+            if (part && attempt < verifyTries - 1) {
+                sleep(baseClickDelay / verifyTries)
+                continue
+            }
             if (state == Actions.OK || state == Actions.MOVED_INSTEAD || state == Actions.INSUFFICIENT) {
                 if (state == Actions.OK && attempt == 0) {
                     onCleanSuccess()
@@ -263,13 +290,13 @@ class Actor(
                 return last
             }
             if (banner == Actions.BANNER_UNKNOWN_TEXT) {
-                return Performed(Actions.BANNER_UNKNOWN, after, reading.img, deltas)
+                return Performed(Actions.BANNER_UNKNOWN, after, reading.img, deltas, attempt + 1, lookAt.toList())
             }
             if (attempt < verifyTries - 1) sleep(baseClickDelay / verifyTries)
         }
         onTrouble()
         if (last.state != Actions.OK && last.deltas.isEmpty() && banner == "move") {
-            return Performed(Actions.BANNER_MOVE, last.counters, last.img, last.deltas)
+            return Performed(Actions.BANNER_MOVE, last.counters, last.img, last.deltas, last.look, last.lookAt)
         }
         return last
     }
@@ -323,6 +350,50 @@ class Actor(
         if (met != null && met > 0) return Actions.OK
         if (pickup || gain) return Actions.OK
         return Actions.NO_EFFECT
+    }
+
+    /**
+     * Is [deltas] the whole of the action's answer, or only its first part?
+     * [judge] says whether the action happened; this says whether all of it
+     * has reached the counters yet. The game moves its counters one after
+     * the other: the paw first and the metre of a step out of column 2 a
+     * moment later, a dash's metres one at a time. A look that confirmed on
+     * the first part left the rest to the next action's first look, and
+     * there it confirmed that action whatever its own tap had done -- a
+     * "clean" action, so the pace went down, the looks came earlier, and
+     * from then on every action was judged on the one before it. A Poco F3
+     * report of 2026-10-01: at pace under 0.95, 81 of 158 steps up, down
+     * or left carried a metre (a step that does not scroll yields none) and
+     * 79 of 323 steps out of column 2 carried none; at pace 1.00, 11 of 378
+     * and 4 of 752. Ten of the fourteen dashes from column 2 confirmed on
+     * fewer than their three metres. Each such action the World carried as
+     * confirmed was the figure's place or the board's scroll set by the
+     * wrong action, and the memory went one column off -- a pyramid it had
+     * held since it came into view forgotten, and a claw spent on it
+     * (notes/world-search.md, "The board's memory holds only as long as its
+     * scroll is the board's").
+     *
+     * So a look that has the paws or a needed metre standing still, where
+     * that counter reads on both sides ([readable]), is not the answer yet:
+     * a step, or a click on a pyramid that became one, moves the paws (a
+     * paw picked up on the way makes it +4, which is moved too); one out of
+     * column 2 moves the metres as well; the dash moves them by its whole
+     * gain, 3 from column 2 and 2 from column 1 ([World.applySkill]). A
+     * metre that went down is a misreading, not an answer to wait for, and
+     * holds nothing (F19's cut readings). Not in actions.py.
+     */
+    fun whole(action: Action, colAtStart: Int, state: String, deltas: Map<String, Long>,
+              readable: Set<String>): Boolean {
+        fun still(key: String) = key in readable && (deltas[key] ?: 0L) == 0L
+        val scrolls = colAtStart >= WorldConst.FIG_COL_MAX
+        if (action.kind == "step" || state == Actions.MOVED_INSTEAD) {
+            if (still("paws")) return false
+            return !(action.direction == "right" && scrolls && still("meters"))
+        }
+        if (action.kind == "skill" && "meters" in readable) {
+            return (deltas["meters"] ?: 0L) !in 0L until (if (scrolls) 3L else 2L)
+        }
+        return true
     }
 
     fun waitTick() = sleep(clickDelay)

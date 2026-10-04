@@ -21,15 +21,24 @@ object SkillSettings {
     sealed class Field(val key: String, val label: String)
 
     /**
-     * A box. [supporter] marks the one box that is a supporter's feature on
-     * a task that is not: the page greys it out without a code, and the
-     * skill that reads it asks the code again for itself.
+     * A box. [supporter] marks a box that is a supporter's feature on a task
+     * that is not: the page greys it out without a code, and the skill that
+     * reads it asks the code again for itself. There was one, the Bond token
+     * page's all-Digimon box, from 2026-09-23 to 2026-10-02 ([Paywall]); the
+     * mark stays for the next.
      */
     class Toggle(key: String, label: String, val default: Boolean, val note: String = "",
                  val supporter: Boolean = false) : Field(key, label)
 
+    /**
+     * A number. [heading] marks the first number of a block of its own: the
+     * page draws a rule above it and the heading under the rule, as the
+     * Dungeons page's minutes stand under the tickets (the only block there
+     * is, PLAN_DAILY_LOST_SECTOR_PRESETS.md 3.4).
+     */
     class Number(key: String, label: String, val default: Double, val min: Double,
-                 val max: Double, val decimal: Boolean = false, val note: String = "")
+                 val max: Double, val decimal: Boolean = false, val note: String = "",
+                 val heading: String = "")
         : Field(key, label)
 
     /**
@@ -42,6 +51,32 @@ object SkillSettings {
 
     /** "chain_steps": [{"key": ..., "minutes": ...}, ...] as chain.Step.to_dict. */
     class ChainSteps : Field("chain_steps", "The chain")
+
+    /** The preset profiles, each a name and a slot 1 to 10 per place ([Stored.presetProfiles]). */
+    class PresetProfiles : Field("preset_profiles", "Profiles")
+
+    /**
+     * A button, not a setting: the task [task] runs once, from the next plain
+     * main screen (DirectorLoop.runNow), as the Presets page's "Switch to"
+     * runs Presets. Nothing is written under [key]; it is a key only so that
+     * a page's fields stay one list. [note] is said beside the button.
+     */
+    class RunNow(val task: String, label: String, val note: String = "") : Field("${task}_now", label)
+
+    /** Said wherever a preset switch is asked for: the two things it needs (the player's words, 2026-09-26). */
+    const val PRESET_NEEDS = "The game must be on the main screen, and the overlay dot must not be grey."
+
+    /**
+     * Preset places the game does not have yet, shown greyed out under the
+     * real ones in the Presets sheet, with no field and nothing to tap
+     * (PLAN_DAILY_LOST_SECTOR_PRESETS.md 3.3 point 4). Gear comes with the
+     * game's next update; the player's call of 2026-09-28 (question 6) is a
+     * line in the interface and no code: no [Preset.Place], no key, no
+     * slot in a profile. The day the update is out, Gear is measured like
+     * Overdrive was and becomes a place, and leaves this list.
+     */
+    val PRESET_PLACEHOLDERS = listOf("Gear")
+    const val PRESET_PLACEHOLDER_NOTE = "Comes with the game's next update."
 
     class Page(val key: String, val title: String, val why: String, val fields: List<Field>,
                val supporter: Boolean = false, val note: String = "")
@@ -60,7 +95,20 @@ object SkillSettings {
 
     // chain.py: which keys a step may name, and the chain nobody has built yet.
     val CHAIN_WAITING = listOf("quest")
-    val CHAINABLE = listOf("dungeon", "summon", "mini", "farm", "runner")
+    // "lost_sector" since 2026-09-29 (PLAN_DAILY_LOST_SECTOR_PRESETS.md 3.6):
+    // a step of its own, added in the sheet by whoever wants it and not in
+    // CHAIN_DEFAULT (the player's answer to question 3). The daily dungeon
+    // needs no step: it lies on the Dungeons step's list.
+    // "exmissions" since 2026-09-29 (PLAN_EX_MISSIONS.md, the player's answer
+    // to question 7): offered in the chain's sheet, not in CHAIN_DEFAULT.
+    // "skewer" since 2026-09-30 (PLAN_SKEWER.md 3.1 and 4.2 point 3): Chef's
+    // Special, the other minigame of the Events window, right after
+    // Gekkomon Run; offered in the sheet, not in CHAIN_DEFAULT.
+    // "idle" was one from 2026-09-28 to 2026-10-02, when Idle Rewards left the
+    // interface (PLAN_BEFUNDE_1_3.md N3 a); a saved chain that still names it
+    // is skipped as any unknown key is ("no such skill on the phone").
+    val CHAINABLE = listOf("dungeon", "summon", "mini", "farm", "runner", "skewer", "lost_sector",
+                           "exmissions")
     // There were two more, `quest_on` and `quest_off`: steps that ticked and
     // unticked the quest loop's own switch in the middle of a chain. The
     // switch they flipped is gone (the passive page below), and no skill on
@@ -80,6 +128,9 @@ object SkillSettings {
         "mini" to "Digital World Search",
         "farm" to "Meat Field",
         "runner" to "Gekkomon Run",
+        "skewer" to "Chef's Special",
+        "lost_sector" to "Lost Sector Tower",
+        "exmissions" to "EX Missions",
     )
 
     /** Semi- or fully automatic (PLAN_ANDROID_APP.md 5.1), one setting. */
@@ -93,17 +144,24 @@ object SkillSettings {
      * page field (the player's decision of 2026-09-24, PLAN_AD_PASS.md).
      * With the pass every reward the game puts behind an ad comes without
      * the video -- the two ad tickets of a dungeon, the two free draws of
-     * a summon mode -- and so the free ads are watched, in Dungeons, in
-     * Summon and in the Quest Loop alike. Without it the same tap opens an
-     * ad video that no reader knows, so no free ad is ever tapped.
+     * a summon mode. Without it the same tap opens an ad video, an
+     * activity of its own, and the app never touches one: without the pass
+     * no free ad is tapped at all ([FreeAds]; notes/ads.md, "The app never
+     * touches an ad, and nothing that closed one ships"). Which tasks take
+     * their free ads is each task's pick ([Stored.AD_PICKS], off by
+     * default).
      *
-     * Off by default: the failure with the pass and the switch off is a
-     * free reward left lying, said on the main page; the failure without
-     * the pass and the switch on was a video being tapped into. It stood
-     * as two task boxes until that day, `use_ads` on Dungeons and
-     * `summon_ads` on Summon, both on by default and neither asked by the
-     * quest loop, which built its bots with the ads hard-wired on. An old
-     * digiautotap.json keeps the two keys; nothing reads them.
+     * Off by default: off with the pass leaves a free reward lying, which
+     * the player sees on the card; on without the pass makes the game ask
+     * for an ad all the same, and the task parks on it with nothing tapped
+     * ([FreeAds.PARK]). It stood as two task boxes until 2026-09-24,
+     * `use_ads` on Dungeons and `summon_ads` on Summon, both on by default
+     * and neither asked by the quest loop, which built its bots with the
+     * ads hard-wired on. An old digiautotap.json may keep the two keys,
+     * `ad_pass_seen` and `ad_watch` as well; nothing reads them, and the
+     * switches of 2026-09-30 have new keys so that it never will.
+     *
+     * Since 2026-10-02 it is the head of the main page's Ad Rewards card.
      */
     const val AD_PASS_KEY = "ad_pass"
     const val AD_PASS_DEFAULT = false
@@ -115,29 +173,53 @@ object SkillSettings {
      */
     const val GAME_KEY = "game_package"
 
-    /** Said on the Dungeons and Summon pages, where the two boxes used to be. */
-    const val AD_PASS_NOTE = "The free ads are watched with your Ad Skip Pass -- its switch " +
-        "is on the main page."
-
+    // The three pages' ad switches -- "Watch the free ads for tickets" on
+    // Dungeons, "Watch the free ads first" on Summon, "Watch the free ads
+    // for seeds and cans" on Meat Field, each its page's first line, and the
+    // note they shared -- went onto the main page's Ad Rewards card on
+    // 2026-10-02 as its picks, keys and all (Stored.AD_PICKS, question 13
+    // of PLAN_ABSCHLUSS_1_3.md). The sheets point there.
     val PAGES: List<Page> = listOf(
         Page("dungeon", "Dungeons", "Spends the day's dungeon tickets.", listOf(
             DungeonAttempts(),
-            Number(Stored.DUNGEON_CLEAR_KEY, "Attempts before Clear Previous Difficulty",
+            // Failed attempts since 2026-10-04, the player's words
+            // (DungeonSkill.Settings.countLostOnly); the key is the old one,
+            // so that nobody's number went with the change.
+            Number(Stored.DUNGEON_CLEAR_KEY, "Failed attempts before Clear Previous Difficulty",
                    DungeonSkill.ATTEMPTS_BEFORE_CLEAR.toDouble(), 0.0, 99.0,
-                   note = CLEAR_NOTE),
+                   note = DUNGEON_CLEAR_NOTE),
             // "Use ad tickets" (`use_ads`) stood here until 2026-09-24, with
             // the note "Ads are only watched if you have bought the ad
             // pass" -- which is to say the box was the pass question in
-            // disguise. It is [AD_PASS_KEY] now, once, on the main page.
-        ), note = AD_PASS_NOTE),
+            // disguise. It is [AD_PASS_KEY] now, once, on the main page, and
+            // the switch at the top of this page is whether, not how.
+            //
+            // Under a rule since 2026-09-29, the two that are played by the
+            // minute rather than by the ticket (PLAN_DAILY_LOST_SECTOR_
+            // PRESETS.md 3.4): the daily dungeon, "Daily Dungeon" on the page
+            // (the player's name, question 1) and "Daily changing dungeon" in
+            // the log, and the Lost Sector Tower. Below the tickets' number
+            // for Clear Previous Difficulty, which belongs to the tickets, so
+            // that the rule parts the page in two. No ceiling a player meets
+            // (question 11): 10,000 is only the number the field needs, and
+            // the page names no limit. "Set all" stamps the tickets alone.
+            Number(Stored.DUNGEON_DAILY_KEY, "Daily Dungeon", 0.0, 0.0, MINUTES_MAX,
+                   heading = "How many minutes"),
+            // Read by LostSectorSkill since DL4 (Stored.lostSector). On this
+            // page because the tower has no row of its own: it stands or
+            // falls with the Dungeons row (Skills.rowFor).
+            Number(Stored.LOST_SECTOR_MINUTES_KEY, "Lost Sector Tower", 0.0, 0.0, MINUTES_MAX,
+                   note = MINUTES_NOTE),
+        )),
         Page("summon", "Special Summon",
              "Spends summon tickets on the General tab, mode by mode.", listOf(
             Toggle("summon_skill", "Skill Card Summon", true),
             Toggle("summon_support", "Support Digimon Summon", true),
             Toggle("summon_crest", "Crest Summon", true),
             // "Watch the free ads first" (`summon_ads`) stood here until
-            // 2026-09-24; it is [AD_PASS_KEY] now, the same switch the
-            // Dungeons page lost.
+            // 2026-09-24; it was [AD_PASS_KEY] until 2026-09-30, the switch
+            // at the top of this page under a new key until 2026-10-02, and
+            // the Ad Rewards card's Summon pick since.
             Number("summon_max", "Summons per mode (0 = all)", 0.0, 0.0, 500.0),
         ),
              // Said on the page because it is the one thing about this task a
@@ -146,7 +228,7 @@ object SkillSettings {
              // (SummonSkill.onGeneral, the player's rule of 2026-09-22).
              note = "Open the General tab of Special Summon yourself. DigiAutotap only " +
                  "works there and never taps anything on Buddy, SP Support or Overdrive, " +
-                 "where draws cost purchased gems. " + AD_PASS_NOTE),
+                 "where draws cost purchased gems."),
         // World Search has no page any more, and no fields: the row's own
         // switch is the whole of its interface, and switched on it collects
         // everything the board has. What stood here was app.py's `_page_mini`
@@ -161,6 +243,26 @@ object SkillSettings {
         // what the skill runs on now, everything wanted and no limit. The two
         // that were never on the page either, `wait_for_board` (180 s) and
         // `navigate`, are among them.
+        //
+        // It has a page again since 2026-09-28 with one switch on it, which
+        // the player asked for on 2026-09-27: whether two or more pyramids in
+        // the row ahead are dashed through even when that loses something in
+        // another row (PLAN_WORLD_SEARCH_DASH.md, version A; Planner's
+        // `dashEager`). Off is the rule as it was. Like the Quest Loop's
+        // number, it is a choice the player wants made, not a second switch
+        // in front of the row's.
+        Page("mini", "World Search", "Plays the Digital World Search board.", listOf(
+            Toggle(Stored.WORLD_SEARCH_DASH_KEY, "Dash through two or more pyramids", false,
+                   "Off, a dash is taken only when walking would clearly cost more, and never " +
+                       "while something in another row would scroll off the board. On, two or " +
+                       "more pyramids in the row ahead are always dashed through, even if that " +
+                       "loses something in another row -- the log says what."),
+        ), note = "When switched on, World Search plays the board and collects everything on " +
+            "it -- tickets, claws, paws and fireballs -- until the paws run out. Claws and " +
+            "dashes recharge slowly, so it walks around a pyramid whenever it can and breaks " +
+            "one only when there is no way around; it dashes when it is walled in or walking " +
+            "would clearly cost more, and, unless the switch above is on, never past a " +
+            "power-up that would scroll off."),
         // The quest loop's switches are gone from here and stay gone: the
         // Quest Loop row's switch in the list is what includes it, and
         // switched on the loop works every step of the routine -- the dungeon
@@ -193,12 +295,11 @@ object SkillSettings {
             // "Collect the bond token" beside it: with the feature included,
             // the token of the Digimon being raised is collected, and the one
             // thing left to choose is whether the others are visited too.
-            // That choice is a supporter's since 2026-09-23; the row itself
-            // is everybody's (BondTourSkill.hasBudget asks the code).
+            // That choice was a supporter's from 2026-09-23 to 2026-10-02,
+            // and is everybody's since, as the row is ([Paywall]).
             Toggle("passive_all_digimon", "Collect for all of the Digimon", false,
                    "Goes through the Partner screen and taps Raise on each Digimon. That " +
-                       "only changes which Digimon you are raising and costs nothing.",
-                   supporter = true),
+                       "only changes which Digimon you are raising and costs nothing."),
         )),
         // The Meat Field had a page here until 2026-09-22, and one switch on
         // it: "Keep the field farmed", off by default. It was the same
@@ -209,6 +310,41 @@ object SkillSettings {
         // whose one box was unticked and changed nothing either way.
         // Dropped, and with it the page, so the row's Settings card says
         // what the task does instead (Skills.kt).
+        //
+        // A page again since 2026-09-28 with the two switches the player
+        // asked for on 2026-09-27 (PLAN_MEAT_FIELD_GIESSEN.md 4.5), both off
+        // by default because both spend or start something not every player
+        // wants: the Good and Great seeds once the free ones are out, and the
+        // field's own ads for seeds and cans. Neither is a second switch in
+        // front of the row's: watering has no switch (4.8), and with the row
+        // on and both off the task does what it did, and waters. The row's
+        // `noSettings` sentence is this page's note now.
+        Page("farm", "Meat Field", "Harvests, plants and waters the Meat Field.", listOf(
+            Toggle(Stored.FARM_BETTER_SEEDS_KEY, "Use Good and Great seeds when the free ones are out", false,
+                   "Off, planting stops when the free seeds are at 0. On, the empty plots get Good " +
+                       "seeds, then Great ones -- only while no free seed is left; as soon as one " +
+                       "has come back (one an hour), the free seed is planted again."),
+            // "Watch the free ads for seeds and cans" (Stored.FARM_ADS_KEY)
+            // stood here from 2026-09-28 to 2026-10-02, and is the Ad Rewards
+            // card's Meat Field pick since.
+            // The player's threshold of 2026-09-28 (PLAN_MEAT_FIELD_GIESSEN.md
+            // 13): "everything over 20 minutes is watered", and only with as
+            // many cans as ripen the plot at once.
+            Number(Stored.FARM_WATER_MIN_KEY, "Water only plots with more than this many minutes left",
+                   FarmSkill.WATER_MIN_MINUTES.toDouble(), 0.0, 240.0,
+                   note = "A plot is watered only when the cans in hand ripen it at once -- " +
+                       "30 minutes a can. 0 waters every growing plot."),
+        ),
+            // A supporter's page from 2026-09-28 to 2026-10-02, everybody's since ([Paywall]).
+            note = "When switched on, the task harvests what is ripe, plants the free seeds in " +
+                "the empty plots and waters the growing plots with the free watering cans -- " +
+                "the shortest times first, and only with as many cans as ripen a plot -- " +
+                "and harvests and plants again what that ripens. Where the field's free ads are " +
+                "taken (the Ad Rewards card on the main page), the cans' ad is still to be had " +
+                "today and the cans in hand ripen no plot, they go on the plot that ripens " +
+                "first, so that the game offers the ad. The large watering can is " +
+                "never used, and nothing is bought. In fully automatic mode it goes to the Meat Field by itself when there " +
+                "is something to do, and comes back afterwards."),
         // Tower & Ruins had a page here until 2026-09-22 -- one field, the
         // seconds between clicks, and a note about setting its point with
         // the overlay dot. The player took the whole feature out of the
@@ -231,11 +367,58 @@ object SkillSettings {
             Number("runner_fevers", "Fever Times per day", RunnerSkill.FEVER_TARGET.toDouble(), 1.0, 20.0),
         ), supporter = true,
             note = "Plays one run after another until this many Fever Times are reached " +
-            "today, counted over all runs, then stops until the daily reset at 8:00. " +
+            "today, counted over all runs, then stops until the daily reset at 8:00 -- or until " +
+            "you switch it off and on, which starts the day's count again. " +
             "It does not claim any rewards. " +
             "One limit is built in and cannot be changed: at 15,000 points it stops " +
             "playing and lets the run end, then starts the next one. That is on purpose, " +
             "so that no leaderboard record is set by a bot. Ended runs cost nothing."),
+        // Chef's Special, since 2026-09-30 (PLAN_SKEWER.md 3.1): the skewer
+        // minigame of the Events window, a supporter's task like Gekkomon Run
+        // (question 5). One number, the combos a day wants, 16 by default,
+        // 1 to 30: the event's daily mission counts fifteen ("Achieve
+        // Minigame combo 15 times", question 13), and the sixteenth is the
+        // player's margin. No score cap (question 4) and no stage choice
+        // (question 3): the stage is the one the game has chosen.
+        Page("skewer", "Chef's Special", "Plays the skewer minigame for the day's combos.", listOf(
+            Number(Stored.SKEWER_COMBOS_KEY, "Combos per day", SkewerSkill.COMBO_TARGET.toDouble(), 1.0, 30.0),
+        ), supporter = true,
+            note = "Plays one round after another until this many combos are counted today, then " +
+                "leaves the round through its pause menu and stops until the daily reset at 8:00 -- or " +
+                "until you switch it off and on, which starts the day's count again. " +
+                "A combo is a guest served right after a guest served right in the same round, the " +
+                "\"N Combo\" the game shows; a mistake or a new round starts the running combo again, " +
+                "and what is counted stays counted. The event's daily mission needs 15. Rounds cost " +
+                "nothing, and the stage is the one the game has chosen. Only one minigame runs at a " +
+                "time: switching this task on switches Gekkomon Run off, and the other way round."),
+        // Presets, since 2026-09-25 (PLAN_PRESET_SWITCH.md): saved profiles,
+        // each a name and a slot per place, picked and switched to on this
+        // page (design A of 2026-09-26). The note is two sentences since the
+        // player's edit of 2026-09-26; the one between them, "keep the same
+        // kind of preset in the same slot everywhere", went.
+        Page("preset", "Presets", "Sets the game's presets to one of your profiles.",
+             listOf(PresetProfiles()), supporter = true,
+             note = "Presets are chosen by their number, not their name. \"Switch to\" goes " +
+                 "through every place with a number, sets it and comes back to the main screen."),
+        // Idle Rewards had a page here from 2026-09-28 (PLAN_WERBUNG.md 11 and
+        // 16) to 2026-10-02, when the task left the interface
+        // (PLAN_BEFUNDE_1_3.md N3 a). Its one switch was the Extra Rewards'
+        // two ads a day, `idle_ads` ([Stored.IDLE_ADS_KEY]), which IdleSkill
+        // still reads; a saved `idle_ads` disturbs nothing.
+        // EX Missions, since 2026-09-29 (PLAN_EX_MISSIONS.md): a supporter's
+        // task (question 5) with no clock (question 2) -- its button runs it,
+        // the chain has it as a step (question 7), and in the semi-automatic
+        // mode it works the Missions window wherever it is open (question 6).
+        // So the page is the button and nothing else.
+        Page("exmissions", "EX Missions", "Claims the rewards of the EX Missions tab.", listOf(
+            RunNow(ExMissionsSkill.KEY, "Claim now", note = PRESET_NEEDS),
+        ), supporter = true,
+            note = "When switched on, the task claims the rewards in the EX Missions tab of the " +
+                "Missions window -- the second row from the top until it is no longer yellow, then the " +
+                "top row, and again until nothing is yellow -- and touches nothing else in that " +
+                "window. It never starts by itself: tap \"Claim now\", add it to the fully automatic " +
+                "order, or open the Missions window yourself in semi-automatic mode (the Daily " +
+                "Missions tab is left to you). When it opened the window itself, it closes it again."),
         Page("chain", "Skill Chain", "The order of the fully automatic mode.", listOf(
             ChainSteps(),
             Toggle("chain_repeat", "Repeat the whole sequence until Stop", false,
@@ -245,8 +428,33 @@ object SkillSettings {
 
     fun page(key: String): Page = PAGES.first { it.key == key }
 
+    /**
+     * The ceiling of the two minutes fields on the Dungeons page. Not a
+     * limit anybody is meant to meet -- the player's answer to question 11
+     * was "no maximum" -- but [Number] needs one, and the page does not say it.
+     */
+    const val MINUTES_MAX = 10_000.0
+
+    /**
+     * The sentence under the minutes (PLAN_DAILY_LOST_SECTOR_PRESETS.md 3.4),
+     * "each time" per question 2. Since DL4 it says when each of the two
+     * runs: the tower is a step of its own in the chain (question 3) and the
+     * Crests page's task in the semi-automatic mode, not a part of the
+     * Dungeons pass, so "each time Dungeons runs" alone was true of the daily
+     * dungeon only.
+     */
+    const val MINUTES_NOTE = "Both are played for this many minutes, attempt after attempt -- " +
+        "the daily dungeon each time Dungeons runs, the Lost Sector Tower each time its own " +
+        "step of the chain runs or its Crests page is open. They cost nothing. 0 leaves them out."
+
     /** What Clear Previous Difficulty is, said once for both pages that set it. */
     const val CLEAR_NOTE = "A lost run costs no ticket and is tried again. After this many " +
         "attempts on one dungeon, the tickets still to spend go to Clear Previous " +
         "Difficulty, which hands out the previous difficulty's rewards at once."
+
+    /** The Dungeons page's: only a failed attempt counts there (DungeonSkill.Settings.countLostOnly). */
+    const val DUNGEON_CLEAR_NOTE = "A failed attempt is a run that ends without rewards and " +
+        "goes back to the dungeon; it costs no ticket and is tried again. A won run does not " +
+        "count. After this many failed attempts on one dungeon, the tickets still to spend go " +
+        "to Clear Previous Difficulty, which hands out the previous difficulty's rewards at once."
 }

@@ -21,6 +21,10 @@ import org.opencv.core.Mat
  *                     come home -- "hingehen, work, nach Hause"
  *   leave()           run's last third alone: from the skill's own screen,
  *                     home -- the chain's second hand (DirectorLoop.full)
+ *   leavesFrom(s, img) a screen no skill works on that leave() takes home
+ *                     from all the same: a dungeon's panel, for Dungeons
+ *   resumesOn(s, img) can the pass the main switch stopped go on from s
+ *   resume(img, whole) go on with it: the same pass, where it stood
  *
  * Where the seam lies in each Python skill, so that the skill sessions cut
  * it at the same place (the Python skills are **not** rebuilt for it; the
@@ -59,9 +63,9 @@ import org.opencv.core.Mat
  *
  * What a skill may not do is answer for the director. It taps nothing on a
  * screen it was not given, it presses OK on no prompt it did not raise
- * (NOTES.md, "Prompts and dialogs"), and it checks the main switch between
- * two actions, never in the middle of one (`guard.Stop`; NOTES.md,
- * "wait_while_paused does not answer 'was I stopped'").
+ * (the laboratory's notes, "Prompts and dialogs"), and it checks the main
+ * switch between two actions, never in the middle of one (`guard.Stop`; the
+ * laboratory's notes, "wait_while_paused does not answer 'was I stopped'").
  */
 interface Skill {
     /** The settings key the shell knows it by: "dungeon", "summon", "farm", ... */
@@ -81,6 +85,16 @@ interface Skill {
      * (chain.py, farm_is_due).
      */
     fun hasBudget(): Boolean
+
+    /**
+     * Why [hasBudget] says no, where the skill knows a better reason than
+     * the settings -- a day already over by a clock it wrote itself -- or
+     * null, and the chain says "nothing to do, on the settings as they
+     * stand" as it always did. Asked only after [hasBudget] answered false
+     * (PLAN_DAILY_LOST_SECTOR_PRESETS.md G20: a retired Lost Sector Tower
+     * was skipped "on the settings" while its minutes stood on the page).
+     */
+    fun noBudgetWhy(): String? = null
 
     /**
      * Is there work on THIS frame, on a screen [worksOn] said yes to?
@@ -128,12 +142,95 @@ interface Skill {
      * standing after [Director.SETTLE] -- the second hand of the chain
      * (DirectorLoop.full). Every walking skill already has this way home in
      * its `run`'s finally; this is the seam that lets somebody else ask for
-     * it. Not gated on the main switch, bounded, and it taps only what it
-     * has recognised, as every way home here does. The default is "I have
-     * none": the round-skills live on the main screen, and the Tower has no
-     * screen of its own.
+     * it. Bounded, and it taps only what it has recognised, as every way
+     * home here does. And gated on the main switch since 2026-09-30, as
+     * every way home is ([Stays]): with the switch off it taps nothing and
+     * the game stays where it is (PLAN_WORLD_SEARCH_FORMATE.md F24). The
+     * default is "I have none": the round-skills live on the main screen,
+     * and the Tower has no screen of its own.
      */
     fun leave(): Boolean = false
+
+    /**
+     * Is [img], a [screen] no skill [worksOn], one this skill's [leave] takes
+     * home from all the same? Asked by the chain's second hand only
+     * (DirectorLoop's `secondHand`), on what a step or a round of the fully
+     * automatic mode left standing -- never on a screen the player opened.
+     *
+     * A dungeon's panel is the one such screen (PLAN_ABSCHLUSS_1_3.md A5i,
+     * question 22): the director calls it `dialog`, as it calls every pop-up,
+     * no skill works on it, and the globe is not read under it, so the second
+     * hand parked there with "no way home" -- live on instance 0 on
+     * 2026-10-03 at 18:14:53, after the quest loop's round had opened
+     * DemiDevimon's panel and lost its frame on it. Dungeons' own way home
+     * closes a panel at the end of every card it plays, and says yes here on
+     * the panels its readers prove (DungeonSkill.leavesFrom). It is asked
+     * every look of the second hand, so it reads cheaply and taps nothing;
+     * the default is no, and the screen parks as it did.
+     */
+    fun leavesFrom(screen: String, img: Mat): Boolean = false
+
+    /**
+     * Can the pass the main switch stopped go on from [screen]? The name
+     * alone; [resumesOn] with the frame is what the director asks, and its
+     * default asks this.
+     *
+     * The player's rule of 2026-09-29 (PLAN_WORLD_SEARCH_FORMATE.md F27) for
+     * World Search on the board, made every task's on 2026-09-30
+     * (PLAN_RELEASE_1_3.md B4): a pass the switch paused goes on where it
+     * stood, in both modes. The default is false: the screen is the
+     * player's, as before.
+     */
+    fun resumesOn(screen: String): Boolean = false
+
+    /**
+     * Can the pass the main switch stopped go on from [screen], with [img]
+     * in front? Asked by the director (DirectorLoop) of the task the switch
+     * stopped -- a chain step, the semi-automatic mode's work, a round of
+     * the main screen, a task the page asked for -- on every look of the
+     * pause and on the first looks after it: true on every look keeps the
+     * claim, and with the switch back on hands this screen to [resume]; a
+     * known screen that says false ends it, and the screen is the
+     * player's, as it always was (notes/director.md, "A pass the switch
+     * paused goes on where it stands, and a screen the player opened is
+     * still the player's", and its extension of 2026-09-30).
+     *
+     * The frame is there for the screens the director's `classify` does
+     * not name as the task's own: the Reward sheet after a won run is
+     * `unknown` to the director and a dungeon panel `dialog`, and only the
+     * task can say they are the ones it stopped on. It is asked every
+     * round of a pause, so it reads cheaply and taps nothing.
+     */
+    fun resumesOn(screen: String, img: Mat): Boolean = resumesOn(screen)
+
+    /**
+     * Go on with the pass the main switch stopped, from [img], a screen
+     * [resumesOn] said yes to -- or, for a chain step whose claim ended, the
+     * plain main screen. The same pass, not a new one: what it has spent
+     * (tickets, draws, ads, minutes, places) is the pass's and counts
+     * against its limits; what it counts for the TODAY card is only what
+     * it does from here, since the stopped part handed its own count over
+     * as it stopped (notes/director.md, "A counter nothing clears is counted
+     * again at the end of every pass").
+     *
+     * [whole]: end as [run] ends, at home -- a chain step, a round of the
+     * main screen, a task the page asked for; false ends where [work]
+     * ends, on the screen the semi-automatic mode handed over. The default
+     * begins afresh, for a skill whose pass carries nothing: [run], or
+     * [work] on [img].
+     */
+    fun resume(img: Mat, whole: Boolean): Outcome = if (whole) run() else work(img)
+
+    /**
+     * The player switched this task's row off and on (PLAN_ABSCHLUSS_1_3.md
+     * A2): its day is gone from the file already (Stored.restart), and what
+     * the skill itself still carries of an ending -- the quest loop's
+     * "switched off" ([QuestSkill.resume]) -- is forgotten here. Called by the
+     * director on its own thread, at the round after the switch; never in
+     * the middle of a turn. The default carries nothing: every other task
+     * asks the file afresh at every question.
+     */
+    fun restarted() {}
 
     /**
      * The beat this skill wants until its next round, in seconds, or null
@@ -145,6 +242,21 @@ interface Skill {
      * answer, and a skill that has nothing to say answers null.
      */
     fun beat(): Double? = null
+
+    /**
+     * Is [screen] a window this round-skill's own tap opened a moment ago?
+     *
+     * Asked by the director of the round-skills (DirectorLoop's `rounds`) on
+     * any screen but the main one, in both modes, before anything else is
+     * decided about that screen: true gives it to [work], which closes it,
+     * where the director would otherwise have parked on a window it did not
+     * open itself. The bond token's tap on the figure opens the Partner
+     * window whenever the token was taken a moment earlier, and the round
+     * that knows to close it was never asked (notes/bond.md, "A window the
+     * bond token's own tap opened is the bond token's to close"). The
+     * default is false: nothing any other round taps opens a window.
+     */
+    fun opened(screen: String): Boolean = false
 }
 
 /**
@@ -167,9 +279,20 @@ class Outcome(
      * what it was doing -- "leaving the dungeon" -- and the director then
      * presses OK on a pink prompt in the hand-over right after, and on no
      * other. The three pink prompts are identical to the pixel and only the
-     * caller knows which one it raised (NOTES.md, "Prompts and dialogs").
+     * caller knows which one it raised (the laboratory's notes, "Prompts
+     * and dialogs").
      */
     val leaving: String? = null,
+    /**
+     * The run ended because a frame could not be taken ([CaptureError]) --
+     * the player opened another app, this one included, or the screenshot
+     * failed -- and not because of anything on the screen. Such a step has
+     * not failed: back on the main screen the director begins it again
+     * instead of retiring it for the chain run (PLAN_ABSCHLUSS_1_3.md K1;
+     * notes/director.md, "A step that lost its frame has not failed").
+     * Carried by the outcome itself, never told from the words of [why].
+     */
+    val lostFrame: Boolean = false,
 ) {
     override fun toString(): String =
         result.name.lowercase() + (if (why.isNotEmpty()) ": $why" else "")
@@ -179,6 +302,95 @@ class Outcome(
         val STOPPED = Outcome(Result.STOPPED)
         fun parked(why: String) = Outcome(Result.PARKED, why)
         fun retired(why: String) = Outcome(Result.RETIRED, why)
+        /** A park whose cause is a lost frame ([lostFrame]), with the error's sentence after [what]. */
+        fun noFrame(e: CaptureError, what: String = "no frame") =
+            Outcome(Result.PARKED, "$what: ${e.message}", lostFrame = true)
+    }
+}
+
+/**
+ * A way home that asks the main switch first: with it off, nothing is
+ * tapped, nothing is kept, and the game stays where the pause found it,
+ * said once a pass.
+ *
+ * The player's rule of 2026-09-28 for World Search
+ * (PLAN_WORLD_SEARCH_FORMATE.md F13; notes/world-search.md, "After the pause
+ * the game stays where it is"), made every task's on 2026-09-30
+ * (PLAN_RELEASE_1_3.md B4, F24 there). Every walking skill's way home ran
+ * in a finally "not gated on the main switch" -- the switch is one of the
+ * ways a pass ends, and where the game was left was the point -- and since
+ * 2026-09-22 the service holds every gesture while the switch is off
+ * (notes/director.md, "The director asks "is the game in front" and "is
+ * the switch on" once a round"), so after a pause the way home tapped into
+ * nothing for its rounds and ended in "could not get back to the main
+ * screen" and a `no_way_home` frame, both false. One sentence for all of
+ * them, as World Search's own `stays` says it.
+ */
+class Stays(private val on: () -> Boolean, private val log: (String) -> Unit) {
+    private var said = false
+
+    /** True where the way home ends here: the switch is off. The sentence the first time in a pass. */
+    fun now(): Boolean {
+        if (on()) return false
+        if (!said) {
+            said = true
+            log(LINE)
+        }
+        return true
+    }
+
+    /**
+     * The window of the game's that ended a way home in this pass ([over]),
+     * or null: a way home that calls another one asks this after it, so
+     * that "could not get back" is not said over a window it was right to
+     * leave alone.
+     */
+    var met: String? = null
+        private set
+
+    /**
+     * True where the way home ends here because one of the game's own
+     * windows is over [img] -- its news after the reset, its "Time Sale!"
+     * window, its Help tutorial ([window]) -- with the sentence the first
+     * time in a pass, nothing tapped and no frame kept. The way home hands
+     * the screen back as it stands, and the director, which reads the same
+     * windows, closes the news (notes/director.md, "The day's reset stacks
+     * its windows over the main screen too") and says what the other two
+     * are. Until 2026-10-01 every way home but Dungeons' tapped its globe or
+     * its X past such a window, or waited it out blind, and said "could not
+     * get back to the main screen" with a `no_way_home` frame
+     * (PLAN_RELEASE_1_3.md B60, B72; notes/director.md, "A way home leaves the
+     * game's own windows to the director").
+     */
+    fun over(img: Mat): Boolean {
+        val what = window(img) ?: return false
+        if (met == null) {
+            met = what
+            log("the game's $what is over the way home -- leaving it to the director, nothing tapped")
+        }
+        return true
+    }
+
+    /** A new pass: the sentences may be said again. */
+    fun reset() {
+        said = false
+        met = null
+    }
+
+    companion object {
+        const val LINE = "the main switch is off -- not going home, the game stays where it is"
+
+        /**
+         * Which of the game's own windows is over [img], in the words the
+         * log says it with, or null: the readers the director's `classify`
+         * names `news`, `sale` and `help` by.
+         */
+        fun window(img: Mat): String? = when {
+            Startup.announcement(img) != null -> "news after its reset"
+            Startup.saleWindow(img) != null -> "\"Time Sale!\" window"
+            Startup.helpWindow(img) != null -> "Help tutorial"
+            else -> null
+        }
     }
 }
 

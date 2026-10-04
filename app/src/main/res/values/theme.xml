@@ -3,7 +3,21 @@
      decision 4). Android picks between this file and values-night/ before
      the first view exists, which is what keeps a dark phone from flashing
      white while the Activity is still starting; Theme.kt answers the same
-     question again for the colours the app draws itself. -->
+     question again for the colours the app draws itself.
+
+     The system bars are drawn over the page in no colour of their own
+     (since 2026-09-28; MainActivity lays the page out under them and keeps
+     out of them itself), and their icons are dark on this design's light
+     ground. Theme.Material.Light does not say so by itself (only its
+     LightStatusBar variant does), and on Android 15, which lays every app
+     out under the bars, the icons stood white on the app's light ground;
+     on the Androids before it, a grey status bar of the platform's own
+     stood over the white app bar. -->
 <resources>
-    <style name="DigiAutotap" parent="@android:style/Theme.Material.Light.NoActionBar" />
+    <style name="DigiAutotap" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
 </resources>

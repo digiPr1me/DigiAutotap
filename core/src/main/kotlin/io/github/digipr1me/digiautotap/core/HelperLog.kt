@@ -6,7 +6,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 
 /**
  * The one log: every line core and the app write, the last [CAPACITY] of
- * them, for the log page and the debug package. On the PC every skill takes
+ * them, for the log page and the ZIP its Share makes. On the PC every skill takes
  * a `log` callable; here that callable is [line].
  */
 object HelperLog {

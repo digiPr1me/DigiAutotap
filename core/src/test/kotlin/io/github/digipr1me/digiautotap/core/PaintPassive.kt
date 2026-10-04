@@ -63,9 +63,7 @@ object PaintPassive {
     fun autoButton(img: Mat): Mat {
         val r = Dungeon.gameRect(img)
         val radius = (0.053 * r.gw / 2).toInt()
-        Imgproc.circle(img, Point((r.x0 + 0.361 * r.gw).toInt().toDouble(),
-                                  (r.y0 + 0.765 * r.gh).toInt().toDouble()),
-                       radius, Scalar(230.0, 140.0, 50.0), -1)
+        Paint.autoDisc(img, (r.x0 + 0.361 * r.gw).toInt(), (r.y0 + 0.765 * r.gh).toInt(), radius)
         return img
     }
 

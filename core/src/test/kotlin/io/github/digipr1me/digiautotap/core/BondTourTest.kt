@@ -67,7 +67,7 @@ class BondTourTest {
 
         // A fresh copy every time: the tour releases what `grab` handed it.
         override fun grab(): Mat { rig.grabs += 1; return Paint.copy(rig.frame) }
-        override fun tap(img: Mat, fx: Double, fy: Double) {}
+        override fun tap(img: Mat, fx: Double, fy: Double, anchor: Dungeon.Anchor) {}
         override fun enter(): Pair<Int?, Int> = enterAnswer()
         override fun raise(target: Int): Boolean {
             raised += target
@@ -96,7 +96,7 @@ class BondTourTest {
         val walk = object : BondTour(rig.cap, log = { rig.log += it }, on = { rig.on },
                                      keep = { _, _ -> }, sleep = {}, now = { rig.t }) {
             override fun grab(): Mat = Paint.copy(rig.frame)
-            override fun tap(img: Mat, fx: Double, fy: Double) {}
+            override fun tap(img: Mat, fx: Double, fy: Double, anchor: Dungeon.Anchor) {}
             override fun goHome(): Boolean = true
             override fun enter(): Pair<Int?, Int> = last to 15
             override fun raise(target: Int): Boolean {
@@ -111,6 +111,60 @@ class BondTourTest {
         assertTrue(stats.returned)
         assertEquals(15, stats.visited)
         assertEquals(13, stats.startedAt)
+    }
+
+    /**
+     * Two pauses in one tour (PLAN_RELEASE_1_3.md B4), five Digimon, the
+     * player's own the fourth: the switch goes off right after the first
+     * Raise, and again inside the third one's, before it went through. Each
+     * time the tour stops where it stands and goes on from where it stopped
+     * ([BondTour.Progress]): every Digimon raised once, the player's own last,
+     * and the visits of the three parts adding up to five -- not a new tour
+     * from whichever Digimon the stop left raised.
+     */
+    @Test
+    fun `a tour paused twice raises each Digimon once and ends on the player's own`() {
+        val rig = Rig()
+        val seen = ArrayList<Int>()
+        var last = 3
+        var offIn = 4
+        var cut = -1
+        val walk = object : BondTour(rig.cap, log = { rig.log += it }, on = { rig.on },
+                                     keep = { _, _ -> }, sleep = {}, now = { rig.t }) {
+            override fun grab(): Mat = Paint.copy(rig.frame)
+            override fun tap(img: Mat, fx: Double, fy: Double, anchor: Dungeon.Anchor) {}
+            override fun goHome(): Boolean = true
+            override fun enter(): Pair<Int?, Int> = last to 5
+            override fun raise(target: Int): Boolean {
+                if (target == cut) {
+                    // The switch goes off inside this Raise: it does not go through.
+                    rig.on = false
+                    cut = -1
+                    return false
+                }
+                seen += target
+                last = target
+                if (target == offIn) rig.on = false
+                return true
+            }
+        }
+        val first = walk.run { false }
+        assertEquals(BondTour.STOPPED, first.reason)
+        val p = assertNotNull(walk.progress)
+        assertEquals(3, p.start)
+
+        rig.on = true
+        offIn = -1
+        cut = 1
+        val second = walk.run(p) { false }
+        assertEquals(BondTour.STOPPED, second.reason)
+
+        rig.on = true
+        val third = walk.run(walk.progress) { false }
+        assertTrue(third.returned, rig.log.toString())
+        assertEquals(listOf(4, 0, 1, 2, 3), seen, "each once, the player's own last")
+        assertEquals(5, first.visited + second.visited + third.visited, "the visits of the three parts")
+        assertEquals(3, last, "the player's own raised again at the end")
     }
 
     // ==================================================================
@@ -154,7 +208,7 @@ class BondTourTest {
             override fun partnerMenu(img: Mat): Dungeon.Button? =
                 Dungeon.Button(0.5, 0.5, 0.2, 0.05)
 
-            override fun tap(img: Mat, fx: Double, fy: Double) {
+            override fun tap(img: Mat, fx: Double, fy: Double, anchor: Dungeon.Anchor) {
                 if (fx == PassiveSkill.PARTNER_CLOSE[0] && fy == PassiveSkill.PARTNER_CLOSE[1]) {
                     closes += fx to fy
                 }
@@ -168,7 +222,7 @@ class BondTourTest {
         val closes2 = ArrayList<Pair<Double, Double>>()
         val clean = object : Tour(rig2) {
             override fun partnerMenu(img: Mat): Dungeon.Button? = null
-            override fun tap(img: Mat, fx: Double, fy: Double) { closes2 += fx to fy }
+            override fun tap(img: Mat, fx: Double, fy: Double, anchor: Dungeon.Anchor) { closes2 += fx to fy }
         }
         clean.attempt<Any>("a test step", { }) { null }
         assertTrue(closes2.isEmpty(), "a clear screen is left alone between retries")
@@ -200,7 +254,7 @@ class BondTourTest {
         val tour = object : BondTour(rig.cap, log = { rig.log += it }, on = { rig.on },
                                      keep = { _, _ -> }, sleep = {}, now = { rig.t }) {
             override fun grab(): Mat = Paint.copy(rig.frame)
-            override fun tap(img: Mat, fx: Double, fy: Double) {}
+            override fun tap(img: Mat, fx: Double, fy: Double, anchor: Dungeon.Anchor) {}
             override fun autoButton(img: Mat) = Dungeon.Button(0.36, 0.77, 0.05, 0.05)
         }
         assertTrue(tour.goHome())
@@ -214,7 +268,7 @@ class BondTourTest {
         val tour = object : BondTour(rig.cap, log = { rig.log += it }, on = { rig.on },
                                      keep = { _, _ -> }, sleep = {}, now = { rig.t }) {
             override fun grab(): Mat = Paint.copy(rig.frame)
-            override fun tap(img: Mat, fx: Double, fy: Double) {}
+            override fun tap(img: Mat, fx: Double, fy: Double, anchor: Dungeon.Anchor) {}
             override fun autoButton(img: Mat): Dungeon.Button? = null
             override fun homeButton(img: Mat): Dungeon.Button? = null
         }
@@ -234,7 +288,7 @@ class BondTourTest {
         val tour = object : BondTour(rig.cap, log = { rig.log += it }, on = { rig.on },
                                      keep = { _, _ -> }, sleep = {}, now = { rig.t }) {
             override fun grab(): Mat { round += 1; return Paint.copy(rig.frame) }
-            override fun tap(img: Mat, fx: Double, fy: Double) { taps += fx to fy }
+            override fun tap(img: Mat, fx: Double, fy: Double, anchor: Dungeon.Anchor) { taps += fx to fy }
             // Not home on the first look, home once the globe has been tapped.
             override fun autoButton(img: Mat): Dungeon.Button? =
                 if (round > 1) Dungeon.Button(0.36, 0.77, 0.05, 0.05) else null
@@ -263,7 +317,7 @@ class BondTourTest {
                                      keep = { _, _ -> }, sleep = {}, now = { rig.t }) {
             var homeCalls = 0
             override fun grab(): Mat = Paint.copy(rig.frame)
-            override fun tap(img: Mat, fx: Double, fy: Double) {}
+            override fun tap(img: Mat, fx: Double, fy: Double, anchor: Dungeon.Anchor) {}
             override fun goHome(): Boolean { homeCalls += 1; return true }
             override fun enter(): Pair<Int?, Int> = last to 3
             override fun raise(target: Int): Boolean { last = target; return true }
@@ -527,19 +581,19 @@ class BondTourTest {
     }
 
     /**
-     * Walking all of the Digimon is a supporter's feature since 2026-09-23.
-     * The box can stay ticked on a phone with no code -- the page greys it
-     * out and keeps the setting, so a code redeemed later gives it back --
-     * and so the tour asks the code itself, beside the box.
+     * Walking all of the Digimon was a supporter's feature from 2026-09-23
+     * to 2026-10-02, when the player made it everybody's (Paywall): the
+     * ticked box walks with or without a code, and the box is no
+     * supporter's on the page either.
      */
     @Test
-    fun `the ticked box walks only with a supporter code`() {
+    fun `the ticked box walks without a supporter code`() {
         val cap = DirectorTest.FakeCapture()
         val passive = PassiveSkill(cap, { _, d -> d }, log = {})
-        for (code in listOf(true, false)) {
-            val skill = BondTourSkill(cap, passive, { _, _ -> true }, supporter = { code }, log = {})
-            assertEquals(code, skill.hasBudget(), "code=$code")
-        }
+        assertTrue(BondTourSkill(cap, passive, { _, _ -> true }, log = {}).hasBudget())
+        val box = SkillSettings.page("passive").fields.filterIsInstance<SkillSettings.Toggle>()
+            .single { it.key == PassiveSkill.PASSIVE_ALL_DIGIMON }
+        assertFalse(box.supporter, "the all-Digimon box is everybody's since 2026-10-02")
     }
 
     /**

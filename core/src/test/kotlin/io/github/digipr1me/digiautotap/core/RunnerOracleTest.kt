@@ -41,7 +41,7 @@ class RunnerOracleTest {
 
     @Test
     fun `every reader gives the oracle's answer on every frame`() {
-        val report = OracleFamilies.check(OracleFamilies.RUNNER, oracle, repo, Vision(ClassPathAssets))
+        val report = OracleFamilies.check(OracleFamilies.RUNNER, oracle, repo)
         report.print()
         if (report.mismatches.isNotEmpty()) fail(report.summary())
     }
