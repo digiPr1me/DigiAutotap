@@ -130,9 +130,8 @@ open class DungeonSkill(
          * "Failed attempts before clicking Clear Previous Difficulty" --
          * until then it was every attempt, won or lost, and a card that won
          * its first runs reached Clear Previous Difficulty with no run lost
-         * at all. The quest loop's card keeps counting every attempt
-         * ([QuestSkill.dungeonSettings]): its page has its own number, and
-         * the player asked about the Dungeons task's.
+         * at all. The quest loop's card counts the same way since the same
+         * day ([QuestSkill.dungeonSettings]), with its page's own number.
          */
         val countLostOnly: Boolean = true,
         /**
@@ -1298,7 +1297,27 @@ open class DungeonSkill(
                     if (waitDialogGone(startTimeout)) {
                         attemptsMade += 1
                         noEffect = 0
-                        val back = waitDialogBack(battleTimeout)
+                        var back = waitDialogBack(battleTimeout)
+                        // A panel too soon for a run is looked at again on
+                        // settled frames before it is believed: the wait
+                        // hands back the first frame that reads as one. On
+                        // the Poco F3 on 2026-10-04 (19:35:16 and 19:37:41)
+                        // Digifactory's Attempt went black, a look 2 s later
+                        // read a panel, and the card ended "only 2 s, that
+                        // was no battle" -- while the run was under way: the
+                        // way back's first look in the same second read no
+                        // panel, and its four taps on the dungeon tab broke
+                        // the run off, the ticket from the free ad unspent
+                        // (notes/dungeons.md, "A panel on one look in a run's
+                        // first seconds is not the panel back").
+                        if (back != null && !handsOff && now() - t0 < minBattle) {
+                            val again = dialogSettled(2)
+                            if (again.state !in DIALOGS) {
+                                log("  a panel on one look %.0f s after Attempt, then %s -- the run is under way, waiting it out"
+                                    .format(now() - t0, again.state))
+                                back = waitDialogBack(battleTimeout)
+                            }
+                        }
                         // The title or the download dialog in the run: its
                         // end was not seen, and nothing is booked (B30).
                         if (handsOff) break
@@ -2059,15 +2078,20 @@ open class DungeonSkill(
      * a reward window appears there too. Nor on the run's own black or VS
      * ([passing], PLAN_RELEASE_1_3.md B6), which are waited on as a battle
      * is; and the game's title ends the wait and the pass ([onTitle], B30).
+     * The list ends it too, null, but only once it has stood [unknownHold]:
+     * for a moment after Attempt it is the run coming in.
      */
     internal open fun waitDialogBack(timeout: Double): Dungeon.Recognition? {
         val end = now() + timeout
         var taps = 0
         var unknownSince: Double? = null
+        /** Since when the list has stood in this wait's looks, untapped ([unknownHold]). */
+        var listSince: Double? = null
         val said = HashSet<String>()
         while (now() < end) {
             val img = grab()
             val info = recognise(img)
+            if (info.state != Dungeon.LIST) listSince = null
             if (info.state in DIALOGS) {
                 // Close windows are no longer tapped here, the main loop does
                 // that. Otherwise this would never return such a window and
@@ -2112,7 +2136,33 @@ open class DungeonSkill(
                 dismissConfirm(info, LEAVING)
                 return null
             }
-            if (info.state == Dungeon.LIST) return null
+            if (info.state == Dungeon.LIST) {
+                // The list ends the wait once it has stood [unknownHold], as a
+                // screen nobody names does, and is never tapped meanwhile.
+                // Between Attempt and the run's black the game shows it for a
+                // moment, the panel gone and the battle not yet in: the
+                // player's Poco F3 on 2026-10-04 at 00:47:52 (the Dungeons
+                // task, its log) tapped Attempt on Fight! DemiDevimon, this
+                // wait read the list on its first look and [listCounter] on
+                // the next, and 2 s after the tap the list was swiped towards
+                // the card's half while the run came in -- the panel stood
+                // again at 00:48:18, and the run was on its way to being
+                // booked twice, once unread and once as a run no Attempt had
+                // started. That phone's black came 2 s after the tap
+                // (00:50:46 to :48), and LDPlayer's moment between Attempt and
+                // the battle is the 1.4 s [unknownHold] was set on, so a list
+                // that outstays the hold is a run's end: Network Defense Ops',
+                // or a lost run's that drops to the list (notes/dungeons.md,
+                // "The list a moment after Attempt is the run coming in, and
+                // the wait holds it as it holds a screen nobody names").
+                unknownSince = null
+                val since = listSince ?: now().also { listSince = it }
+                if (now() - since < unknownHold) {
+                    sleep(tick)
+                    continue
+                }
+                return null
+            }
             // The game's title: the run's end will not come, and a tap there
             // is "Touch To Start" (PLAN_RELEASE_1_3.md B30).
             if (metTitle(img)) return null
@@ -2683,7 +2733,9 @@ open class DungeonSkill(
      * reach that end, with the last frame kept. A frame with no list on it
      * is returned as it is, and at once: a swipe on something other than
      * the list is not a swipe that did not take, and the caller reads what
-     * it can off the frame ([plan] says "no list cards recognised").
+     * it can off the frame ([plan] says "no list cards recognised"). And a
+     * list that already stands at that end, by the same two readers on a
+     * settled frame, is not swiped at all.
      */
     private fun scroll(swipes: Int, up: Boolean): Mat? {
         val (ox, oy) = origin
@@ -2692,6 +2744,20 @@ open class DungeonSkill(
         val yNear = Py.int(oy + 0.30 * dh)
         val yFar = Py.int(oy + 0.88 * dh)
         val where = if (up) "top" else "bottom"
+        // The proof a swipe would have to give, asked before it: a list
+        // already at that end is handed back as it stands. The player's Poco
+        // F3 log of 2026-10-04 has every quest step swipe three times before
+        // its card -- the plan to the bottom, the survey to the card's half,
+        // the play to the same half again -- and for Bakemon, the bottom
+        // half's first card, all three went down onto a list at its bottom,
+        // 2.5 to 3 s each, which the player read as scrolling wildly
+        // (notes/dungeons.md, "A list that already stands at the end it is
+        // scrolled to is not swiped"). A frame with no list on it goes on to
+        // the swipe as before.
+        val here = settledFrame()
+        val seen = listCardsWithSize(here)
+        val topNow = Dungeon.listAtTop(seen)
+        if (topNow != null && (if (up) topNow else Dungeon.listAtBottom(seen) == true)) return here
         var img: Mat? = null
         for (attempt in 1..SCROLL_TRIES) {
             // A swipe the service would hold back proves nothing, and three

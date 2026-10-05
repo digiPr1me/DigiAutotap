@@ -850,6 +850,47 @@ class DungeonSkillTest {
         assertEquals(3, Stored.dungeon(s).attemptsBeforeClear)
     }
 
+    /**
+     * The Quest Loop's card counts them the same way since the same day, the
+     * player's words: its page's own number, the failed attempts alone. With
+     * N = 1 a won run and then a failed one come before Clear Previous
+     * Difficulty, played on the settings the loop hands its bot -- until that
+     * day the win was the one attempt and the second ticket went to Clear.
+     */
+    @Test
+    fun `the Quest Loop's card counts only failed attempts, as the Dungeons page does`() {
+        val file = MapSettings()
+        file.put(Stored.QUEST_CLEAR_KEY, 1)
+        val set = QuestSkill(DirectorTest.FakeCapture(), { Stored.quest(file) }).dungeonSettings(0, 2)
+        assertTrue(set.countLostOnly)
+        assertEquals(1, set.attemptsBeforeClear)
+        val sim = Sim(listOf(
+            Dungeon.LIST, "dialog:2",
+            Dungeon.REWARD, "dialog:1", "dialog:1",     // won: the sheet, 2 -> 1
+            "dialog:1",
+            "dialog:1", "dialog:1",                     // failed: back, and still 1
+            "dialog:1",
+            Dungeon.REWARD, "dialog:0", "dialog:0",     // Clear: the sheet, 1 -> 0
+            "dialog:0", Dungeon.LIST))
+        // The survey off: the card's counters are the script's, not a reader's.
+        val played = DungeonSkill.Settings(budgets = set.budgets, useAds = set.useAds,
+                                           attemptsBeforeClear = set.attemptsBeforeClear,
+                                           countLostOnly = set.countLostOnly, survey = false)
+        val bot = object : Bot(sim, attemptWorks = true, settings = { played }) {
+            override fun plan(): Pair<Int, Int> = 1 to 0
+            override fun scrollTop(swipes: Int): Mat? = frame
+            override fun scrollBottom(swipes: Int): Mat? = frame
+        }
+        bot.minBattle = 0.0
+        bot.work(bot.frame)
+        val said = sim.messages.joinToString("\n")
+        assertEquals(2, bot.taps("Attempt"), said)
+        assertEquals(1, bot.taps("Clear Previous Difficulty"), said)
+        assertEquals(2, bot.lastCounts["tickets"], said)
+        assertEquals(1, bot.lastCounts["lost"], said)
+        assertTrue(sim.messages.any { "attempt 2, 1 of 2 tickets spent, 0 of 1 failed" in it }, said)
+    }
+
     @Test
     fun `a reward window in between is closed and does not block`() {
         val (good, _, sim) = runCase(
@@ -959,8 +1000,8 @@ class DungeonSkillTest {
         assertTrue(bot.sim.messages.any {
             "1 failed attempt -- the tickets still wanted go to Clear Previous Difficulty" in it }, said)
 
-        // Every attempt counted, as the quest loop's card still has it: the
-        // win is the one attempt, and the second ticket goes to Clear.
+        // Every attempt counted, as both pages did until 2026-10-04: the win
+        // is the one attempt, and the second ticket goes to Clear.
         val sim = Sim(listOf(
             Dungeon.LIST, "dialog:2",
             Dungeon.REWARD, "dialog:1", "dialog:1",     // won: the sheet, 2 -> 1
@@ -977,6 +1018,82 @@ class DungeonSkillTest {
         assertEquals(1, every.taps("Attempt"), sim.messages.toString())
         assertEquals(1, every.taps("Clear Previous Difficulty"), sim.messages.toString())
         assertEquals(2, every.stats["tickets"])
+    }
+
+    /**
+     * A bot whose waits for the panel take the seconds [waits] says, one per
+     * wait, so that a run can be too short for [DungeonSkill.minBattle] or
+     * long enough; the page as the Poco's: five tickets, one failed attempt
+     * before Clear Previous Difficulty.
+     */
+    private fun timedBot(sim: Sim, vararg waits: Double): Bot {
+        val left = ArrayDeque(waits.toList())
+        val bot = object : Bot(sim, attemptWorks = true) {
+            override fun waitDialogBack(timeout: Double): Dungeon.Recognition? {
+                CLOCK += left.removeFirstOrNull() ?: 0.0
+                return super.waitDialogBack(timeout)
+            }
+        }
+        bot.minBattle = 6.0
+        bot.budgets = mapOf(0 to 5)
+        bot.attemptsBeforeClear = 1
+        for (k in listOf("tickets", "attempts", "fights", "lost", "cleared", "ads", "declined")) bot.stats[k] = 0
+        return bot
+    }
+
+    /**
+     * The Poco F3 on 2026-10-04 (1.3, semi-automatic, the Ad Skip Pass and
+     * the Dungeons pick on, five tickets a card): Digifactory at 0/2 with
+     * both of its free ads, the first ad's ticket, Attempt -- a black frame,
+     * and a look 2 s later read a panel. The card ended "only 2 s, that was
+     * no battle", the way back's taps on the dungeon tab broke the run off,
+     * and the ticket and the second ad were left for a later pass (19:35:16,
+     * 19:37:41; the third pass spent them). A panel on one look that the
+     * settled looks after it no longer show is the run under way: it is
+     * waited out and booked, and the card spends both ads in one pass.
+     */
+    @Test
+    fun `a panel on one look in a run's first seconds is not the panel back, and both ads go in one pass`() {
+        val sim = Sim(listOf(
+            Dungeon.LIST, "dialog_werbung:0",
+            Dungeon.REWARD, "dialog:1",                               // the first ad's ticket
+            "dialog:1",                                               // a panel on one look, 2 s in
+            Dungeon.BATTLE,                                           // and the run under way
+            Dungeon.REWARD, "dialog_werbung:0", "dialog_werbung:0",   // won: the sheet, 1 -> 0
+            "dialog_werbung:0", Dungeon.REWARD, "dialog:1",           // the second ad's ticket
+            Dungeon.REWARD, "dialog_werbung:0", "dialog_werbung:0",   // won: the sheet, 1 -> 0
+            "dialog_werbung:0"))                                      // no ads left
+        val bot = timedBot(sim, 2.0, 20.0, 20.0)
+        bot.playEntry(0, DungeonSkill.TOP)
+        val said = sim.messages.joinToString("\n")
+        assertEquals(2, bot.taps("ad"), said)
+        assertEquals(2, bot.taps("Attempt"), said)
+        assertEquals(2, bot.stats["tickets"], said)
+        assertEquals(2, bot.stats["ads"], said)
+        assertEquals(0, bot.stats["declined"], said)
+        assertTrue(sim.messages.none { "that was no battle" in it }, said)
+        assertTrue(sim.messages.any { "a panel on one look 2 s after Attempt, then ${Dungeon.BATTLE}" in it }, said)
+        assertTrue(sim.messages.any { "no ads left, 2 watched" in it }, said)
+    }
+
+    /**
+     * And the panel that does stand two seconds after Attempt is still no
+     * run: the settled looks show it too, and the card ends as it did.
+     */
+    @Test
+    fun `a panel that stands two seconds after Attempt is still no battle`() {
+        val sim = Sim(listOf(
+            Dungeon.LIST, "dialog:1",
+            "dialog:1",                                               // back after 2 s
+            "dialog:1",                                               // and standing
+            "dialog:1"))
+        val bot = timedBot(sim, 2.0)
+        bot.playEntry(0, DungeonSkill.TOP)
+        val said = sim.messages.joinToString("\n")
+        assertEquals(1, bot.taps("Attempt"), said)
+        assertEquals(1, bot.stats["declined"], said)
+        assertEquals(0, bot.stats["tickets"], said)
+        assertTrue(sim.messages.any { "only 2 s, that was no battle" in it }, said)
     }
 
     /**
@@ -1310,6 +1427,74 @@ class DungeonSkillTest {
         assertTrue(stuck.taps("neutral, accept the reward") > 0, "a screen that stays is tapped")
     }
 
+    /**
+     * The same hold for the list: one that stands for a look or two and gives
+     * way to the run is waited through, and one that stays is the run's end
+     * once it has stood [DungeonSkill.UNKNOWN_HOLD]. Nothing is tapped on it
+     * either way.
+     */
+    @Test
+    fun `the list ends the wait only once it has stood the hold`() {
+        val coming = Bot(Sim(listOf(Dungeon.LIST, Dungeon.LIST, Dungeon.BATTLE, Dungeon.DIALOG)),
+                         stubWaitBack = false)
+        coming.tick = 0.0
+        assertEquals(Dungeon.DIALOG, coming.waitDialogBack(60.0)?.state, "the list the run came in over")
+
+        val stays = Bot(Sim(listOf(Dungeon.BATTLE, Dungeon.LIST)), stubWaitBack = false)
+        stays.tick = 0.0
+        val t0 = CLOCK
+        assertNull(stays.waitDialogBack(60.0))
+        assertTrue(CLOCK - t0 >= DungeonSkill.UNKNOWN_HOLD, "the list ended the wait after ${CLOCK - t0} s")
+        assertEquals(emptyList(), coming.sim.clicks + stays.sim.clicks, "nothing tapped on the list")
+    }
+
+    /**
+     * The player's Poco F3, 2026-10-04 00:47:52 (the Dungeons task in the
+     * fully automatic chain, its log): Attempt on Fight! DemiDevimon, and 2 s
+     * later the list was swiped. Between the panel and the run's black the
+     * game shows the list for a moment; the wait after Attempt took its first
+     * look at it for the run's end, the card's badge was to be read off it
+     * and the list scrolled to the card's half while the battle came in (the
+     * panel stood again at 00:48:18), and the run was on its way to being
+     * booked twice -- unread, and then as a run no Attempt had started, with
+     * the card opened once more between the two. Waited out now and booked
+     * once.
+     */
+    @Test
+    fun `the list a moment after Attempt is the run coming in, not its end`() {
+        val sim = Sim(listOf(
+            Dungeon.LIST, "dialog:2",
+            Dungeon.LIST, Dungeon.LIST,                  // the panel gone, the list for a moment
+            Dungeon.BATTLE, Dungeon.BATTLE,              // the run
+            "dialog:2",                                  // the panel back: lost, still 2
+            "dialog:2", "dialog:2"), withClear = false)
+        var listRead = 0
+        var scrolled = 0
+        val bot = object : Bot(sim, attemptWorks = true, stubWaitBack = false) {
+            override fun counterNow(info: Dungeon.Recognition): Int? =
+                if (info.state in DungeonSkill.DIALOGS) sim.lastTickets else null
+            override fun listCounter(index: Int, label: String): Int? { listRead += 1; return null }
+            override fun scrollTop(swipes: Int): Mat? { scrolled += 1; return frame }
+            override fun scrollBottom(swipes: Int): Mat? { scrolled += 1; return frame }
+        }
+        bot.minBattle = 0.0
+        bot.battleTimeout = 60.0
+        bot.tick = 0.0
+        bot.budgets = mapOf(0 to 1)
+        bot.attemptsBeforeClear = 1
+        for (k in listOf("tickets", "attempts", "fights", "lost", "cleared")) bot.stats[k] = 0
+        bot.playEntry(0, DungeonSkill.TOP)
+        val said = sim.messages.joinToString("\n")
+        assertEquals(0, listRead, "the card's badge read off the list the run came in over\n$said")
+        assertEquals(0, scrolled, "the list scrolled while the run came in\n$said")
+        assertEquals(1, bot.taps("Test"), "the card opened once\n$said")
+        assertEquals(1, bot.taps("Attempt"), said)
+        assertEquals(1, bot.stats["fights"], "one run, one fight\n$said")
+        assertEquals(1, bot.stats["lost"], said)
+        assertTrue(sim.messages.any { "run lost, no ticket spent (counter 2 -> 2" in it }, said)
+        assertTrue(sim.messages.none { "a run no Attempt of this card started" in it }, said)
+    }
+
     // ------------------------------------------------------------------
     // 8b. The scroll is proved (notes/dungeons.md, "A swipe is proved, not assumed")
     // ------------------------------------------------------------------
@@ -1318,7 +1503,7 @@ class DungeonSkillTest {
                              settings: () -> DungeonSkill.Settings = { DungeonSkill.Settings(budgets = emptyMap()) })
         : Bot(sim, settings = settings) {
         val views = ArrayDeque(views)
-        /** Settled frames looked at, one per swipe. */
+        /** Settled frames looked at: one before the swipes, and one per swipe. */
         var served = 0
         private var last: List<Pair<Double, Double>> = BOTTOM_VIEW
         override fun listCardsWithSize(img: Mat): List<Pair<Double, Double>> {
@@ -1337,20 +1522,44 @@ class DungeonSkillTest {
      * animation is swallowed, the plan counts the four cards of the top view
      * as the bottom four, and every bottom card is played one off -- Network
      * Defense Ops under Metal Sea's budget, and not at all when that is 0.
-     * The swipe is proved on a settled frame now: the first "bottom" here is
-     * the top view, banner and all, the second is the bottom, and the plan
-     * says 2 and 4, not 3 and 3, with card 3 of the bottom half Network
-     * Defense Ops.
+     * The swipe is proved on a settled frame now: the list is at its top
+     * before the swipe, the first "bottom" after it is still the top view,
+     * banner and all, the second is the bottom, and the plan says 2 and 4,
+     * not 3 and 3, with card 3 of the bottom half Network Defense Ops.
      */
     @Test
     fun `a swallowed swipe is repeated, and the plan counts the proved bottom`() {
-        val bot = Views(Sim(listOf(Dungeon.LIST)), listOf(TOP_VIEW, BOTTOM_VIEW))
+        val bot = Views(Sim(listOf(Dungeon.LIST)), listOf(TOP_VIEW, TOP_VIEW, BOTTOM_VIEW))
         assertEquals(2 to 4, bot.plan(), bot.sim.messages.toString())
         assertEquals(5, bot.visibleAtBottom)
         assertEquals(DungeonSkill.NETDEF, bot.labelOf(2, DungeonSkill.BOTTOM))
         assertTrue(bot.sim.messages.any { it.contains("did not take (4 cards, list at the top: true), once more") },
                    bot.sim.messages.toString())
-        assertEquals(2, bot.served, "one look per swipe")
+        assertEquals(3, bot.served, "one look before the swipes and one per swipe")
+        assertEquals(2, bot.cap.swipes, "the swallowed swipe and the one that took")
+    }
+
+    /**
+     * A list that already stands at the end it is scrolled to is not swiped:
+     * the look before the swipe is the proof, and the frame it was read on is
+     * handed back. The player's Poco F3, 2026-10-04: a quest step for Bakemon,
+     * the bottom half's first card, swiped down three times -- the plan, the
+     * survey, the play -- onto a list already at its bottom after the first.
+     */
+    @Test
+    fun `a list already at the end it is scrolled to is not swiped`() {
+        val atBottom = Views(Sim(listOf(Dungeon.LIST)), listOf(BOTTOM_VIEW))
+        assertNotNull(atBottom.scrollBottom())
+        assertEquals(0, atBottom.cap.swipes, "at the bottom already")
+        val atTop = Views(Sim(listOf(Dungeon.LIST)), listOf(TOP_VIEW))
+        assertNotNull(atTop.scrollTop())
+        assertEquals(0, atTop.cap.swipes, "at the top already")
+        val step = Views(Sim(listOf(Dungeon.LIST)), listOf(TOP_VIEW, BOTTOM_VIEW, BOTTOM_VIEW, BOTTOM_VIEW))
+        assertEquals(2 to 4, step.plan(), step.sim.messages.toString())
+        assertNotNull(step.scrollBottom(), "the survey's")
+        assertNotNull(step.scrollBottom(), "the play's")
+        assertEquals(1, step.cap.swipes, "the plan's swipe alone: ${step.sim.messages}")
+        assertEquals(4, step.served)
     }
 
     /** The list at the top, three times over: no count is taken on it, and the pass parks with the frame kept. */
@@ -1361,7 +1570,8 @@ class DungeonSkillTest {
             override fun saveUnknown(img: Mat, tag: String) { kept += tag }
         }
         assertNull(bot.plan(), bot.sim.messages.toString())
-        assertEquals(DungeonSkill.SCROLL_TRIES, bot.served)
+        assertEquals(1 + DungeonSkill.SCROLL_TRIES, bot.served, "one look before the swipes and one per swipe")
+        assertEquals(DungeonSkill.SCROLL_TRIES, bot.cap.swipes)
         assertEquals(listOf("list_not_at_bottom"), kept)
         assertNotNull(bot.parkedBecause)
         assertTrue(bot.parkedBecause!!.contains("did not reach the bottom"), bot.parkedBecause)

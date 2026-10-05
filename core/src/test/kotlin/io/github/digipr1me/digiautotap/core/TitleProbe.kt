@@ -99,6 +99,7 @@ fun main(args: Array<String>) {
             "news" -> { probe.news(img, name); continue }
             "sale" -> probe.sale(img, name)
             "help" -> probe.help(img, name)
+            "gear" -> probe.gear(img, name)
             else -> { println("no mode '${args[0]}'"); exitProcess(2) }
         }
         img.release()
@@ -110,6 +111,7 @@ fun main(args: Array<String>) {
     if (args[0] == "news") probe.newsSummary()
     if (args[0] == "sale") probe.saleSummary()
     if (args[0] == "help") probe.helpSummary()
+    if (args[0] == "gear") probe.gearSummary()
 }
 
 class TitleProbe {
@@ -670,6 +672,58 @@ class TitleProbe {
         helpAnswers.forEach { println("   $it") }
         println("every Next with a Back left of it (${helpPairs.size}):")
         helpPairs.sortedBy { kotlin.math.abs(it.substringAfter("dy ").substringBefore(" ").toDouble()) }
+            .forEach { println("   $it") }
+    }
+
+    // ------------------------------------------------------------------------
+    // The gear window: Sell (pink) beside Equip (blue), the cards above (K2)
+    // ------------------------------------------------------------------------
+
+    /** Every pink of a button: the hue band of the pink prompt's Cancel (Dungeon.PARTY_PINK_HUE), wide on purpose. */
+    private val measurePink = Dungeon.Hsv(intArrayOf(135, 100, 150), intArrayOf(175, 255, 255))
+    private val gearBand = doubleArrayOf(0.0, 1.0, 0.40, 1.05)
+    private val gearFw = doubleArrayOf(0.08, 0.48)
+    private val gearAspect = doubleArrayOf(1.3, 6.0)
+    private val gearPairs = ArrayList<String>()
+    private val gearAnswers = ArrayList<String>()
+    private val gearMs = ArrayList<Double>()
+
+    fun gear(img: Mat, name: String) {
+        val answer = Startup.gearWindow(img)
+        gearMs += millis { Startup.gearWindow(img) }
+        if (answer != null) gearAnswers += name
+        for (anchor in listOf(Dungeon.Anchor.MIDDLE, Dungeon.Anchor.BOTTOM, Dungeon.Anchor.TOP)) {
+            val rect = Dungeon.gameRect(img, anchor)
+            val pinks = Startup.blobs(img, rect, measurePink, gearBand, gearFw, gearAspect)
+            if (pinks.isEmpty()) { if (anchor == Dungeon.Anchor.MIDDLE) return else continue }
+            val blues = Startup.blobs(img, rect, Dungeon.BLUE, gearBand, gearFw, gearAspect)
+            if (anchor == Dungeon.Anchor.MIDDLE) {
+                println("== $name  ${img.cols()} x ${img.rows()}  gearWindow ${answer?.let { "fy ${f(it.fy)} sell ${f(it.sellFx)} equip ${f(it.equipFx)} fw ${f(it.fw)}" } ?: "null"}")
+                pinks.forEach { println("   pink  ${line(it)}") }
+                blues.forEach { println("   blue  ${line(it)}") }
+            }
+            for (p in pinks) for (b in blues) {
+                val dx = b.fx - p.fx
+                if (dx <= 0) continue
+                val dy = b.fy - p.fy
+                if (kotlin.math.abs(dy) > 0.05) continue
+                val gap = (b.fx - b.fw / 2) - (p.fx + p.fw / 2)
+                val line = "%-6s dx/fw %.3f gap/fw %.3f dy %+.4f  w %.3f h %.3f  fills %.3f %.3f  white %.3f %.3f  pink fx %s fy %s fw %s fh %s%s  %s".format(
+                    anchor.name, dx / b.fw, gap / b.fw, dy, p.fw / b.fw, p.fh / b.fh, p.fill, b.fill, p.white, b.white,
+                    f(p.fx), f(p.fy), f(p.fw), f(p.fh), if (p.cut || b.cut) " CUT" else "", name)
+                if (anchor == Dungeon.Anchor.MIDDLE) gearPairs += line
+                println("   pair $line")
+            }
+        }
+    }
+
+    fun gearSummary() {
+        println()
+        priceLine("gearWindow", gearMs)
+        println("gearWindow answers on ${gearAnswers.size}:")
+        gearAnswers.forEach { println("   $it") }
+        println("every pink with a blue right of it on its row, in the middle's rectangle (${gearPairs.size}), by |w-1|:")
+        gearPairs.sortedBy { kotlin.math.abs(it.substringAfter(" w ").substringBefore(" ").toDouble() - 1.0) }
             .forEach { println("   $it") }
     }
 

@@ -110,7 +110,7 @@ object Skills {
         // and the first of them was a second switch in front of this one
         // (SkillSettings, the passive page). What the page has since
         // 2026-09-23 is the one number the player asked for, the quest's own
-        // attempts before Clear Previous Difficulty; the sentence that stood
+        // failed attempts before Clear Previous Difficulty; the sentence that stood
         // here as `noSettings` is the page's note now.
         SkillRow("quest", "Quest Loop", "quest",
                  semi = "Works on the main screen while the quest card is showing. " +

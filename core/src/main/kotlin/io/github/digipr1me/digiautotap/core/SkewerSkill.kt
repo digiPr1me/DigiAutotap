@@ -1,6 +1,7 @@
 package io.github.digipr1me.digiautotap.core
 
 import org.opencv.core.Mat
+import kotlin.math.ceil
 
 /**
  * Chef's Special under the director (PLAN_SKEWER.md SK2): the skewer
@@ -162,9 +163,23 @@ class SkewerSkill(
          * otherwise play the day away. SK1's prototype played 10 to 11
          * guests a round, 9 combos the best; sixteen take two to three
          * rounds, and ten is three times that. Then the pass parks and says
-         * why.
+         * why. Ten is the ceiling for the page's default; a pass that wants
+         * more combos gets as many more rounds at the same rate ([roundsFor]).
          */
         const val ROUNDS_MAX = 10
+
+        /**
+         * The ceiling of rounds for a pass that wants [combos]: [roundsMax]
+         * per [COMBO_TARGET] combos, and never under [roundsMax]. The page
+         * goes to 999 since 2026-10-04, the player's wish, and ten rounds
+         * count 80 to 110 at the live rate -- a pass that wanted more would
+         * park "something is not read right" with every guest read right.
+         * At 999 it is 625 rounds, five times the 125 that eight combos a
+         * round take (notes/skewer.md, "The rounds a pass may play grow with
+         * the combos it wants").
+         */
+        fun roundsFor(combos: Int, roundsMax: Int = ROUNDS_MAX): Int =
+            maxOf(roundsMax, ceil(combos.toDouble() * roundsMax / COMBO_TARGET).toInt())
 
         /**
          * The floor between two taps. The laboratory's own number
@@ -349,7 +364,7 @@ class SkewerSkill(
     private var lastComplete = Double.NaN
     /** The combos this pass plays for, read off the page once per pass ([target]). */
     private var wanted: Int? = null
-    /** A pass ended by reaching its combos, [roundsMax] or an unreadable order -- not stopped, not lost ([seesWork]). */
+    /** A pass ended by reaching its combos, [ceiling] or an unreadable order -- not stopped, not lost ([seesWork]). */
     private var finished = false
     /** This pass found the Events window without a Chef's Special card. */
     private var notInWindow = false
@@ -372,6 +387,9 @@ class SkewerSkill(
      * a pass that changed its target halfway would end on a count nobody set.
      */
     private fun target(): Int = wanted ?: settings().left.also { wanted = it }
+
+    /** The rounds this pass plays at most: [roundsMax], more where the pass wants more combos ([roundsFor]). */
+    private fun ceiling(): Int = roundsFor(target(), roundsMax)
 
     private fun grab(): Mat = cap.grab().also { rect = Dungeon.gameRect(it); room = Dungeon.headroom(it) }
 
@@ -465,7 +483,10 @@ class SkewerSkill(
             if (Runner.eventsDialog(img) != null) return openCard()
             // Over a few seconds, not on one frame: the game draws over the
             // auto button by itself (MainScreen, K2 of PLAN_ABSCHLUSS_1_3.md).
-            val main = MainScreen.settle(img, ::grab, sleep, now, on, log) { last, waited ->
+            val main = MainScreen.settle(img, ::grab, sleep, now, on, log, beside = {
+                tap(Explore.Target(Startup.GEAR_CLOSE[0], Startup.GEAR_CLOSE[1], Startup.GEAR_CLOSE_ANCHOR),
+                    "beside the gear window")
+            }) { last, waited ->
                 log("chef's special: not the plain main screen after %.0f s, cannot open the event".format(waited))
                 dump(last, "skewer_not_main")
             } ?: return false
@@ -1097,7 +1118,7 @@ class SkewerSkill(
      * of the round that brought the last combo.
      *
      * Four ways out besides the combos: the switch goes off, a round is lost
-     * to somebody else's hand, an order does not read, or [roundsMax] rounds
+     * to somebody else's hand, an order does not read, or [ceiling] rounds
      * have been played short of them.
      */
     private fun session() {
@@ -1106,8 +1127,8 @@ class SkewerSkill(
                 stats.reason = "stopped"
                 return
             }
-            if (stats.rounds >= roundsMax) {
-                stats.reason = "$roundsMax rounds and still short"
+            if (stats.rounds >= ceiling()) {
+                stats.reason = "${ceiling()} rounds and still short"
                 finished = true
                 return
             }
@@ -1171,7 +1192,7 @@ class SkewerSkill(
             UNREADABLE -> Outcome.parked("The order in the speech bubble did not read, so the round was " +
                 "left.")
             "done" -> Outcome.DONE
-            else -> Outcome.parked("Chef's Special played $roundsMax rounds and counted only ${stats.combos} " +
+            else -> Outcome.parked("Chef's Special played ${ceiling()} rounds and counted only ${stats.combos} " +
                 "of ${target()} combos. Something is not read right; each guest is in the log.")
         }
     }

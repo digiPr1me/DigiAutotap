@@ -770,6 +770,74 @@ class WorldSearchFlowTest {
         listOf(board, main, light).forEach { it.release() }
     }
 
+    /**
+     * [stage], with the hologram device's gear window over its main screen
+     * while [up] (PLAN_ABSCHLUSS_1_3.md K2, 2026-10-04): a tap on the dimmed
+     * field left of the window closes it, a tap on Sell or Equip is a fault
+     * this names, and any other tap while it stands is a stray.
+     */
+    private class GearUp(private val stage: Stage, private val window: Mat) : Capture by stage {
+        var up = false
+        var shown = 0
+        val faults = ArrayList<String>()
+        val strays = ArrayList<String>()
+        private val g = Startup.gearWindow(window)!!
+        private val r = Dungeon.gameRect(window, Startup.GEAR_ANCHOR)
+        private fun on(x: Int, y: Int, fx: Double) =
+            kotlin.math.abs(x - (r.x0 + fx * r.gw)) <= g.fw * r.gw / 2 &&
+                kotlin.math.abs(y - (r.y0 + g.fy * r.gh)) <= 0.035 * r.gh
+        override fun grab(): Mat {
+            if (stage.screen == "main" && up) {
+                shown += 1
+                return Mat().also { window.copyTo(it) }
+            }
+            return stage.grab()
+        }
+        override fun tap(x: Int, y: Int) {
+            if (!(stage.screen == "main" && up)) return stage.tap(x, y)
+            when {
+                on(x, y, g.sellFx) -> faults += "Sell at $x,$y"
+                on(x, y, g.equipFx) -> faults += "Equip at $x,$y"
+                x < r.x0 + 0.145 * r.gw && y > r.y0 + 0.29 * r.gh && y < r.y0 + 0.80 * r.gh -> up = false
+                else -> strays += "$x,$y"
+            }
+        }
+    }
+
+    @Test
+    fun `the gear window over the main screen is closed beside it and the board opens, two passes running`() {
+        val board = frame("ws_board.png")
+        val stage = wayInAndOut(board)
+        val file = File(repo, "corpus/passive/unclear_161516.png")
+        val window = Imgcodecs.imread(file.path)
+        assertNotNull(Startup.gearWindow(window), "the corpus's gear window reads")
+        val cap = GearUp(stage, window)
+        val lines = ArrayList<String>()
+        val kept = ArrayList<String>()
+        var t = 0.0
+        val skill = WorldSearchSkill(cap, vision, { settings(1, navigate = true) }, log = { lines += it },
+                                     keep = { _, k -> kept += k }, sleep = { t += it }, now = { t })
+        for (pass in 1..2) {
+            cap.up = true
+            val before = stage.went.size
+            val outcome = skill.run()
+            val log = lines.joinToString("\n")
+            assertEquals(Result.DONE, outcome.result, "pass $pass: $outcome\n$log")
+            assertTrue(!cap.up, "pass $pass: the window was closed")
+            assertEquals(listOf("the Explore tab", "the Digital World Search card", "the X", "the globe"),
+                         stage.went.drop(before).filter { !it.endsWith("tapped nothing that moves") },
+                         "pass $pass, in and out: ${stage.went}")
+        }
+        val log = lines.joinToString("\n")
+        assertTrue(cap.faults.isEmpty(), "Sell or Equip tapped: ${cap.faults}")
+        assertTrue(cap.strays.isEmpty(), "taps on the window that closed nothing: ${cap.strays}")
+        assertEquals(2, lines.count { it.startsWith("  the game's gear window is over the main screen -- closing it beside") }, log)
+        assertEquals(2, lines.count { it.startsWith("  the plain main screen after ") }, log)
+        assertTrue(lines.none { it.contains("cannot open") }, log)
+        assertTrue(kept.none { it.startsWith("not_main_screen") }, "$kept")
+        board.release(); window.release()
+    }
+
     @Test
     fun `a pass that ends on its limit still goes home, and stops where it stands if paused on the way`() {
         // The limit ends the pass with the switch on: the X, as ever. Then the

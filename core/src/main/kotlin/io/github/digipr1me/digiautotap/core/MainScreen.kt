@@ -27,6 +27,16 @@ import kotlin.math.ceil
  * that one frame without it is not the answer. Nothing is tapped while it
  * waits -- not the gear window's Equip, which `popup_ok` reads as OK, and
  * not a Stage Failed banner, which stays the caller's, as it always was.
+ *
+ * But one thing besides the window itself (2026-10-04, K2): the gear window
+ * stands until somebody chooses, so a way in that met it waited its eight
+ * seconds and gave up, and the chain retired the task for the run. Where
+ * the caller hands over its tap ([settle]'s `beside`), the window is closed
+ * where the director closes it -- beside it, on the dimmed field
+ * ([Startup.GEAR_CLOSE]) --, never on Sell or Equip, and the wait goes on
+ * for the main screen under it (notes/director.md, "The hologram device's
+ * gear window is closed beside it, in both modes, and neither of its
+ * buttons is ever tapped").
  */
 object MainScreen {
     /**
@@ -67,20 +77,26 @@ object MainScreen {
      * (a skill's rectangle) is this frame's. Null where the switch went off
      * ([on]; nothing said, nothing kept) or the main screen did not come:
      * then [gaveUp] has been handed the last frame looked at and the seconds
-     * waited, to say it in the caller's words and keep it. Taps nothing.
+     * waited, to say it in the caller's words and keep it. Taps nothing but
+     * [beside], and that only on the gear window ([closeGear]).
      * [isMain] is [reads], unless the caller asks the same reader through a
      * seam of its own (the bond tour's `autoButton`, which its flow tests
-     * answer for).
+     * answer for). [beside] taps [Startup.GEAR_CLOSE] in its rectangle on the
+     * frame it is given, in the caller's own tap; null leaves the gear window
+     * standing, as before.
      */
     fun settle(first: Mat, grab: () -> Mat, sleep: (Double) -> Unit, now: () -> Double,
                on: () -> Boolean, log: (String) -> Unit,
                isMain: (Mat) -> Boolean = MainScreen::reads,
+               beside: ((Mat) -> Unit)? = null,
                gaveUp: (Mat, Double) -> Unit): Mat? {
         if (isMain(first)) return first
         val begin = now()
         var last: Mat? = null
         var seen = false
+        val gear = GearTaps(beside, now, on, log)
         try {
+            gear.close(first)
             for (look in 0 until LOOKS) {
                 if (!on()) return null
                 sleep(BEAT)
@@ -97,6 +113,7 @@ object MainScreen {
                     seen = true
                 } else {
                     seen = false
+                    gear.close(img)
                 }
                 if (now() - begin >= WAIT) break
             }
@@ -104,6 +121,32 @@ object MainScreen {
             return null
         } finally {
             last?.release()
+        }
+    }
+
+    /**
+     * The taps beside the gear window one wait sends: on a frame
+     * [Startup.gearWindow] reads, at most [Director.GEAR_TAPS] of them and
+     * [Director.IDLE_AFTER] apart, so that the second goes out only after
+     * the first had its time to take -- the director's own rule for the same
+     * window. Nothing where the caller gave no tap or the switch is off.
+     */
+    class GearTaps(private val beside: ((Mat) -> Unit)?, private val now: () -> Double,
+                   private val on: () -> Boolean, private val log: (String) -> Unit) {
+        var taps = 0
+            private set
+        private var at = Double.NEGATIVE_INFINITY
+
+        fun close(img: Mat) {
+            val tap = beside ?: return
+            if (taps >= Director.GEAR_TAPS || now() - at < Director.IDLE_AFTER) return
+            if (Startup.gearWindow(img) == null || !on()) return
+            log(if (taps == 0) "  the game's gear window is over the main screen -- closing it beside the window, " +
+                    "never Sell or Equip"
+                else "  the gear window is still up -- beside it once more")
+            tap(img)
+            taps += 1
+            at = now()
         }
     }
 }

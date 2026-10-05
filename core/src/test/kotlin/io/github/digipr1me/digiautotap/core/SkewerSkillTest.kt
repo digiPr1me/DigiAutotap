@@ -673,6 +673,24 @@ class SkewerSkillTest {
         assertNull(rig.skill.seesWork(Director.SKEWER_MENU, PaintSkewer.menu()), "a pass that gave up has finished")
     }
 
+    /**
+     * The ceiling grows with the combos wanted (SkewerSkill.roundsFor, the
+     * page at 999 since 2026-10-04): a ceiling of two rounds for sixteen is
+     * five for forty, and a pass whose rounds count right is not parked
+     * short of a number it could reach. This world counts fifteen a round,
+     * so forty take three -- with the ceiling fixed it parked after two.
+     */
+    @Test
+    fun `a pass that wants more combos gets more rounds at the same rate`() {
+        val world = World().apply { screen = "menu" }
+        val rig = Rig(world, combos = 40, rounds = 2)
+        val outcome = rig.skill.work(PaintSkewer.menu())
+        assertEquals(Result.DONE, outcome.result, "${rig.log} / ${world.log}")
+        assertEquals(3, world.rounds, world.log.toString())
+        assertEquals(40, rig.day)
+        assertEquals(0, world.wrong, world.log.toString())
+    }
+
     // ------------------------------------------------------------------------
     // Under the director
     // ------------------------------------------------------------------------
@@ -823,14 +841,21 @@ class SkewerSkillTest {
         assertEquals(chainable.indexOf("runner") + 1, chainable.indexOf("skewer"))
         assertEquals("Chef's Special", SkillSettings.CHAIN_NAMES["skewer"])
         assertTrue("skewer" !in SkillSettings.CHAIN_DEFAULT)
-        // The page: one number, 16 by default, 1 to 30, a supporter's.
+        // The page: one number, 16 by default, 1 to 999, a supporter's.
         val page = SkillSettings.page("skewer")
         assertTrue(page.supporter)
         val n = page.fields.single() as SkillSettings.Number
         assertEquals(Stored.SKEWER_COMBOS_KEY, n.key)
         assertEquals("Combos per day", n.label)
         assertEquals(16.0, n.default)
-        assertEquals(1.0 to 30.0, n.min to n.max)
+        assertEquals(1.0 to 999.0, n.min to n.max)
+        // And the rounds a pass may play grow with it: ten for the default,
+        // the same rate above it, never fewer than ten.
+        assertEquals(10, SkewerSkill.roundsFor(1))
+        assertEquals(10, SkewerSkill.roundsFor(16))
+        assertEquals(19, SkewerSkill.roundsFor(30))
+        assertEquals(625, SkewerSkill.roundsFor(999))
+        assertEquals(625, SkewerSkill.roundsFor(n.max.toInt()))
         assertTrue("Gekkomon Run off" in page.note && "8:00" in page.note, page.note)
         // The day's count: the game day's, 08:00 Vienna, both keys in one go.
         val s = MapSettings()

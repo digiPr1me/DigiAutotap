@@ -41,6 +41,7 @@ object Director {
     const val NEWS = "news"                       // one of the game's news after its reset: OK under "Don't show again today"
     const val SALE = "sale"                       // the game's "Time Sale!" window: no X, one purchase button
     const val HELP = "help"                       // the game's Help tutorial over a page: Back, Next, a reward
+    const val GEAR = "gear"                       // the hologram device's gear window: Sell beside Equip, no X
     const val CLAIM_REWARDS = "claim_rewards"     // the Idle Rewards window, its Claim lit or dimmed
     const val PARTNER_WINDOW = "partner_window"   // a Digimon's own window, Partner or Buddy
     const val TITLE = "title"                     // the title screen, Touch To Start
@@ -69,7 +70,7 @@ object Director {
     // answers it before a frame is read.
     const val AD = "ad"
 
-    val SCREENS = listOf(MAIN, STAGE_FAILED, NO_TICKETS, EXIT_GAME, DOWNLOAD, PROMPT, NEWS, SALE, HELP, CLAIM_REWARDS,
+    val SCREENS = listOf(MAIN, STAGE_FAILED, NO_TICKETS, EXIT_GAME, DOWNLOAD, PROMPT, NEWS, SALE, HELP, GEAR, CLAIM_REWARDS,
                          PARTNER_WINDOW, TITLE, DUNGEON_LIST, SUMMON, SUMMON_DIALOG,
                          EXPLORE_MENU, BOARD, FIELD, FIELD_DIALOG, PARTNER_PAGE, EVENT_PAGE,
                          PRESET, LOST_SECTOR, MISSIONS, EX_MISSIONS, SKEWER_MENU, SKEWER_STAGE,
@@ -171,6 +172,14 @@ object Director {
      *    the pages under it; recognise calls it a dialog by its Next. Over the
      *    corpus it names no frame (the two of it came that day) and moves
      *    nothing.
+     * 4d. The hologram device's gear window (Startup.gearWindow: a pink Sell
+     *    beside a blue Equip of its size, low and wide), added on 2026-10-04
+     *    (PLAN_ABSCHLUSS_1_3.md K2): Auto Spend raises it over the main
+     *    screen by itself and it stands until somebody chooses; recognise
+     *    calls it a dialog by its Equip, which 9. answered, and popupOk an OK.
+     *    Over the corpus it names the twelve frames of it the passive helper,
+     *    the quest loop and the bond tour kept, all `dialog` before, and
+     *    nothing else.
      *    Then a preset page (Preset.place): added on 2026-09-25, and before
      *    everything after it on purpose. The overlay's plate said
      *    "dungeon_list" on the Skill Cards page live that day -- a screen the
@@ -230,7 +239,7 @@ object Director {
      *    are another window and stay what they were (notes/missions.md,
      *    "The Missions window has no X").
      * 9. Whatever recognise still calls a dialog: the dungeon panel, the OK
-     *    pop-ups, the Sell/Equip window, the device settings -- a dialog is
+     *    pop-ups, the device settings -- a dialog is
      *    open, and which one is the business of whoever opened it.
      *
      * The Reward sheet (recognise's REWARD, since 2026-09-23) is none of
@@ -259,6 +268,7 @@ object Director {
         }
         if (Startup.announcement(img) != null) return answer(NEWS, "announcement", info)
         if (Startup.helpWindow(img) != null) return answer(HELP, "help_window", info)
+        if (Startup.gearWindow(img) != null) return answer(GEAR, "gear_window", info)
         if (Preset.place(img) != null) return answer(PRESET, "preset_place", info)
         if (Dungeon.claimButton(img) != null) return answer(CLAIM_REWARDS, "claim_button", info)
         // The same window once its Claim is taken: the button stays, dimmed
@@ -590,6 +600,31 @@ object Director {
     const val HELP_SAYS = "the game's Help tutorial over this page -- go through it yourself; I tap nothing in it"
     /** The fully automatic mode's park on [HELP]. */
     const val HELP_PARK = "The game's Help tutorial is open over a page. Go through it yourself; I tap nothing in it."
+
+    // ------------------------------------------------------------------------
+    // The hologram device's gear window (PLAN_ABSCHLUSS_1_3.md K2, 2026-10-04)
+    // ------------------------------------------------------------------------
+    // Auto Spend with the Super Hologram Device raises it over the main
+    // screen for a piece the S settings keep, and it stands until somebody
+    // chooses ([GEAR], Startup.gearWindow). The player's word of 2026-10-04:
+    // the director closes it in both modes, beside the window, and never
+    // taps Sell or Equip; the piece stays in the inventory (notes/director.md,
+    // "The hologram device's gear window is closed beside it, in both modes,
+    // and neither of its buttons is ever tapped").
+
+    /** What the plate and the log say on the gear window. */
+    const val GEAR_SAYS = "the game's gear window -- closing it beside the window; never Sell, never Equip"
+
+    /**
+     * Taps beside one gear window that is still standing after them, before a
+     * park: a second for a first the game swallowed, never a third -- the
+     * rule of [DOWNLOAD_OKS] and [RESET_SAME_TAPS].
+     */
+    const val GEAR_TAPS = 2
+
+    /** The park on a gear window still standing after [GEAR_TAPS] taps beside it. */
+    const val GEAR_PARK = "The game's gear window stays after $GEAR_TAPS taps beside it. " +
+        "Choose Sell or Equip yourself; I tap neither."
 
     // ------------------------------------------------------------------------
     // The game's windows after its reset (PLAN_RELEASE_1_3.md B50)
@@ -979,6 +1014,11 @@ class DirectorLoop(
     private var resetSame = 0
     /** The screen of the look before the screen in front, for whether a news window is the reset's ([news]). */
     private var lastScreen: String? = null
+    /** Taps beside the gear window while no look has shown it go ([Director.GEAR_TAPS]), and when the last went out. */
+    private var gearTaps = 0
+    private var gearAt = 0.0
+    /** Whether a gear window's frame has been kept since the core started ([gear]). */
+    private var gearKept = false
 
     /** The shell's "Try again": look afresh at a screen the director had parked on. */
     fun retry() {
@@ -1188,6 +1228,11 @@ class DirectorLoop(
         // And of a tap on one of the reset's windows: the window gone, or the
         // next one up in its place ([resetProof]).
         resetProof(answer.screen, img)
+        // And of a tap beside the gear window: the next look without it ([gear]).
+        if (gearTaps > 0 && answer.screen != Director.GEAR) {
+            log("  the gear window is gone after the tap beside it -- ${answer.screen} now")
+            gearTaps = 0
+        }
 
         if (!on()) {
             // The player has the game: a stack of the reset's windows the
@@ -1262,6 +1307,7 @@ class DirectorLoop(
             Director.DOWNLOAD -> return download(answer, img, t)
             Director.NEWS -> return news(answer, img, t)
             Director.SALE, Director.HELP -> return gameWindow(answer, img)
+            Director.GEAR -> return gear(answer, img, t)
         }
         // The rest of a stack of the reset's windows, while one is open.
         resetStack(answer, img, t)?.let { return it }
@@ -1514,6 +1560,50 @@ class DirectorLoop(
         }
         if (!secondLook()) keep(img, answer.screen)
         return park(answer.screen, if (sale) Director.SALE_PARK else Director.HELP_PARK)
+    }
+
+    /**
+     * The hologram device's gear window ([Director.GEAR]): "Equipped" over
+     * "Not Equipped", Sell beside Equip, no X. Closed in both modes with one
+     * tap beside it, on the dimmed field left of the window
+     * ([Startup.GEAR_CLOSE], the spot that opens nothing on the plain main
+     * screen), behind the player's three seconds like every tap of the
+     * director's own; the piece stays in the inventory. Never Sell, never
+     * Equip -- nothing here aims at either. The three seconds come: the
+     * window standing over the battle moved 0.0235 and 0.0172 of the frame
+     * between looks 0.5 and 2.9 s apart (instance 1, 2026-10-04, `titleProbe
+     * news`, staging/gear/titleProbe_gear_motion.txt), under IDLE_SHARE's
+     * 0.10. The proof is the next look without the window ([tick]); the next tap on a window still standing
+     * waits [Director.IDLE_AFTER] for the first to take, and a window still
+     * standing after [Director.GEAR_TAPS] taps is a park with its frame kept.
+     * The first window the director closes after the core starts is kept as
+     * `gear` (with the developer's switch only, as every kept frame).
+     */
+    private fun gear(answer: Director.Answer, img: Mat, t: Double): Director.Tick {
+        if (gearTaps > 0 && t - gearAt < Director.IDLE_AFTER) {
+            return still("the gear window -- waiting for the tap beside it to take", answer.screen)
+        }
+        if (gearTaps >= Director.GEAR_TAPS) {
+            keep(img, "gear_stays")
+            gearTaps = 0
+            return park(answer.screen, Director.GEAR_PARK)
+        }
+        return gated(answer, img, t) {
+            if (gearTaps == 0) {
+                log("the game's gear window is up -- closing it beside the window, never Sell or Equip; " +
+                    "the piece stays in the inventory")
+            } else {
+                log("  the gear window is still up after the tap -- beside it once more")
+            }
+            if (!gearKept) {
+                gearKept = true
+                keep(img, "gear")
+            }
+            gearTaps += 1
+            gearAt = now()
+            tap(img, Startup.GEAR_CLOSE[0], Startup.GEAR_CLOSE[1], Startup.GEAR_CLOSE_ANCHOR)
+            Director.Tick(answer.screen, Director.GEAR_SAYS, "tap")
+        }
     }
 
     // ------------------------------------------------------------------------

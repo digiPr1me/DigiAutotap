@@ -1030,7 +1030,9 @@ class WorldSearchSkill(
             }
             // Over a few seconds, not on one frame: the game draws over the
             // auto button by itself (MainScreen, K2 of PLAN_ABSCHLUSS_1_3.md).
-            img = MainScreen.settle(img, cap::grab, sleep, now, ::gate, log) { last, waited ->
+            img = MainScreen.settle(img, cap::grab, sleep, now, ::gate, log, beside = {
+                tap(it, Startup.GEAR_CLOSE[0], Startup.GEAR_CLOSE[1], "beside the gear window", Startup.GEAR_CLOSE_ANCHOR)
+            }) { last, waited ->
                 log("not the plain main screen after %.0f s, cannot open the Digital World Search".format(waited))
                 dump(last, "not_main_screen")
             } ?: return false

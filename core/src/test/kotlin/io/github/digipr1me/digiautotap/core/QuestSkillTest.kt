@@ -1066,8 +1066,8 @@ class QuestSkillTest {
             .dungeonSettings(2, 1)
         assertEquals(mapOf(2 to 1), set.budgets)
         assertEquals(7, set.attemptsBeforeClear)
-        assertFalse(set.countLostOnly,
-                    "the quest's N counts every attempt; the Dungeons page's the failed ones (2026-10-04)")
+        assertTrue(set.countLostOnly,
+                   "the quest's N counts the failed attempts alone, as the Dungeons page's (2026-10-04)")
         assertTrue(set.survey, "the survey stays on: dungeonShort reads it")
         assertEquals(mapOf(2 to 1), Loop(Screen()).dungeonSettings(2, 0).budgets,
                      "never a budget of 0, which the skill reads as 'do not play'")
@@ -1083,6 +1083,32 @@ class QuestSkillTest {
     @Test
     fun `the quest's dungeon bot gets no minutes for the daily dungeon`() {
         assertEquals(0, Loop(Screen()).dungeonSettings(2, 1).dailyMinutes)
+    }
+
+    /**
+     * The quest's own Dungeons bot writes into the loop's log under its step,
+     * marked "dungeon:" -- silenced until 2026-10-04, when the player's Poco
+     * F3 log showed the step as taps and swipes alone. Here the list never
+     * opens, the capture showing the main screen whatever is tapped, and the
+     * bot's own sentence for that stands in the loop's log, on the loop's
+     * clock.
+     */
+    @Test
+    fun `the quest's dungeon bot writes its lines into the loop's log`() {
+        val said = ArrayList<String>()
+        var t = 0.0
+        val loop = QuestSkill(DirectorTest.FakeCapture(), { QuestSkill.Settings() },
+                              log = { said += it }, on = { true }, sleep = { t += it },
+                              now = { t += 0.001; t })
+        val out = loop.dungeonFor(1, 2).run()
+        val log = said.joinToString("\n")
+        assertEquals(Result.PARKED, out.result, log)
+        assertTrue(said.any { it.startsWith("      dungeon: list not recognised") }, log)
+        assertTrue(said.all { line ->
+            line.startsWith("      dungeon: ") &&
+                line.removePrefix("      dungeon: ").let { it.isNotEmpty() && it == it.trim() } },
+            "every line marked, no blank one, no indent of the bot's own\n$log")
+        assertTrue(t >= 1.0, "the bot waited on the loop's clock: $t s")
     }
 
     @Test

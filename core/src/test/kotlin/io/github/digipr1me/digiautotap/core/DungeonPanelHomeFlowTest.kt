@@ -319,7 +319,6 @@ class DungeonPanelHomeFlowTest {
             "summon/ad_limit_031057",                                // an OK pop-up
             "dungeon/login_bonus_over_list_085143",                  // the reset's windows over the list
             "dungeon/notices_over_list_085122",
-            "bond/open_the_Digimon_page_140453",                     // a window of the Digimon page
             "dungeon/daily_panel_prefab_053129",                     // the daily panel's prefab, a second
         )
         for ((names, want) in listOf(yes to true, no to false)) for (name in names) {
@@ -329,6 +328,15 @@ class DungeonPanelHomeFlowTest {
             assertFalse(dungeons.leavesFrom(Director.UNKNOWN, img), "$name: only a dialog")
             img.release()
         }
+        // The hologram device's gear window, which this list called "a window
+        // of the Digimon page" until classify named it (PLAN_ABSCHLUSS_1_3.md
+        // K2, 2026-10-04; the bond tour kept it on its way to that page): no
+        // dialog any more, and nothing Dungeons leaves from either way.
+        val gear = OracleFamilies.read(File(repo, "${OracleFamilies.CORPUS}/bond/open_the_Digimon_page_140453.png"))
+        assertEquals(Director.GEAR, Director.classify(gear).screen)
+        assertFalse(dungeons.leavesFrom(Director.GEAR, gear))
+        assertFalse(dungeons.leavesFrom(Director.DIALOG, gear))
+        gear.release()
     }
 
     companion object {

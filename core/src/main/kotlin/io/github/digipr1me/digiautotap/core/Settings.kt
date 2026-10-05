@@ -407,7 +407,7 @@ object Stored {
         dungeonAds = dungeonAds(s) && freeAds(s).tap,
         summonAds = summonAds(s) && freeAds(s).tap)
 
-    /** The Quest Loop page's one field, the quest's own attempts before Clear Previous Difficulty. */
+    /** The Quest Loop page's one field, the quest's own failed attempts before Clear Previous Difficulty (since 2026-10-04). */
     const val QUEST_CLEAR_KEY = "quest_attempts_before_clear"
 
     /**

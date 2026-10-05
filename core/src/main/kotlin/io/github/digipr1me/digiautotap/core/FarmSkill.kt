@@ -984,7 +984,9 @@ class FarmSkill(
             }
             // Over a few seconds, not on one frame: the game draws over the
             // auto button by itself (MainScreen, K2 of PLAN_ABSCHLUSS_1_3.md).
-            val main = MainScreen.settle(img, ::grab, sleep, now, ::pauseGate, log) { last, waited ->
+            val main = MainScreen.settle(img, ::grab, sleep, now, ::pauseGate, log, beside = {
+                tap(Startup.GEAR_CLOSE[0], Startup.GEAR_CLOSE[1], "beside the gear window", Startup.GEAR_CLOSE_ANCHOR)
+            }) { last, waited ->
                 log("not the plain main screen after %.0f s, cannot open the Meat Field".format(waited))
                 dump(last, "not_main_screen")
             } ?: return false

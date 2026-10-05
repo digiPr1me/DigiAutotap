@@ -25,7 +25,9 @@ class DirectorTest {
         var backs = 0
 
         override fun grab(): Mat = scene(grabs++)
-        override fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, ms: Long) {}
+        /** Every swipe, counted (DungeonSkillTest: a list already at its end is not swiped). */
+        var swipes = 0
+        override fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, ms: Long) { swipes += 1 }
         /** Called on every back key, after it is counted: what the game does with it. */
         var onBack: () -> Unit = {}
         override fun back() { backs += 1; onBack() }

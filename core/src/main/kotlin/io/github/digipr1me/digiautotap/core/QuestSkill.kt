@@ -126,7 +126,8 @@ open class QuestSkill(
          * Dungeons task's, because the two want different things -- the
          * task the day's rewards, the quest two clears of one dungeon, and a
          * run cleared through Clear Previous Difficulty counts for "Clear
-         * Fight! ... 2x" like any other (the player, 2026-09-23).
+         * Fight! ... 2x" like any other (the player, 2026-09-23). Failed
+         * attempts since 2026-10-04, as the Dungeons page's ([dungeonSettings]).
          */
         val attemptsBeforeClear: Int = ATTEMPTS_BEFORE_CLEAR,
         /**
@@ -1693,22 +1694,39 @@ open class QuestSkill(
      * survey is what [dungeonShort] and [dungeonBlocked] read their answer
      * out of.
      *
-     * Its log is silenced, as quest.py silences the bot it builds -- but not
-     * its measurements: [DungeonRun.counted] is what [dungeonBlocked] asks
-     * afterwards, and a reading thrown away is a reading nobody took
-     * (NOTES.md).
+     * Its lines go into the loop's log under the step, marked ([dungeonLine]),
+     * and it waits on the loop's clock. Silenced until 2026-10-04, as
+     * quest.py silenced the bot it built -- and the player's Poco F3 log of
+     * that day showed the step as taps and swipes alone (notes/dungeons.md,
+     * "The quest loop's Dungeons bot writes into the log under its step").
+     * Its measurements were never silenced: [DungeonRun.counted] is what
+     * [dungeonBlocked] asks afterwards, and a reading thrown away is a
+     * reading nobody took (NOTES.md).
      */
     internal open fun dungeonFor(arg: Int, needed: Int): DungeonRun {
         val set = dungeonSettings(arg, needed)
         val skill = DungeonSkill(
             cap,
             { set },
-            log = { }, on = on, keep = keep, now = now)
+            log = ::dungeonLine, on = on, keep = keep, sleep = sleep, now = now)
         return object : DungeonRun {
             override fun run(): Outcome = skill.run()
             override val counted: Map<Pair<String, Int>, Dungeon.Budget> get() = skill.counted
             override fun resumesOn(screen: String, img: Mat): Boolean = skill.resumesOn(screen, img)
             override fun resume(img: Mat): Outcome = skill.resume(img, true)
+        }
+    }
+
+    /**
+     * One line of the quest's Dungeons bot ([dungeonFor]) in the loop's log:
+     * six spaces in, under the loop's "step n: ... -- playing the dungeon",
+     * and marked "dungeon:" so that it is not read as the Dungeons task's own;
+     * the bot's indents and blank lines are left out.
+     */
+    internal fun dungeonLine(text: String) {
+        for (line in text.lines()) {
+            val part = line.trim()
+            if (part.isNotEmpty()) log("      dungeon: $part")
         }
     }
 
@@ -1719,10 +1737,12 @@ open class QuestSkill(
         // with the Ad Skip Pass beside it since 2026-10-03 ([dungeonAds]).
         useAds = settings().dungeonAds,
         attemptsBeforeClear = settings().attemptsBeforeClear,
-        // Every attempt, won or lost, as before 2026-10-04: the Dungeons
-        // page's number counts the lost runs alone since that day, and
-        // the player asked about that page, not this one.
-        countLostOnly = false,
+        // The failed attempts alone, as on the Dungeons page: the player
+        // asked for this card to count them too on 2026-10-04, the day that
+        // page changed. Until then it counted every attempt, won or lost
+        // (notes/dungeons.md, "The quest loop's card counts the failed
+        // attempts alone, as the Dungeons page does").
+        countLostOnly = true,
         survey = true)
 
     /**
@@ -1803,7 +1823,8 @@ open class QuestSkill(
         /**
          * The quest loop's attempts before Clear Previous Difficulty where
          * the page has no number yet: 4, the plan's proposal of 2026-09-23
-         * -- a quest wants its two clears today, not the best rewards.
+         * -- a quest wants its two clears today, not the best rewards. The
+         * failed ones alone since 2026-10-04 ([dungeonSettings]).
          */
         const val ATTEMPTS_BEFORE_CLEAR = 4
 

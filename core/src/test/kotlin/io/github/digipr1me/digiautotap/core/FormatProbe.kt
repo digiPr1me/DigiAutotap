@@ -229,6 +229,9 @@ object FormatProbe {
         // The game's sale window and Help tutorial (PLAN_RELEASE_1_3.md B72,
         // B73): classify and every way home ask them on whatever is in front.
         "dungeon.sale_window" to null, "dungeon.help_window" to null,
+        // The gear window (K2): classify and every way in ask it on whatever
+        // is in front.
+        "dungeon.gear_window" to null,
         "dungeon.list_cards" to setOf(D.DUNGEON_LIST), "dungeon.list_at_top" to setOf(D.DUNGEON_LIST),
         "dungeon.list_at_bottom" to setOf(D.DUNGEON_LIST), "dungeon.badge_crop" to setOf(D.DUNGEON_LIST),
         "dungeon.badge_glyphs" to setOf(D.DUNGEON_LIST), "dungeon.card_counters" to setOf(D.DUNGEON_LIST),

@@ -279,10 +279,13 @@ object SkillSettings {
         // own. The objection to the old page was switches in front of the
         // switch; a number the player wants set is not one.
         Page("quest", "Quest Loop", "Works through the repeating quests.", listOf(
-            Number(Stored.QUEST_CLEAR_KEY, "Attempts before Clear Previous Difficulty",
+            // Failed attempts since 2026-10-04, as on the Dungeons page (the
+            // player, the same day); the key is the old one, so that nobody's
+            // number went with the change.
+            Number(Stored.QUEST_CLEAR_KEY, "Failed attempts before Clear Previous Difficulty",
                    QuestSkill.ATTEMPTS_BEFORE_CLEAR.toDouble(), 0.0, 99.0,
-                   note = "For the dungeon quests. $CLEAR_NOTE A run cleared this way counts " +
-                       "for the quest."),
+                   note = "For the dungeon quests. $DUNGEON_CLEAR_NOTE A run cleared this way " +
+                       "counts for the quest."),
         ), note = "When switched on, the Quest Loop works through the repeating quests by " +
             "itself -- it claims finished quests, plays the dungeon and summon quests, and " +
             "stops when there is nothing left for the day. If you run out of dungeon " +
@@ -376,12 +379,14 @@ object SkillSettings {
         // Chef's Special, since 2026-09-30 (PLAN_SKEWER.md 3.1): the skewer
         // minigame of the Events window, a supporter's task like Gekkomon Run
         // (question 5). One number, the combos a day wants, 16 by default,
-        // 1 to 30: the event's daily mission counts fifteen ("Achieve
-        // Minigame combo 15 times", question 13), and the sixteenth is the
-        // player's margin. No score cap (question 4) and no stage choice
-        // (question 3): the stage is the one the game has chosen.
+        // 1 to 999 (30 until 2026-10-04, when the player asked for 999): the
+        // event's daily mission counts fifteen ("Achieve Minigame combo 15
+        // times", question 13), and the sixteenth is the player's margin.
+        // The rounds a pass may play grow with the number
+        // (SkewerSkill.roundsFor). No score cap (question 4) and no stage
+        // choice (question 3): the stage is the one the game has chosen.
         Page("skewer", "Chef's Special", "Plays the skewer minigame for the day's combos.", listOf(
-            Number(Stored.SKEWER_COMBOS_KEY, "Combos per day", SkewerSkill.COMBO_TARGET.toDouble(), 1.0, 30.0),
+            Number(Stored.SKEWER_COMBOS_KEY, "Combos per day", SkewerSkill.COMBO_TARGET.toDouble(), 1.0, 999.0),
         ), supporter = true,
             note = "Plays one round after another until this many combos are counted today, then " +
                 "leaves the round through its pause menu and stops until the daily reset at 8:00 -- or " +
@@ -447,12 +452,11 @@ object SkillSettings {
         "the daily dungeon each time Dungeons runs, the Lost Sector Tower each time its own " +
         "step of the chain runs or its Crests page is open. They cost nothing. 0 leaves them out."
 
-    /** What Clear Previous Difficulty is, said once for both pages that set it. */
-    const val CLEAR_NOTE = "A lost run costs no ticket and is tried again. After this many " +
-        "attempts on one dungeon, the tickets still to spend go to Clear Previous " +
-        "Difficulty, which hands out the previous difficulty's rewards at once."
-
-    /** The Dungeons page's: only a failed attempt counts there (DungeonSkill.Settings.countLostOnly). */
+    /**
+     * What Clear Previous Difficulty is, said once for both pages that set
+     * it: only a failed attempt counts (DungeonSkill.Settings.countLostOnly),
+     * on the Dungeons page and on the Quest Loop's, both since 2026-10-04.
+     */
     const val DUNGEON_CLEAR_NOTE = "A failed attempt is a run that ends without rewards and " +
         "goes back to the dungeon; it costs no ticket and is tried again. A won run does not " +
         "count. After this many failed attempts on one dungeon, the tickets still to spend go " +

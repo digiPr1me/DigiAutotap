@@ -641,4 +641,136 @@ object Startup {
         }
         return null
     }
+
+    // ------------------------------------------------------------------------
+    // The hologram device's gear window: Sell beside Equip (K2, 2026-10-04)
+    // ------------------------------------------------------------------------
+    // A pull of the hologram device that draws a piece of gear puts a window
+    // over the main screen: two cards, "Equipped" over "Not Equipped" (with
+    // "NEW"), and under them Sell, pink, beside Equip, blue -- no X, no
+    // Close. Under Auto Spend with the Super Hologram Device it comes by
+    // itself for a piece the S settings keep, and it stands until somebody
+    // chooses: 89.5 s on instance 1 on 2026-10-03 (staging/k2/measure.txt).
+    // classify called it `dialog` (recognise's blue button), the
+    // semi-automatic mode parked on it, every way in from the main screen
+    // waited MainScreen.WAIT for the auto button under it and gave up, and
+    // popupOk reads Equip as an OK (notes/world-search.md, "A way in asks
+    // for the main screen over a few seconds, because the game draws over its
+    // auto button by itself"). The player's word of 2026-10-04: never Sell,
+    // never Equip; a tap on the dimmed field beside the window closes it, and
+    // the piece stays in the inventory ([GEAR_CLOSE]).
+    //
+    // What it has: a pink button and a blue one of one size side by side on
+    // one row, low in the window, wider than any other pair the game draws.
+    // Measured with `gradlew :core:titleProbe --args="gear corpus staging/k2
+    // <the Poco's frame>"` over the 1893 frames of the corpus, the two K2
+    // pictures and the Poco F3's kept frame of 2026-10-02 18:59:08
+    // (staging/gear/titleProbe_gear_corpus.txt): every blob of GEAR_PINK
+    // (the hue band of the pink prompt's Cancel, Dungeon.PARTY_PINK_HUE;
+    // the Sell measures H 148, S 158, V 223 flat) and of Dungeon.BLUE (the
+    // Equip H 100, S 255, V 209) 0.08 to 0.48 of the width and 1.3 to 6 times
+    // as wide as tall, low in the middle's rectangle (fy 0.40 to 1.05), each
+    // pink against each blue right of it on its row, 325 pairs; the gear
+    // window's are 15, on the twelve corpus frames that are this window --
+    // kept by the passive helper, the quest loop and the bond tour on the
+    // player's account and named by nobody (bond/open_the_Digimon_page_140453,
+    // _163700, passive/unclear_161516 to _215930, quest/no-x-to-get-out-with
+    // _082048, _124001, _133917) -- and the three pictures:
+    //
+    //                         the gear window        the nearest other uncut pair
+    //   the row, fy           0.8639 to 0.8641       0.6149 (the Partner tab's pair), the prompts 0.600 to 0.613
+    //   each button's width   0.2642 to 0.2648       0.1967 (the prompts: Return, Disband, ad confirms, Chef's pause)
+    //   dx / Equip's width    1.104 to 1.106         0.976 (the Partner tab's), 1.222 (passive/unclear_125331)
+    //   dy                    0.0008 at most         0.0199 (the Partner tab's)
+    //   sizes, |w-1|, |h-1|   0.027 at most          0.436 (the nearest pair at the gear's offset)
+    //   fills, both buttons   0.919 and up           0.278 (the same pair)
+    //
+    // Each test stands in the middle of its gap: the band from fy 0.74
+    // (GEAR_BAND), a button at least 0.23 wide (GEAR_BUTTON_FW, its upper end
+    // the window measured), GEAR_PAIR_DX 1.04 to 1.164, GEAR_PAIR_DY 0.010,
+    // GEAR_PAIR_SIZE 0.23, GEAR_FILL_MIN 0.60. The row and the width are what
+    // refuse every prompt -- a pink Cancel beside a blue OK, the same face
+    // half as low and a quarter narrower --; the rest is the pair's shape.
+    // On the Poco's 1080 x 2320 the pair read where it reads at 1920, within
+    // 0.0006 (the cover: rule 7's fence holds, neither button touches a side).
+    //
+    // The anchor is MIDDLE, measured (notes/formats.md, rule 4): one window
+    // raised on LDPlayer instance 1 on 2026-10-04 and kept standing through
+    // the rows of rule 17 with `wm size` (corpus/formats/gear_*, the same
+    // window on every row, so every row's twin is the 1920 frame of it).
+    // Asked at all three anchors, the 1920 twin's row, fy 0.8636, came at
+    // MIDDLE over the ceiling -- 0.8637 at 1080 x 2520 (180 rows of headroom;
+    // BOTTOM 0.8264, TOP 0.9010) and 0.8636 at 720 x 1600 (40 rows; BOTTOM
+    // 0.8511, TOP 0.8760). Beside its twin on every row (`formatProbe pair`,
+    // staging/gear/formatProbe_pair_result.txt) the answer moved 0.0011 at
+    // the most; under the dot and its plate it read at all 20 places of the
+    // strip on all seven rows (staging/gear/readerProbe_gear_mask.txt). It
+    // costs classify 1.8 ms median a round over the corpus (p95 3.9, at most
+    // 6.3), staging/gear/titleProbe_gear_reader.txt.
+    val GEAR_ANCHOR = Dungeon.Anchor.MIDDLE
+    val GEAR_PINK = Dungeon.Hsv(intArrayOf(135, 100, 150), intArrayOf(175, 255, 255))
+    val GEAR_BAND = doubleArrayOf(0.0, 1.0, 0.74, 1.0)
+    val GEAR_BUTTON_FW = doubleArrayOf(0.23, 0.48)
+    val GEAR_BUTTON_ASPECT = doubleArrayOf(1.3, 6.0)
+    val GEAR_PAIR_DX = doubleArrayOf(1.04, 1.164)
+    const val GEAR_PAIR_DY = 0.010
+    const val GEAR_PAIR_SIZE = 0.23
+    const val GEAR_FILL_MIN = 0.60
+
+    /**
+     * Where the window is closed: QuestSkill.DEAD_TAP, in the bottom's
+     * rectangle, the dimmed field left of the window at half height. The
+     * spot the quest loop closes its reward window at, player-checked to open
+     * nothing on the plain main screen and inside the picture on every row of
+     * corpus/formats; left of the window's cards (from fx 0.145) and below
+     * the HUD's left column. Never Sell, never Equip: the window's two
+     * buttons stand from fx 0.20 at fy 0.83 to 0.90, and nothing aims at them.
+     * Tried by hand on instance 1 on 2026-10-04: a tap at 109,874 (1080 x
+     * 1920) and at 15,1245 (1080 x 2520) closed the window and opened
+     * nothing, and two more at each on the plain main screen opened nothing
+     * either. The piece stays in the device's capsule, and a tap on the
+     * device opens the same window again, no hologram spent.
+     */
+    val GEAR_CLOSE = QuestSkill.DEAD_TAP
+    val GEAR_CLOSE_ANCHOR = Dungeon.Anchor.BOTTOM
+
+    /**
+     * The gear window's two buttons, where they were read: the row, the
+     * middle of Sell and of Equip, and Equip's width, in the rectangle of
+     * [GEAR_ANCHOR]. No button: nothing here taps either of them.
+     */
+    class Gear(val fy: Double, val sellFx: Double, val equipFx: Double, val fw: Double) {
+        fun toOracle(): Map<String, Any?> = mapOf("fy" to fy, "sell_fx" to sellFx, "equip_fx" to equipFx, "fw" to fw)
+    }
+
+    /** The pinks and the blues [gearWindow] looks at. */
+    internal fun gearBlobs(img: Mat): Pair<List<Blob>, List<Blob>> {
+        val rect = Dungeon.gameRect(img, GEAR_ANCHOR)
+        val pinks = blobs(img, rect, GEAR_PINK, GEAR_BAND, GEAR_BUTTON_FW, GEAR_BUTTON_ASPECT)
+        if (pinks.isEmpty()) return pinks to emptyList()
+        return pinks to blobs(img, rect, Dungeon.BLUE, GEAR_BAND, GEAR_BUTTON_FW, GEAR_BUTTON_ASPECT)
+    }
+
+    internal fun isGearPair(sell: Blob, equip: Blob): Boolean =
+        !sell.cut && !equip.cut && sell.fill >= GEAR_FILL_MIN && equip.fill >= GEAR_FILL_MIN &&
+            GEAR_PAIR_DX[0] * equip.fw <= equip.fx - sell.fx && equip.fx - sell.fx <= GEAR_PAIR_DX[1] * equip.fw &&
+            kotlin.math.abs(equip.fy - sell.fy) <= GEAR_PAIR_DY &&
+            kotlin.math.abs(sell.fw / equip.fw - 1.0) <= GEAR_PAIR_SIZE &&
+            kotlin.math.abs(sell.fh / equip.fh - 1.0) <= GEAR_PAIR_SIZE
+
+    /**
+     * The hologram device's gear window over the main screen, or null: a
+     * pink Sell beside a blue Equip of its size, low and wide. Read so that
+     * the director closes it beside the window ([GEAR_CLOSE]) and a way in
+     * does the same; neither of its buttons is ever tapped.
+     */
+    fun gearWindow(img: Mat): Gear? {
+        val (pinks, blues) = gearBlobs(img)
+        for (sell in pinks) {
+            for (equip in blues) {
+                if (isGearPair(sell, equip)) return Gear(equip.fy, sell.fx, equip.fx, equip.fw)
+            }
+        }
+        return null
+    }
 }

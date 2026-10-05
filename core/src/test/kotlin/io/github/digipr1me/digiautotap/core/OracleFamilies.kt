@@ -169,6 +169,9 @@ object OracleFamilies {
         // taps (PLAN_RELEASE_1_3.md B72, B73), 2026-10-01.
         f.ask("sale_window") { Startup.saleWindow(img)?.toOracle() }
         f.ask("help_window") { Startup.helpWindow(img)?.toOracle() }
+        // The hologram device's gear window, Sell beside Equip, which nothing
+        // taps (PLAN_ABSCHLUSS_1_3.md K2), 2026-10-04.
+        f.ask("gear_window") { Startup.gearWindow(img)?.toOracle() }
     }
 
     private fun passive(f: Frame) {
@@ -431,7 +434,8 @@ object OracleFamilies {
                "auto_button", "home_button", "recognise", "reward_sheet", "black_frame", "vs_screen",
                "panel_tickets",
                "header_tickets", "daily_panel",
-               "title_bar", "at_main", "menu_button", "announcement", "sale_window", "help_window"),
+               "title_bar", "at_main", "menu_button", "announcement", "sale_window", "help_window",
+               "gear_window"),
         depends = listOf("Cv"), script = ::dungeon)
     val PASSIVE = Family(
         "passive", listOf("Passive", "Bond"),
