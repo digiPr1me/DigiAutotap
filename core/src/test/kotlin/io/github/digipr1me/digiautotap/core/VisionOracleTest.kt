@@ -130,7 +130,7 @@ class VisionOracleTest {
     // ------------------------------------------------------------------------
 
     private fun calib(card: List<Int>, gx: Double, gy: Double, cw: Double, ch: Double): Calib =
-        Calib(card.toIntArray(), gx, gy, cw, ch, emptyMap(), intArrayOf(0, 0), 0)
+        Calib(card.toIntArray(), gx, gy, cw, ch, emptyMap(), intArrayOf(0, 0), 0, Vision.Layout.CLASSIC)
 
     /**
      * `median_calib` and `cell_center` / `cell_rect` are not readers, and the
@@ -154,9 +154,11 @@ class VisionOracleTest {
             "roi_meters" to listOf(387, 1266, 278, 43), "roi_paws" to listOf(305, 1621, 216, 72),
             "roi_top_green" to listOf(476, 26, 205, 68), "roi_top_orange" to listOf(281, 26, 205, 68),
             "roi_top_pink" to listOf(670, 26, 205, 68))
+        // "layout" is not Python's either: the classic board, since 1.5.0's
+        // second layout (Vision.Layout, 2026-10-12).
         val expectedOdd = mapOf("card" to listOf(98, 0, 884, 1903), "cell_h" to 134.6673, "cell_w" to 164.03,
-                                "grid_x0" to 117.0, "grid_y0" to 637.9, "skill_button" to listOf(677, 1722),
-                                "skill_radius" to 66) + boxes
+                                "grid_x0" to 117.0, "grid_y0" to 637.9, "layout" to "classic",
+                                "skill_button" to listOf(677, 1722), "skill_radius" to 66) + boxes
         assertEquals(Oracle.encode(expectedOdd), Oracle.encode(odd))
         assertEquals(Oracle.encode(expectedOdd + ("grid_y0" to 638.15)), Oracle.encode(even))
 

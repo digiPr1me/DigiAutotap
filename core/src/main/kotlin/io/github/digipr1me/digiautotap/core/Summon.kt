@@ -271,6 +271,26 @@ object Summon {
      */
     fun notEnoughTickets(img: Mat): Dungeon.Button? {
         if (dimmedSummonButton(img) == null) return null
+        return notEnoughPair(img)
+    }
+
+    /**
+     * The dialog's pink Close beside its blue Move, without the dimmed
+     * button that fences [notEnoughTickets] -- for the spam loop alone, which
+     * meets the dialog under the tap's own ripple: since the game's 1.5.0
+     * (2026-10-13) the dialog stands the moment the tap lands, and the cyan
+     * ring the game draws where the finger was cuts the dimmed button's
+     * yellow in two for the first frames (fill 0.70 and 0.74 against
+     * SUMMON_BUTTON_FILL_MIN's 0.85 on two frames of a burst, the inner disc
+     * a blob of its own), so the fence says no, the loop sees no button and
+     * its hurrying tap closes the dialog it never saw -- five taps a second,
+     * eight minutes, on 19 tickets against a price of 30 (notes/summon.md,
+     * "The out-of-tickets dialog comes up under the tap's ripple, and a
+     * hurrying tap closes it unseen"). The pair alone fires on 12 of the 470
+     * frames the fence was measured over, the three prompts among them, and
+     * none of those is ever on the Special Summon page while the loop taps.
+     */
+    fun notEnoughPair(img: Mat): Dungeon.Button? {
         val pinks = Dungeon.findButtons(img, NOT_ENOUGH_PINK, minArea = NOT_ENOUGH_AREA,
                                         minY = NOT_ENOUGH_ROW[0])
             .filter { it.fy <= NOT_ENOUGH_ROW[1] }

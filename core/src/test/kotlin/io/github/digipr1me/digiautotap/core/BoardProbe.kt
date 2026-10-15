@@ -741,7 +741,7 @@ fun main(args: Array<String>) {
                             val box = cal.roi(key)
                             val rois = LinkedHashMap(cal.rois)
                             rois[key] = intArrayOf(box[0], box[1], box[2], box[3] + Math.round(pad * cal.cellH).toInt())
-                            val padded = Calib(cal.card, cal.gridX0, cal.gridY0, cal.cellW, cal.cellH, rois, cal.skillButton, cal.skillRadius)
+                            val padded = Calib(cal.card, cal.gridX0, cal.gridY0, cal.cellW, cal.cellH, rois, cal.skillButton, cal.skillRadius, cal.layout)
                             val value = v.readNumber(img, key, padded)
                             val rp = MeterGlyphs.measure(img, padded.roi(key), "bright")
                             log("      pad %s: read %s  bottom margin %s  %s".format(MeterGlyphs.f(pad, 3), value ?: "null",
@@ -808,7 +808,7 @@ fun main(args: Array<String>) {
                         val y1 = Math.round(gBottom + 0.10 * cal.cellH).toInt()
                         val wide = intArrayOf(box[0], y0, box[2], y1 - y0)
                         val rois = LinkedHashMap(cal.rois); rois["roi_meters"] = wide
-                        val wcal = Calib(cal.card, cal.gridX0, cal.gridY0, cal.cellW, cal.cellH, rois, cal.skillButton, cal.skillRadius)
+                        val wcal = Calib(cal.card, cal.gridX0, cal.gridY0, cal.cellW, cal.cellH, rois, cal.skillButton, cal.skillRadius, cal.layout)
                         val read = v.readNumber(img, "roi_meters", wcal)
                         val r = MeterGlyphs.measure(img, wide, "bright")
                         if (r == null || r.kept.size < 3) { log("  ${b.name}: no digits in the wide band"); continue }
@@ -864,7 +864,7 @@ fun main(args: Array<String>) {
                         for ((name, box) in variants) {
                             val roi = box(cal)
                             val rois = LinkedHashMap(cal.rois); rois["roi_meters"] = roi
-                            val vc = Calib(cal.card, cal.gridX0, cal.gridY0, cal.cellW, cal.cellH, rois, cal.skillButton, cal.skillRadius)
+                            val vc = Calib(cal.card, cal.gridX0, cal.gridY0, cal.cellW, cal.cellH, rois, cal.skillButton, cal.skillRadius, cal.layout)
                             val read = v.readNumber(img, "roi_meters", vc)
                             if (read != now) moves.getValue(name) += "${b.name}: $now -> $read  (box ${cal.roi("roi_meters").toList()} -> ${roi.toList()})"
                             if (read != null) MeterGlyphs.measure(img, roi, "bright")?.bottomMargin?.let { margins.getValue(name) += it to b.name }

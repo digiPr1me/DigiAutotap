@@ -454,6 +454,30 @@ object Explore {
     const val CLOSE_PLATE_MIN = 0.60
     val CLOSE_MARK_BAND = doubleArrayOf(0.10, 0.30)
 
+    // Since the game's 1.5.0 (2026-10-12) the board's X is the Special
+    // Summon page's: a white plate (S 21 to 38, V 245 to 255 on the first
+    // board) with a blue mark (H 108, S 165, V 213), which Summon.EXIT_PLATE
+    // and EXIT_MARK already name, at fx 0.7929, fy 0.9442 of game_rect, 0.088
+    // wide -- 0.006 from the old place, so the crop and the tap stay where
+    // they were, and in the crop the plate measures 0.779 and the mark 0.207
+    // against the classic pair's 0.789 and 0.208 (the classic pair measures
+    // 0.000 on the new X and the new pair 0.000 on the old one). The same X
+    // closes the Special Summon page, the Meat Field, the Crests page, the
+    // preset pages and the Digimon page, so the pair alone called 86 frames
+    // of the corpus the board, 15 of them in the director's eyes (the Lost
+    // Sector page on every format among them), and a dark band under the X
+    // at a fraction of game_rect did not tell them apart: those pages have
+    // one too. What only the board has is its card -- the light portrait
+    // plate `Vision.cardOf` finds, which raises on 84 of the 86 and finds
+    // the whole canvas on two Special Summon pages at 1080 x 2340 -- with
+    // the dark "Next Reward" box under the grid (`Vision.layoutOf`, 0.843
+    // on the new board, 0.081 to 0.167 on the classic ones and 0.13 to 0.14
+    // on those two summon pages, bar 0.5). (notes/world-search.md, "The
+    // board of 1.5.0 is a second layout, told by the dark box under the
+    // grid".)
+    val CLOSE_PLATE_WHITE = Summon.EXIT_PLATE
+    val CLOSE_MARK_BLUE = Summon.EXIT_MARK
+
     /**
      * Where the World Search board stands on a display taller than the canvas
      * ceiling (Dungeon.Anchor, PLAN_FORMATE.md V4): in the middle. Measured
@@ -496,14 +520,26 @@ object Explore {
         val n = (hsv.rows() * hsv.cols()).toDouble()
         val plateMask = Cv.inRange(hsv, CLOSE_PLATE)
         val markMask = Cv.inRange(hsv, CLOSE_MARK)
-        hsv.release()
         // mask.sum() / 255.0 / n on a 0/255 mask: the sum is 255 times the
         // count, so dividing it by 255.0 gives the count exactly.
         val plate = (255L * Core.countNonZero(plateMask)) / 255.0 / n
         val mark = (255L * Core.countNonZero(markMask)) / 255.0 / n
         plateMask.release(); markMask.release()
-        if (plate < CLOSE_PLATE_MIN) return null
-        if (!(CLOSE_MARK_BAND[0] <= mark && mark <= CLOSE_MARK_BAND[1])) return null
-        return CloseButton(CLOSE_FX, CLOSE_FY, plate, mark, anchor)
+        if (plate >= CLOSE_PLATE_MIN && CLOSE_MARK_BAND[0] <= mark && mark <= CLOSE_MARK_BAND[1]) {
+            hsv.release()
+            return CloseButton(CLOSE_FX, CLOSE_FY, plate, mark, anchor)
+        }
+        // The X of 1.5.0 (CLOSE_PLATE_WHITE), only over the dark reward box.
+        val whiteMask = Cv.inRange(hsv, CLOSE_PLATE_WHITE)
+        val blueMask = Cv.inRange(hsv, CLOSE_MARK_BLUE)
+        hsv.release()
+        val white = (255L * Core.countNonZero(whiteMask)) / 255.0 / n
+        val blue = (255L * Core.countNonZero(blueMask)) / 255.0 / n
+        whiteMask.release(); blueMask.release()
+        if (white < CLOSE_PLATE_MIN) return null
+        if (!(CLOSE_MARK_BAND[0] <= blue && blue <= CLOSE_MARK_BAND[1])) return null
+        val card = Vision.cardOrNull(img) ?: return null
+        if (Vision.layoutOf(img, card) != Vision.Layout.REWARD_BOX) return null
+        return CloseButton(CLOSE_FX, CLOSE_FY, white, blue, anchor)
     }
 }

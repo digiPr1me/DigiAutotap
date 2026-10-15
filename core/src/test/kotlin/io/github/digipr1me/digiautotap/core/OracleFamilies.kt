@@ -463,7 +463,7 @@ object OracleFamilies {
                "seed_slots", "seed_selected", "seed_slot_count", "select_button", "seed_menu",
                "water_button", "water_popup", "popup_timer", "boost_popup", "boost_cans",
                "boost_amount", "ad_dialog", "ad_limit"),
-        depends = listOf("Cv"), script = ::explore)
+        depends = listOf("Cv", "Vision"), script = ::explore)
     val VISION = Family(
         "vision", listOf("Vision"),
         listOf("find_card", "calibrate", "skill_button_ok", "read_grid",
@@ -500,7 +500,7 @@ object OracleFamilies {
     val DIRECTOR = Family(
         "director", listOf("Director"), listOf("classify"),
         depends = listOf("Dungeon", "Startup", "Passive", "Bond", "Summon", "Explore", "Farm", "Runner",
-                         "Preset", "Quest", "LostSector", "Missions", "Skewer", "Cv"),
+                         "Preset", "Quest", "LostSector", "Missions", "Skewer", "Cv", "Vision"),
         script = ::director)
 
     val ALL: List<Family> = listOf(DUNGEON, PASSIVE, SUMMON, QUEST, EXPLORE, VISION, RUNNER, EVENTS, SKEWER, PRESET, LOST_SECTOR,

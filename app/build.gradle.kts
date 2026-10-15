@@ -53,8 +53,8 @@ android {
         // that carries the device binding PLAN_SUPPORTER_SERVER.md is written
         // around; 2 (0.2) was built and never released; 4 is 1.1, 5 is 1.2,
         // 6 is 1.3, 7 is 1.4.
-        versionCode = 7
-        versionName = "1.4"
+        versionCode = 8
+        versionName = "1.5"
     }
 
     // Two flavors, one ABI each. OpenCV is nearly the whole APK: 108.1 MB
@@ -126,6 +126,17 @@ android {
     buildTypes {
         release {
             signingConfig = signingConfigs.getByName("release")
+            // `gradlew :app:assemblePhoneRelease -Pdebuggable` builds the same
+            // release, under the same key, with the debuggable flag, so that
+            // a live session on LDPlayer can read the log and the settings
+            // through `run-as` -- the game refuses a rooted instance, and the
+            // release key is what the instance holds (notes/ldplayer.md, "The
+            // game ends itself on a rooted instance, and a release built with
+            // -Pdebuggable is how its log is read"). Never for a release: the
+            // recipe builds without the property and reads `aapt2 dump
+            // badging` for the flag (notes/publishing.md, "A release, by
+            // hand", step 4).
+            isDebuggable = project.hasProperty("debuggable")
         }
     }
 

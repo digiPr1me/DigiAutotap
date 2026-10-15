@@ -33,12 +33,15 @@ class Calib(
     val rois: Map<String, IntArray>,
     val skillButton: IntArray,
     val skillRadius: Int,
+    /** Which of the two boards this is ([Vision.Layout]). */
+    val layout: Vision.Layout,
 ) {
     fun roi(key: String): IntArray = rois.getValue(key)
 
     fun toOracle(): Map<String, Any?> {
         val out = LinkedHashMap<String, Any?>()
         out["card"] = card.toList()
+        out["layout"] = layout.key
         out["grid_x0"] = gridX0
         out["grid_y0"] = gridY0
         out["cell_w"] = cellW
@@ -108,12 +111,47 @@ class Figure(
  */
 class Vision(private val assets: AssetSource) {
 
+    /**
+     * The two boards the game has drawn, told apart by what stands under the
+     * grid. Until the game's 1.5.0 (2026-10-12) the card held the grid at
+     * 0.3355 of its height, three counters at the bottom left on the light
+     * plate and the round skill button at 0.655/0.905 (`classic`). 1.5.0
+     * moved the grid up to 0.272, put a dark "Next Reward" box with the
+     * distance bar under it, four counters in grey pills (paws, claws,
+     * fireballs and the new broom) further up and left, the skill button at
+     * 0.619/0.891 and the broom button above it, and gave the X the white
+     * plate of the Special Summon page (`reward_box`). What tells them
+     * apart is the box: in the band 0.70 to 0.76 of the card's height, 0.10
+     * to 0.90 of its width, the dark share (grey under 90) is 0.081 to 0.167
+     * on all 146 boards of the corpus and 0.843 on the new board; the bar is
+     * the middle, 0.5 ([LAYOUT_DARK_MIN]). One range for both would not do:
+     * with the row fit's offset allowed from 0.24 to 0.36 of the card, two of
+     * four classic boards fitted the ledge's top edge one row above the grid
+     * (177.5 against 177.1 on `board_skin00`, 165.9 against 166.8 on
+     * `board_skin01_2136x3200`), so each layout keeps its own window
+     * ([rowOffset]) and its own column band over the play field ([colBand]);
+     * the classic numbers are vision.py's, untouched (notes/world-search.md,
+     * "The board of 1.5.0 is a second layout, told by the dark box under the
+     * grid").
+     */
+    enum class Layout(val key: String, val rowOffset: DoubleArray, val colBand: DoubleArray) {
+        CLASSIC("classic", doubleArrayOf(0.30, 0.36), doubleArrayOf(0.40, 0.68)),
+        REWARD_BOX("reward_box", doubleArrayOf(0.24, 0.30), doubleArrayOf(0.30, 0.60)),
+    }
+
     // ------------------------------------------------------------------------
     // Constants
     // ------------------------------------------------------------------------
     companion object {
         const val ROWS = 5
         const val COLS = 5
+
+        // The band of the card that holds the dark box of the 1.5.0 layout
+        // and the light plate of the classic one (Layout): fy 0.70 to 0.76,
+        // fx 0.10 to 0.90 of the card, a pixel dark under grey 90.
+        val LAYOUT_DARK_BAND = doubleArrayOf(0.70, 0.76, 0.10, 0.90)
+        const val LAYOUT_DARK_GREY = 90.0
+        const val LAYOUT_DARK_MIN = 0.5
 
         // Cell aspect, width to height, measured on 8 emulator screenshots.
         const val ASPECT = 1.220
@@ -382,39 +420,74 @@ class Vision(private val assets: AssetSource) {
         /** Python's `round(x, digits)`: the exact value, half to even. */
         private fun roundTo(x: Double, digits: Int): Double =
             BigDecimal(x).setScale(digits, RoundingMode.HALF_EVEN).toDouble()
+
+        /**
+         * The grey game card in the window, (x, y, w, h), or a
+         * CalibrationError -- `findCard`, in the companion since 2026-10-12 so
+         * that `Explore.closeButton` can ask it without a Vision of its own:
+         * the white X of 1.5.0 closes other pages too, and the card is what
+         * only the board has (notes/world-search.md, "The board of 1.5.0 is a
+         * second layout, told by the dark box under the grid").
+         */
+        fun cardOf(img: Mat): IntArray {
+            val hsv = Cv.hsv(img)
+            val mask = Mat()
+            Core.inRange(hsv, Scalar(0.0, 0.0, 150.0), Scalar(180.0, 60.0, 255.0), mask)
+            val closed = Mat()
+            Imgproc.morphologyEx(mask, closed, Imgproc.MORPH_CLOSE, Mat.ones(9, 9, CvType.CV_8U))
+            val contours = ArrayList<MatOfPoint>()
+            Imgproc.findContours(closed, contours, Mat(), Imgproc.RETR_EXTERNAL, Imgproc.CHAIN_APPROX_SIMPLE)
+            hsv.release(); mask.release(); closed.release()
+            if (contours.isEmpty()) throw CalibrationError("no bright area found")
+            // Not blindly the largest contour. There can be bright areas beside the
+            // card, so the largest one with a plausible portrait shape is chosen.
+            val tried = ArrayList<String>()
+            // sorted(..., reverse=True) is stable, and so is sortedByDescending.
+            val ranked = contours.map { it to Geometry.contourArea(it) }.sortedByDescending { it.second }
+            for ((cnt, _) in ranked.take(12)) {
+                val r = Geometry.boundingRect(cnt)
+                val x = r.x; val y = r.y; val w = r.width; val h = r.height
+                if (w < 0.20 * img.cols() || h < 0.20 * img.rows()) continue
+                val ratio = h / maxOf(w, 1).toDouble()
+                tried.add(String.format(Locale.ROOT, "%dx%d h/w=%.2f", w, h, ratio))
+                if (1.8 <= ratio && ratio <= 2.5) return intArrayOf(x, y, w, h)
+            }
+            throw CalibrationError("no portrait-format card found, candidates: " +
+                                   (if (tried.isEmpty()) "none" else tried.joinToString(", ")))
+        }
+
+        /** [cardOf], or null where there is no card. */
+        fun cardOrNull(img: Mat): IntArray? = try { cardOf(img) } catch (e: CalibrationError) { null }
+
+        /**
+         * Which board this card is: the dark box under the grid says 1.5.0's
+         * ([Layout]). Measured as a share of the band's pixels under
+         * [LAYOUT_DARK_GREY], against [LAYOUT_DARK_MIN].
+         */
+        fun layoutOf(img: Mat, card: IntArray): Layout =
+            if (darkBoxShare(img, card) >= LAYOUT_DARK_MIN) Layout.REWARD_BOX else Layout.CLASSIC
+
+        /** The dark share of the band of [LAYOUT_DARK_BAND], in the card. */
+        fun darkBoxShare(img: Mat, card: IntArray): Double {
+            val (cx, cy, cw, chh) = card.toList()
+            val (fy0, fy1, fx0, fx1) = LAYOUT_DARK_BAND.toList()
+            val band = Py.crop(img, cy + Py.int(fy0 * chh), cy + Py.int(fy1 * chh),
+                               cx + Py.int(fx0 * cw), cx + Py.int(fx1 * cw)) ?: return 0.0
+            val gray = Cv.gray(band)
+            val dark = Mat()
+            Core.inRange(gray, Scalar(0.0), Scalar(LAYOUT_DARK_GREY), dark)
+            val share = Core.countNonZero(dark).toDouble() / (dark.rows().toLong() * dark.cols())
+            gray.release(); dark.release()
+            return share
+        }
     }
 
     // ------------------------------------------------------------------------
     // Calibration
     // ------------------------------------------------------------------------
 
-    /** The grey game card in the window. Returns (x, y, w, h). */
-    fun findCard(img: Mat): IntArray {
-        val hsv = Cv.hsv(img)
-        val mask = Mat()
-        Core.inRange(hsv, Scalar(0.0, 0.0, 150.0), Scalar(180.0, 60.0, 255.0), mask)
-        val closed = Mat()
-        Imgproc.morphologyEx(mask, closed, Imgproc.MORPH_CLOSE, Mat.ones(9, 9, CvType.CV_8U))
-        val contours = ArrayList<MatOfPoint>()
-        Imgproc.findContours(closed, contours, Mat(), Imgproc.RETR_EXTERNAL, Imgproc.CHAIN_APPROX_SIMPLE)
-        hsv.release(); mask.release(); closed.release()
-        if (contours.isEmpty()) throw CalibrationError("no bright area found")
-        // Not blindly the largest contour. There can be bright areas beside the
-        // card, so the largest one with a plausible portrait shape is chosen.
-        val tried = ArrayList<String>()
-        // sorted(..., reverse=True) is stable, and so is sortedByDescending.
-        val ranked = contours.map { it to Geometry.contourArea(it) }.sortedByDescending { it.second }
-        for ((cnt, _) in ranked.take(12)) {
-            val r = Geometry.boundingRect(cnt)
-            val x = r.x; val y = r.y; val w = r.width; val h = r.height
-            if (w < 0.20 * img.cols() || h < 0.20 * img.rows()) continue
-            val ratio = h / maxOf(w, 1).toDouble()
-            tried.add(String.format(Locale.ROOT, "%dx%d h/w=%.2f", w, h, ratio))
-            if (1.8 <= ratio && ratio <= 2.5) return intArrayOf(x, y, w, h)
-        }
-        throw CalibrationError("no portrait-format card found, candidates: " +
-                               (if (tried.isEmpty()) "none" else tried.joinToString(", ")))
-    }
+    /** The grey game card in the window. Returns (x, y, w, h) -- [cardOf]. */
+    fun findCard(img: Mat): IntArray = cardOf(img)
 
     /**
      * Cell size and offset that maximise the edge energy on the n+1 grid
@@ -556,17 +629,19 @@ class Vision(private val assets: AssetSource) {
      */
     fun calibrate(img: Mat): Calib {
         val (cx, cy, cw, chh) = findCard(img).toList()
+        val layout = layoutOf(img, intArrayOf(cx, cy, cw, chh))
         val card = img.submat(cy, cy + chh, cx, cx + cw)
         val gray = Mat()
         Cv.gray(card).convertTo(gray, CvType.CV_32F)
 
-        // Columns, a band only over the play field
-        val band = Py.crop(gray, Py.int(0.40 * chh), Py.int(0.68 * chh), 0, gray.cols())
+        // Columns, a band only over the play field (its rows per Layout)
+        val band = Py.crop(gray, Py.int(layout.colBand[0] * chh), Py.int(layout.colBand[1] * chh), 0, gray.cols())
             ?: throw IllegalStateException("empty column band")
         val profCol = smooth(meanAxis0(absSobel(band, 1, 0), band.rows(), band.cols()))
         val (_, x0, cellW) = fitPeriodic(profCol, CELL_W_MIN * cw, CELL_W_MAX * cw, COLS, 0.0, 0.10 * cw)
 
-        // Rows, the cell height tied to the measured aspect
+        // Rows, the cell height tied to the measured aspect; the window the
+        // grid's top may stand in is the layout's (Layout.rowOffset)
         val band2 = Py.crop(gray, 0, gray.rows(), Py.int(0.06 * cw), Py.int(0.85 * cw))
             ?: throw IllegalStateException("empty row band")
         val profRow = smooth(meanAxis1(absSobel(band2, 0, 1), band2.rows(), band2.cols()))
@@ -576,12 +651,12 @@ class Vision(private val assets: AssetSource) {
             target * (1 - ASPECT_TOL),
             target * (1 + ASPECT_TOL),
             ROWS,
-            0.30 * chh,
-            0.36 * chh,
+            layout.rowOffset[0] * chh,
+            layout.rowOffset[1] * chh,
         )
         gray.release()
 
-        val calib = build(intArrayOf(cx, cy, cw, chh), (cx + x0), (cy + y0), cellW, cellH)
+        val calib = build(intArrayOf(cx, cy, cw, chh), (cx + x0), (cy + y0), cellW, cellH, layout)
         checkGeometry(calib, img.rows(), img.cols())
         return calib
     }
@@ -590,7 +665,8 @@ class Vision(private val assets: AssetSource) {
      * The card, grid and every box derived from them: `_counter_rois` plus
      * the meter label, which is tied to the grid and not to the card.
      */
-    private fun build(card: IntArray, gridX0: Double, gridY0: Double, cellW: Double, cellH: Double): Calib {
+    private fun build(card: IntArray, gridX0: Double, gridY0: Double, cellW: Double, cellH: Double,
+                      layout: Layout): Calib {
         val cx = card[0]; val cy = card[1]; val cw = card[2]; val ch = card[3]
 
         // The counter areas as shares of the card box. The card is always
@@ -599,14 +675,42 @@ class Vision(private val assets: AssetSource) {
             intArrayOf(Py.int(cx + fx * cw), Py.int(cy + fy * ch), Py.int(fw * cw), Py.int(fh * ch))
 
         val rois = LinkedHashMap<String, IntArray>()
-        // top bar, three currencies outside the minigame
+        // top bar, three currencies outside the minigame (the same on both
+        // layouts: 7,654 / 1,474 / 1,607 read on the first 1.5.0 board)
         rois["roi_top_orange"] = box(0.208, 0.014, 0.232, 0.036)
         rois["roi_top_green"] = box(0.428, 0.014, 0.232, 0.036)
         rois["roi_top_pink"] = box(0.648, 0.014, 0.232, 0.036)
         // bottom bar, resources in the minigame
-        rois["roi_paws"] = box(0.235, 0.852, 0.245, 0.038)
-        rois["roi_claws"] = box(0.235, 0.892, 0.245, 0.038)
-        rois["roi_fireballs"] = box(0.235, 0.932, 0.245, 0.038)
+        when (layout) {
+            Layout.CLASSIC -> {
+                rois["roi_paws"] = box(0.235, 0.852, 0.245, 0.038)
+                rois["roi_claws"] = box(0.235, 0.892, 0.245, 0.038)
+                rois["roi_fireballs"] = box(0.235, 0.932, 0.245, 0.038)
+            }
+            Layout.REWARD_BOX -> {
+                // Four grey pills at fx 0.061 to 0.438 of the card, each
+                // 0.030 of its height tall at fy 0.783, 0.827, 0.870 and
+                // 0.914 (paws, claws, fireballs, the broom), the icon in the
+                // pill's left 0.13 and the digits from fx 0.178, 0.0138 of the
+                // card tall (26 px at 1883), dark with a white rim on the pill's
+                // grey (BGR 186,158,139: grey 160 over segmentDigits' 140, so
+                // the dark polarity still cuts the digits alone). Measured on
+                // the 1.5.0 board of 2026-10-12 at 1080 x 1920. Each box
+                // starts right of the icon, 0.004 under the pill's top and
+                // over its bottom so that the pill's darker rim stays out, and
+                // ends at fx 0.315: a claw or a fireball that recharges shows
+                // its timer inside the pill, green digits with a dark rim from
+                // fx 0.326 ("09:57" on `board_rewardbox_resync_claw`, where a
+                // box to 0.430 read the claws as nothing), while the count's
+                // digits end at 0.304 with four of them ("2,509"). The broom's
+                // pill is not read: the bot never uses the broom
+                // (notes/world-search.md, "The board of 1.5.0 is a second
+                // layout, told by the dark box under the grid").
+                rois["roi_paws"] = box(0.150, 0.787, 0.165, 0.022)
+                rois["roi_claws"] = box(0.150, 0.831, 0.165, 0.022)
+                rois["roi_fireballs"] = box(0.150, 0.874, 0.165, 0.022)
+            }
+        }
         // The meter label sticks to the bottom edge of the board in column 3,
         // so it is tied to the grid and not to the card. Its box hangs from
         // five rows of the height the aspect gives the cell width, not from
@@ -643,10 +747,21 @@ class Vision(private val assets: AssetSource) {
             Py.int(1.70 * cellW),
             Py.int(0.325 * rowH),
         )
-        // The skill button, the big round one at the bottom right
-        val skillButton = intArrayOf(Py.int(cx + 0.655 * cw), Py.int(cy + 0.905 * ch))
+        // The skill button, the big round one at the bottom right. On the
+        // 1.5.0 layout its disc stands at 0.619/0.891 of the card, 0.094 of
+        // its width in radius, and the broom button -- which spends the
+        // broom counter to sweep the board, and which the bot never taps, by
+        // the player's rule of 2026-10-12 -- at 0.826/0.835, 0.21 of the card
+        // away; a tap at the disc's centre cannot reach it. The classic
+        // point, 0.655/0.905, still lay 40 px inside the new disc at 1080 x
+        // 1920, so the one live pass before this was measured would have
+        // tapped the right button from the wrong place.
+        val skillButton = when (layout) {
+            Layout.CLASSIC -> intArrayOf(Py.int(cx + 0.655 * cw), Py.int(cy + 0.905 * ch))
+            Layout.REWARD_BOX -> intArrayOf(Py.int(cx + 0.619 * cw), Py.int(cy + 0.891 * ch))
+        }
         val skillRadius = Py.int(0.075 * cw)
-        return Calib(card, gridX0, gridY0, cellW, cellH, rois, skillButton, skillRadius)
+        return Calib(card, gridX0, gridY0, cellW, cellH, rois, skillButton, skillRadius, layout)
     }
 
     /**
@@ -705,9 +820,11 @@ class Vision(private val assets: AssetSource) {
             return if (n % 2 == 1) s[n / 2] else (s[n / 2 - 1] + s[n / 2]) / 2.0
         }
         val card = IntArray(4) { i -> Py.int(median(samples.map { it.card[i].toDouble() })) }
+        // The layout most samples saw; they are frames of one board seconds apart.
+        val layout = samples.groupingBy { it.layout }.eachCount().maxByOrNull { it.value }!!.key
         return build(card,
                      median(samples.map { it.gridX0 }), median(samples.map { it.gridY0 }),
-                     median(samples.map { it.cellW }), median(samples.map { it.cellH }))
+                     median(samples.map { it.cellW }), median(samples.map { it.cellH }), layout)
     }
 
     // ------------------------------------------------------------------------
@@ -1277,7 +1394,18 @@ class Vision(private val assets: AssetSource) {
     /** The area in which the error banner appears; null where numpy's slice is empty. */
     fun bannerRoi(img: Mat, calib: Calib): Mat? {
         val gx = Py.int(calib.gridX0)
-        val gy = Py.int(calib.gridY0 + 1.2 * calib.cellH)
+        // The banner stands on the card, not on the grid: on the banner
+        // frames of both layouts its box begins at y 885 and its badge's
+        // lower half lies at 975 to 1035 at 1080 x 1920, card fy 0.465 to
+        // 0.545 on either. Hung from the grid, as vision.py hangs it, that is
+        // rows 1.84 to 2.96 on the classic board and 2.72 to 3.84 on 1.5.0's,
+        // whose grid stands 0.88 of a row higher (Layout), so the box of 2.2
+        // rows starts one row lower there and the classic one stays where it
+        // was: with the classic box the 1.5.0 banner's badge was cut and
+        // scored under BANNER_BADGE_MIN (notes/world-search.md, "The board of
+        // 1.5.0 is a second layout, told by the dark box under the grid").
+        val top = if (calib.layout == Layout.REWARD_BOX) 2.1 else 1.2
+        val gy = Py.int(calib.gridY0 + top * calib.cellH)
         val gw = Py.int(COLS * calib.cellW)
         val gh = Py.int(2.2 * calib.cellH)
         return Py.crop(img, maxOf(0, gy), gy + gh, maxOf(0, gx), gx + gw)

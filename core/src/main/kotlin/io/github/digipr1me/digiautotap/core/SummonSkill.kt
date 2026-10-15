@@ -716,6 +716,7 @@ class SummonSkill(
     internal fun leaveSummons(): Boolean {
         var taps = 0
         var blind = 0
+        var backdrops = 0
         for (round in 0 until EXIT_ROUNDS) {
             // With the switch off the game stays where it is ([Stays], F24).
             if (stays.now()) return false
@@ -743,6 +744,28 @@ class SummonSkill(
                 }
                 val x = Summon.exitButton(img)
                 if (x == null) {
+                    // Crest's confirmation dialog ("Use Encrypted Data x10 to
+                    // perform a 10x Crest Summon?") left standing over the
+                    // page: it has no X and no Close, the page's X is dimmed
+                    // under it, and a tap beside it closes it (the gap the
+                    // spam loop keeps its taps out of). Live on 2026-10-13 the
+                    // Crest mode ended with it open -- "the price above the
+                    // yellow button is red" after one draw -- and the twenty
+                    // rounds here found no X, the director parked on
+                    // `summon_dialog` and three "going home" tries changed
+                    // nothing; a tap at the page's lower left corner closed it
+                    // at once (notes/summon.md, "Crest's confirmation dialog
+                    // has no X, and a tap beside it is the way out"). Told by
+                    // the dimmed yellow button under it, as the director tells
+                    // `summon_dialog`; the out-of-tickets dialog has its own
+                    // branch above.
+                    if (backdrops < BACKDROP_TAPS_MAX && Summon.dimmedSummonButton(img) != null) {
+                        if (backdrops == 0) log("a dialog with no X is over the page, tapping beside it")
+                        tap(BACKDROP_FX, BACKDROP_FY)
+                        backdrops += 1
+                        sleep(EXIT_ROUND * patience)
+                        continue
+                    }
                     // Mid-animation, or a screen this skill did not open.
                     // Either way there is nothing here worth tapping blindly
                     // at -- but a run that sits here has always cost a round of
@@ -1056,6 +1079,16 @@ class SummonSkill(
                             "${modeName(mode)} done, about $done summon${plural(done)}")
                         closeDialog(close)
                         return done
+                    }
+                    // The same dialog under the tap's ripple, which hides the
+                    // dimmed button the reader above wants (Summon.notEnoughPair):
+                    // no hurrying tap into it -- that closed it unseen, five times
+                    // a second for eight minutes on 2026-10-13 -- but a look at
+                    // the next frame, where the ring has faded and the reader
+                    // above sees it whole.
+                    if (Summon.notEnoughPair(img) != null) {
+                        nap(started)
+                        continue
                     }
                     dialogs = 0
 
@@ -1389,6 +1422,19 @@ class SummonSkill(
          */
         const val CLOSE_TAPS_MAX = 3
         const val CLOSE_LOOKS = 3
+
+        /**
+         * Where the way out taps beside a dialog that has no X of its own
+         * (Crest's confirmation, [leaveSummons]): the page's lower left corner,
+         * fx 0.09, fy 0.96 of the rectangle at the bottom -- where the page has
+         * nothing (the smaller draw starts at 0.19, the X stands at 0.79), and
+         * where the tap of 2026-10-13 at 100,1850 closed it on 1080 x 1920. At
+         * most three, so a dialog that is not that one costs three taps and
+         * then the picture.
+         */
+        const val BACKDROP_FX = 0.09
+        const val BACKDROP_FY = 0.96
+        const val BACKDROP_TAPS_MAX = 3
 
         /**
          * How many rounds the way out may find neither the main screen nor the X

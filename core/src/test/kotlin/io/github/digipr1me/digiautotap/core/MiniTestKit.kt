@@ -27,4 +27,4 @@ object MiniNeverAsked : Capture {
 val MINI_UNUSED_CALIB = Calib(
     card = intArrayOf(0, 0, 100, 200), gridX0 = 0.0, gridY0 = 0.0,
     cellW = 20.0, cellH = 16.0, rois = emptyMap(),
-    skillButton = intArrayOf(0, 0), skillRadius = 1)
+    skillButton = intArrayOf(0, 0), skillRadius = 1, layout = Vision.Layout.CLASSIC)
