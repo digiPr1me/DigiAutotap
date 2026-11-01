@@ -204,6 +204,40 @@ tasks.register<JavaExec>("missionsProbe") {
     maxHeapSize = "2g"
 }
 
+// The numbers behind the Camp readers (PLAN_CAMP.md C1, CampProbe.kt): the
+// title bar, the roof, the plates and buttons, the shop's cards with their
+// glyphs and template scores, the purchase dialog, over any pictures; `cut`
+// writes the item templates; `director` the oracle's frames that move.
+//
+//   gradlew :core:campProbe --no-daemon --args="all staging/camp"
+tasks.register<JavaExec>("campProbe") {
+    description = "Prints the numbers behind the Camp readers over the named pictures"
+    group = "verification"
+    dependsOn(tasks.testClasses)
+    classpath = sourceSets.test.get().runtimeClasspath
+    mainClass.set("io.github.digipr1me.digiautotap.core.CampProbeKt")
+    systemProperty("java.library.path", opencvDir.resolve("x64").absolutePath)
+    systemProperty("digiautotap.repo", repoRoot.absolutePath)
+    maxHeapSize = "2g"
+}
+
+// The numbers behind the Camp's station readers (PLAN_CAMP.md C2,
+// CampStationProbe.kt): the banner, the button pair, the counter, Reward
+// Boxes and Results, on named pictures or swept over the corpus. Prints,
+// writes nothing.
+//
+//   gradlew :core:campStationProbe --no-daemon --args="sweep corpus staging/camp"
+tasks.register<JavaExec>("campStationProbe") {
+    description = "Prints the numbers behind the Camp station readers over the named pictures"
+    group = "verification"
+    dependsOn(tasks.testClasses)
+    classpath = sourceSets.test.get().runtimeClasspath
+    mainClass.set("io.github.digipr1me.digiautotap.core.CampStationProbeKt")
+    systemProperty("java.library.path", opencvDir.resolve("x64").absolutePath)
+    systemProperty("digiautotap.repo", repoRoot.absolutePath)
+    maxHeapSize = "2g"
+}
+
 // The numbers behind what a dungeon run shows between two screens the
 // readers know (PLAN_RELEASE_1_3.md B6 and B11, RunProbe.kt): the Reward
 // sheet's band, a black canvas, the VS screen, over the corpus or any

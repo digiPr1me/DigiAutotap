@@ -126,6 +126,13 @@ object SkillStats {
         // (PLAN_EX_MISSIONS.md 10.2), so "rewards claimed" would count one
         // where the day gave five. "1 EX mission claim" for one ([singular]).
         "exmissions" to listOf(Line("claims", "EX mission claims")),
+        // The Camp, since 2026-10-19 (CampSkill, PLAN_CAMP.md 3.5): a purchase
+        // is one dialog, which is one piece since the task never taps `+`;
+        // the clears are the attempts spent, by Auto Clear or by Attempt; the
+        // boxes are the two chests' numbers before the Claim.
+        "camp" to listOf(Line("supports", "camp supports"), Line("checkins", "camp check-ins"),
+                         Line("bought", "Camp Shop purchases"), Line("cleared", "station clears"),
+                         Line("boxes", "reward boxes claimed")),
     )
 
     /**
@@ -226,13 +233,16 @@ object SkillStats {
      * "Fever Times" -- and where no word does, "Digimon visited" and
      * "harvested" among them, the label already reads for one. A label whose
      * first s-word is not a plural ("a boss beaten") would want its own
-     * spelling here; there is none, and this is the place to add it.
+     * spelling here; there is one, the Camp's "reward boxes claimed" since
+     * 2026-10-19: a plural in -xes loses its -es, "1 reward box claimed".
      */
     internal fun singular(label: String): String {
         val words = label.split(" ")
         val i = words.indexOfFirst { it.length > 1 && it.endsWith("s") }
         if (i < 0) return label
-        return words.mapIndexed { j, w -> if (j == i) w.dropLast(1) else w }.joinToString(" ")
+        return words.mapIndexed { j, w ->
+            if (j != i) w else if (w.endsWith("xes")) w.dropLast(2) else w.dropLast(1)
+        }.joinToString(" ")
     }
 }
 

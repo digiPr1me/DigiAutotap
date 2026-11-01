@@ -53,8 +53,8 @@ android {
         // that carries the device binding PLAN_SUPPORTER_SERVER.md is written
         // around; 2 (0.2) was built and never released; 4 is 1.1, 5 is 1.2,
         // 6 is 1.3, 7 is 1.4.
-        versionCode = 8
-        versionName = "1.5"
+        versionCode = 9
+        versionName = "1.6"
     }
 
     // Two flavors, one ABI each. OpenCV is nearly the whole APK: 108.1 MB

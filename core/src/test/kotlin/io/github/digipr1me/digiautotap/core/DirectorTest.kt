@@ -158,6 +158,14 @@ class DirectorTest {
             PaintMissions.main() to Director.MAIN,
             PaintMissions.window(Missions.COLLECTION) to Director.MISSIONS,
             PaintMissions.window(Missions.EX, r1 = true, listYellow = 1) to Director.EX_MISSIONS,
+            PaintCamp.campScreen() to Director.CAMP,
+            PaintCamp.tent(badge = true, checkIn = true) to Director.CAMP_TENT,
+            PaintCamp.support(lit = true) to Director.CAMP_TENT,
+            PaintCamp.shop(CampWorld().cards(), atTop = true) to Director.CAMP_SHOP,
+            PaintCamp.dialog(affordable = true) to Director.CAMP_SHOP,
+            PaintCamp.station(CampStation.Which.DOJO, 2, autoLit = true, attemptLit = true) to Director.CAMP_STATION,
+            PaintCamp.boxes(0 to 0, claimLit = false) to Director.CAMP_BOXES,
+            PaintCamp.results() to Director.DIALOG,
         )
         for ((img, want) in cases) {
             val got = Director.classify(img)
@@ -1793,6 +1801,134 @@ class DirectorTest {
         assertEquals(listOf("close", "tile", "tab ex", "close"), r.w.taps)
         assertTrue(r.chain.finished)
         assertNull(r.director.parked)
+    }
+
+    // ==================================================================
+    // The Camp: the Camp screen and its four windows (PLAN_CAMP.md C3)
+    // ==================================================================
+
+    /** The director over the painted Camp world, with the real CampSkill and a stand-in step. */
+    private class CampRig(mode: String = SkillSettings.MODE_SEMI, steps: List<String> = emptyList(),
+                          included: Boolean = true) {
+        val w = CampWorld()
+        val log = ArrayList<String>()
+        val kept = ArrayList<String>()
+        val store = MapSettings()
+        val skill = CampSkill(w, CampIcons(ClassPathAssets), { Stored.camp(store, NOON) },
+                              stamp = { Stored.stampCamp(store, it, NOON) },
+                              attempted = { Stored.campAttempted(store, it, NOON) },
+                              log = { log += it }, on = { w.on }, keep = { _, tag -> kept += tag },
+                              sleep = { w.t += it }, now = { w.t })
+        val other = Counting("dungeon", "Dungeons", Director.DUNGEON_LIST)
+        val chain = Chain(steps.map { Chain.Step(it) }, log = { log += it })
+        val director = DirectorLoop(
+            w, listOf(other, skill), emptyList(), { CampWorld.GAME }, { mode }, chain,
+            included = { included || it !== skill }, on = { w.on }, log = { log += it },
+            keep = { _, tag -> kept += tag }, now = { w.t })
+
+        fun tick(): Director.Tick = director.tick().also { w.t += it.beat }
+
+        fun run(seconds: Double): Director.Tick {
+            val until = w.t + seconds
+            var last = tick()
+            while (w.t < until) last = tick()
+            return last
+        }
+
+        fun forbidden() = w.taps.filter { it in CampWorld.FORBIDDEN }
+
+        companion object {
+            /** 2026-09-23 12:00 in Vienna, as CampSkillTest has it. */
+            const val NOON = 1790157600.0
+        }
+    }
+
+    /**
+     * Question 5's proposal: each of the five screens the player opens is the
+     * Camp task's after three quiet seconds, worked once a visit from the
+     * window that is open, and the work ends on the Camp screen by its own
+     * taps -- the same visit, which the director does not stand waiting for
+     * the window to come back from (DirectorLoop.expectBy). With every part
+     * stamped the Camp screen is the player's.
+     */
+    @Test
+    fun `each Camp screen the player opened is the Camp task's, and its work ends on the Camp screen`() {
+        for (open in listOf(CampWorld.Screen.CAMP, CampWorld.Screen.TENT, CampWorld.Screen.SHOP,
+                            CampWorld.Screen.STATION, CampWorld.Screen.BOXES)) {
+            val r = CampRig()
+            r.w.screen = open
+            r.w.station = CampStation.Which.DRILL
+            val first = r.tick()
+            assertNull(first.did, "$open: inside the player's three seconds: $first")
+            val handed = r.run(3.5)
+            assertEquals("work camp", handed.did, "$open: $handed")
+            assertEquals(CampWorld.Screen.CAMP, r.w.screen, "$open: left on the Camp screen")
+            assertEquals(CampSkill.Part.values().toSet(), Stored.camp(r.store, CampRig.NOON).done, "$open")
+            val taps = r.w.taps.size
+            val later = r.run(10.0)
+            assertEquals(Director.CAMP, later.screen)
+            assertTrue(r.log.none { "did not come back" in it }, "$open: ${r.log}")
+            assertEquals(taps, r.w.taps.size, "$open: worked once")
+            assertNull(r.director.parked, "$open")
+            assertEquals(emptyList(), r.forbidden(), "$open")
+        }
+    }
+
+    @Test
+    fun `with the Camp task off, the Camp screen and its windows stand still and are no park`() {
+        val r = CampRig(included = false)
+        r.w.station = CampStation.Which.DOJO
+        for ((open, screen) in listOf(CampWorld.Screen.CAMP to Director.CAMP, CampWorld.Screen.TENT to Director.CAMP_TENT,
+                                      CampWorld.Screen.SHOP to Director.CAMP_SHOP,
+                                      CampWorld.Screen.STATION to Director.CAMP_STATION,
+                                      CampWorld.Screen.BOXES to Director.CAMP_BOXES)) {
+            r.w.screen = open
+            val t = r.run(6.0)
+            assertEquals(screen, t.screen)
+            assertEquals("the Camp; nothing to do here", t.note)
+            assertNull(r.director.parked, "a park on the player's own Camp")
+        }
+        assertTrue(r.w.taps.isEmpty(), "${r.w.taps}")
+    }
+
+    @Test
+    fun `the Camp chain step walks in from the main screen and comes home`() {
+        val r = CampRig(SkillSettings.MODE_FULL, listOf(CampSkill.KEY))
+        val first = r.tick()
+        assertEquals("run camp", first.did, "$first")
+        assertTrue(r.log.contains("chain: starting Camp"), r.log.toString())
+        assertEquals(CampWorld.Screen.MAIN, r.w.screen)
+        assertEquals(4, r.w.bought.size)
+        r.run(6.0)
+        assertTrue(r.chain.finished)
+        assertNull(r.director.parked)
+        assertEquals(emptyList(), r.forbidden())
+    }
+
+    /** A chain step with all four parts done does not open the Camp, and says why (Skill.noBudgetWhy). */
+    @Test
+    fun `a Camp step whose day is done is skipped with its sentence`() {
+        val r = CampRig(SkillSettings.MODE_FULL, listOf(CampSkill.KEY))
+        for (p in CampSkill.Part.values()) Stored.stampCamp(r.store, p, CampRig.NOON)
+        val t = r.tick()
+        assertEquals("chain: skipped Camp -- ${CampSkill.NO_BUDGET}", t.note)
+        assertTrue(r.w.taps.isEmpty(), "${r.w.taps}")
+    }
+
+    /** The chain's second hand: a Camp window standing after another step is the Camp task's to close, and home. */
+    @Test
+    fun `a Camp window left open after a step is the Camp task's to leave`() {
+        val r = CampRig(SkillSettings.MODE_FULL, listOf("dungeon", CampSkill.KEY))
+        r.other.onRun = { r.w.screen = CampWorld.Screen.SHOP }
+        assertEquals("run dungeon", r.tick().did)
+        r.run(Director.SETTLE + 10.0)
+        assertTrue(r.log.contains("  chain: camp_shop left open after Dungeons; asking Camp to leave"), r.log.toString())
+        assertTrue(r.log.contains("  chain: back on the main screen after Dungeons; going on"), r.log.toString())
+        assertTrue(r.log.contains("chain: starting Camp"), r.log.toString())
+        assertEquals(listOf("close shop", "globe", "camp tab"), r.w.taps.take(3))
+        assertTrue(r.chain.finished)
+        assertNull(r.director.parked)
+        assertEquals(emptyList(), r.forbidden())
     }
 
     /**

@@ -193,6 +193,20 @@ object FormatProbe {
         // instance 1 while nobody touched anything).
         "missions.badge" to "the tile's \"!\" comes and goes with whatever mission has something to claim",
         "missions.ex_claims" to "an EX row turns yellow as the battle counts on",
+        // The Camp (PLAN_CAMP.md C1): what the account has done today and
+        // what it owns moves every window's state -- Support's "!" and
+        // Support All's colour with the day's supports, a card's SOLD OUT,
+        // its n/m and its price's colour with the purchases and the coins,
+        // the dialog's count and colour with the taps and the coins. Their
+        // places are read beside the twins in the state column.
+        "camp.tent_window" to "Support's \"!\" goes with the day's supports (PLAN_CAMP.md 6)",
+        "camp.support_window" to "Support All is lit while the list has somebody to support",
+        "camp.shop_window" to "SOLD OUT, n/m and the price's colour follow the account's purchases and coins",
+        "camp.buy_dialog" to "the count and the price's colour follow the taps and the coins",
+        // PLAN_CAMP.md C2: an Attempt or an Auto Clear takes one off "n/2" and
+        // dims the buttons at 0; the chests follow the camp's damage.
+        "camp_station.window" to "the counter and the buttons' light follow the attempts left (PLAN_CAMP.md 6)",
+        "camp_station.boxes_window" to "Claim and the chests' numbers follow the camp's damage of the day",
     )
 
     // Director screens, by their names (Director.kt).
@@ -281,12 +295,24 @@ object FormatProbe {
         // The Events window's cards (PLAN_SKEWER.md 3.2): asked with the
         // window open, which the director does not name.
         "events" to setOf(D.UNKNOWN),
+        // The Camp (PLAN_CAMP.md C1): the tab on the plain main screen, the
+        // screen with nothing over it, each window on its own screen.
+        "camp" to setOf(D.CAMP, D.CAMP_TENT, D.CAMP_SHOP),
+        "camp.camp_tab" to setOf(D.MAIN), "camp.screen" to setOf(D.CAMP),
+        "camp.tent_window" to setOf(D.CAMP_TENT), "camp.support_window" to setOf(D.CAMP_TENT),
+        "camp.shop_window" to setOf(D.CAMP_SHOP), "camp.buy_dialog" to setOf(D.CAMP_SHOP),
         // Chef's Special (PLAN_SKEWER.md SK1): the page, its stage popup, and
         // the round with its two dialogs; what a round carries only in play.
         "skewer" to setOf(D.SKEWER_MENU, D.SKEWER_STAGE, D.SKEWER_PLAY, D.SKEWER_PAUSE, D.SKEWER_OVER),
         "skewer.menu" to setOf(D.SKEWER_MENU), "skewer.stage" to setOf(D.SKEWER_STAGE),
         "skewer.grid" to setOf(D.SKEWER_PLAY), "skewer.order" to setOf(D.SKEWER_PLAY),
         "skewer.lives" to setOf(D.SKEWER_PLAY),
+        // The Camp's stations (PLAN_CAMP.md C2): the station window on its
+        // screen, Reward Boxes on its own, and Results where the director
+        // calls it a dialog.
+        "camp_station" to setOf(D.CAMP_STATION, D.CAMP_BOXES, D.DIALOG),
+        "camp_station.window" to setOf(D.CAMP_STATION), "camp_station.boxes_window" to setOf(D.CAMP_BOXES),
+        "camp_station.results" to setOf(D.DIALOG),
     )
 
     /** Is `reader` (`family.reader`) asked by the bot on any of these screens? */

@@ -416,6 +416,32 @@ object OracleFamilies {
         if (ex != null) f.ask("ex_claims(window=ex_window)") { Missions.exClaims(img, ex).map { it.toOracle() } }
     }
 
+    // The Camp's readers (Camp.kt), in the order the task asks them: the
+    // tab on the main screen, the screen with its map, the tent, the Camp
+    // Support window, the shop with its cards named by their templates, the
+    // purchase dialog. The icons carry no state, so one serves every thread.
+    private val campIcons = CampIcons(ClassPathAssets)
+
+    private fun camp(f: Frame) {
+        val img = f.img
+        f.ask("camp_tab") { Camp.campTab(img)?.toOracle() }
+        f.ask("screen") { Camp.screen(img)?.toOracle() }
+        f.ask("tent_window") { Camp.tentWindow(img)?.toOracle() }
+        f.ask("support_window") { Camp.supportWindow(img)?.toOracle() }
+        f.ask("shop_window") { Camp.shopWindow(img, campIcons)?.toOracle() }
+        f.ask("buy_dialog") { Camp.buyDialog(img)?.toOracle() }
+    }
+
+    // The Camp's two stations (CampStation.kt, PLAN_CAMP.md C2), in the order
+    // the task meets them: the station window with its counter and its two
+    // buttons, its Reward Boxes, and the Results window an Attempt ends in.
+    private fun campStation(f: Frame) {
+        val img = f.img
+        f.ask("window") { CampStation.window(img)?.toOracle() }
+        f.ask("boxes_window") { CampStation.boxesWindow(img)?.toOracle() }
+        f.ask("results") { CampStation.results(img)?.toOracle() }
+    }
+
     // One answer per frame, the director's own: which screen is in front.
     // It asks nothing new -- every reader it calls is in a family above --
     // so what it adds to the contract is the order, and the file is the
@@ -497,14 +523,23 @@ object OracleFamilies {
         "missions", listOf("Missions"),
         listOf("tile", "badge", "window", "ex_window", "ex_claims"),
         depends = listOf("Dungeon", "Runner", "Cv"), script = ::missions)
+    val CAMP = Family(
+        "camp", listOf("Camp"),
+        listOf("camp_tab", "screen", "tent_window", "support_window", "shop_window", "buy_dialog"),
+        data = listOf("templates"), depends = listOf("Dungeon", "Explore", "Runner", "Missions", "Cv"), script = ::camp)
     val DIRECTOR = Family(
         "director", listOf("Director"), listOf("classify"),
         depends = listOf("Dungeon", "Startup", "Passive", "Bond", "Summon", "Explore", "Farm", "Runner",
-                         "Preset", "Quest", "LostSector", "Missions", "Skewer", "Cv", "Vision"),
+                         "Preset", "Quest", "LostSector", "Missions", "Skewer", "Camp", "CampStation", "Cv", "Vision"),
         script = ::director)
 
+    val CAMP_STATION = Family(
+        "camp_station", listOf("CampStation"),
+        listOf("window", "boxes_window", "results"),
+        depends = listOf("Dungeon", "Runner", "Explore", "Cv"), script = ::campStation)
+
     val ALL: List<Family> = listOf(DUNGEON, PASSIVE, SUMMON, QUEST, EXPLORE, VISION, RUNNER, EVENTS, SKEWER, PRESET, LOST_SECTOR,
-                                   MISSIONS, DIRECTOR)
+                                   MISSIONS, CAMP, CAMP_STATION, DIRECTOR)
     /**
      * Families whose frames wait in `staging/` for the oracle's holder
      * (NOTES.md, "A new reader, or a new task", step 1): readerProbe reads

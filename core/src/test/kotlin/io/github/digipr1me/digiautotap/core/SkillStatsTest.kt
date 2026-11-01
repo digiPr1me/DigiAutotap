@@ -54,6 +54,10 @@ class SkillStatsTest {
         assertEquals("quest claimed", SkillStats.singular("quests claimed"))
         assertEquals("Digimon visited", SkillStats.singular("Digimon visited"))
         assertEquals("harvested", SkillStats.singular("harvested"))
+        // The Camp's lines (PLAN_CAMP.md 3.5), and its one plural in -xes.
+        assertEquals("reward box claimed", SkillStats.singular("reward boxes claimed"))
+        assertEquals("camp check-in", SkillStats.singular("camp check-ins"))
+        assertEquals("Camp Shop purchase", SkillStats.singular("Camp Shop purchases"))
     }
 
     /**
@@ -180,7 +184,7 @@ class SkillStatsTest {
     @Test
     fun `every skill of the Skills list is counted under a name of its own`() {
         for (key in listOf("dungeon", "summon", "mini", "farm", "tower", "passive", "quest",
-                           "runner", "skewer")) {
+                           "runner", "skewer", "exmissions", "camp")) {
             assertTrue(key in SkillStats.SHOWN, key)
         }
     }

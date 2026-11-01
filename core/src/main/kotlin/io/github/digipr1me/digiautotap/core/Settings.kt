@@ -141,6 +141,10 @@ object Stored {
             ?.let { Day("the Lost Sector Tower is at its highest floor until ${QuestSkill.whenText(it)}", true) }
         "farm" -> farmDueAt(s)?.takeIf { it > nowEpoch }
             ?.let { Day("the field's next visit is due in ${Math.ceil((it - nowEpoch) / 60.0).toInt()} min", true) }
+        CampSkill.KEY -> camp(s, nowEpoch).takeIf { it.done.isNotEmpty() }?.let {
+            if (it.open.isEmpty()) Day("the Camp is done for today", true)
+            else Day("${it.done.size} of 4 Camp parts done today", false)
+        }
         else -> null
     }
 
@@ -156,6 +160,9 @@ object Stored {
         "runner" -> mapOf("runner_fevers_done" to 0)
         "dungeon" -> mapOf(LOST_SECTOR_DONE_UNTIL_KEY to null, LOST_SECTOR_DONE_MINUTES_KEY to null)
         "farm" -> mapOf("farm_due_at" to null)
+        // The four parts' stamps, and not the stations' Attempts: one of
+        // those a station and day, switch or no switch (PLAN_CAMP.md 3.6).
+        CampSkill.KEY -> CampSkill.Part.values().associate { campPartKey(it) to null }
         else -> emptyMap()
     }
 
@@ -164,9 +171,9 @@ object Stored {
      * the Quest Loop, Chef's Special, Gekkomon Run, Dungeons for the Lost
      * Sector Tower, and the Meat Field's clock, so that off and on means
      * "now" on every row that keeps a day (PLAN_ABSCHLUSS_1_3.md A2,
-     * question 4).
+     * question 4) -- the Camp's four stamps too, since 2026-10-19.
      */
-    val RESTARTS = setOf("quest", SkewerSkill.KEY, "runner", "dungeon", "farm")
+    val RESTARTS = setOf("quest", SkewerSkill.KEY, "runner", "dungeon", "farm", CampSkill.KEY)
 
     /**
      * Row [key]'s switch on: its day taken out of the file in one read,
@@ -643,6 +650,43 @@ object Stored {
         s.putAll(mapOf("skewer_combos_until" to QuestSkill.nextReset(nowEpoch),
                        "skewer_combos_done" to done + 1))
     }
+
+    // ---- Camp --------------------------------------------------------------
+    /** The page's switch: Attempt instead of Auto Clear at the stations (PLAN_CAMP.md question 3), off by default. */
+    const val CAMP_ATTEMPT_KEY = "camp_attempt"
+
+    /** The box of one item of the Camp Shop ([SkillSettings.CAMP_ITEMS]). */
+    fun campBuyKey(item: String) = "camp_buy_$item"
+
+    /** A part's stamp: the game day's reset ([QuestSkill.nextReset]) the part is done until. */
+    fun campPartKey(part: CampSkill.Part) = "camp_${part.key}_until"
+
+    /** A station's one Attempt of question 9 spent until this reset (PLAN_CAMP.md 3.6: never more than one a day). */
+    fun campAttemptedKey(which: CampStation.Which) = "camp_${which.name.lowercase()}_attempted_until"
+
+    /**
+     * The Camp's page and day: the ticked items in the grid's order, the
+     * switch, the parts stamped for this game day and the stations whose one
+     * Attempt is spent. A stamp holds only while it is the day's own reset
+     * (08:00 Vienna, as every day here); from the reset on the part is open.
+     */
+    fun camp(s: Settings, nowEpoch: Double = System.currentTimeMillis() / 1000.0): CampSkill.Settings {
+        val reset = QuestSkill.nextReset(nowEpoch)
+        return CampSkill.Settings(
+            buy = SkillSettings.CAMP_ITEMS.filter { s.bool(campBuyKey(it.item), it.default) }.map { it.item },
+            attempt = s.bool(CAMP_ATTEMPT_KEY, false),
+            done = CampSkill.Part.values().filter { s.num(campPartKey(it), 0.0) == reset }.toSet(),
+            attempted = CampStation.Which.values().filter { s.num(campAttemptedKey(it), 0.0) == reset }.toSet())
+    }
+
+    /** A part done for the game day. */
+    fun stampCamp(s: Settings, part: CampSkill.Part, nowEpoch: Double = System.currentTimeMillis() / 1000.0) =
+        s.put(campPartKey(part), QuestSkill.nextReset(nowEpoch))
+
+    /** A station's one Attempt spent for the game day; written before its tap. */
+    fun campAttempted(s: Settings, which: CampStation.Which,
+                      nowEpoch: Double = System.currentTimeMillis() / 1000.0) =
+        s.put(campAttemptedKey(which), QuestSkill.nextReset(nowEpoch))
 
     // ---- Presets -----------------------------------------------------------
     /**

@@ -25,10 +25,12 @@ object SkillSettings {
      * that is not: the page greys it out without a code, and the skill that
      * reads it asks the code again for itself. There was one, the Bond token
      * page's all-Digimon box, from 2026-09-23 to 2026-10-02 ([Paywall]); the
-     * mark stays for the next.
+     * mark stays for the next. [heading] marks the first box of a block of
+     * its own, as [Number]'s does: the Camp page's items stand under "Camp
+     * Shop" (PLAN_CAMP.md 3.4).
      */
     class Toggle(key: String, label: String, val default: Boolean, val note: String = "",
-                 val supporter: Boolean = false) : Field(key, label)
+                 val supporter: Boolean = false, val heading: String = "") : Field(key, label)
 
     /**
      * A number. [heading] marks the first number of a block of its own: the
@@ -107,8 +109,10 @@ object SkillSettings {
     // "idle" was one from 2026-09-28 to 2026-10-02, when Idle Rewards left the
     // interface (PLAN_BEFUNDE_1_3.md N3 a); a saved chain that still names it
     // is skipped as any unknown key is ("no such skill on the phone").
+    // "camp" since 2026-10-19 (PLAN_CAMP.md 3.4): offered in the sheet, not
+    // in CHAIN_DEFAULT.
     val CHAINABLE = listOf("dungeon", "summon", "mini", "farm", "runner", "skewer", "lost_sector",
-                           "exmissions")
+                           "exmissions", "camp")
     // There were two more, `quest_on` and `quest_off`: steps that ticked and
     // unticked the quest loop's own switch in the middle of a chain. The
     // switch they flipped is gone (the passive page below), and no skill on
@@ -131,6 +135,7 @@ object SkillSettings {
         "skewer" to "Chef's Special",
         "lost_sector" to "Lost Sector Tower",
         "exmissions" to "EX Missions",
+        "camp" to "Camp",
     )
 
     /** Semi- or fully automatic (PLAN_ANDROID_APP.md 5.1), one setting. */
@@ -172,6 +177,34 @@ object SkillSettings {
      * the app reads it, and it stands here because the keys are one table.
      */
     const val GAME_KEY = "game_package"
+
+    /**
+     * One item of the Camp Shop: its template's name ([CampIcons.NAMES]), its
+     * name as the game writes it on its card, and whether its box starts
+     * ticked -- the five Digital Gates (the player's answer to question 1 of
+     * PLAN_CAMP.md). The last card's name is cut off on the card. Above
+     * [PAGES], which builds the Camp page out of it: an object's vals are
+     * built in their order.
+     */
+    class CampItem(val item: String, val label: String, val default: Boolean)
+
+    val CAMP_ITEMS = listOf(
+        CampItem("gate_blue", "Digital Gate: Blue x1", true),
+        CampItem("gate_pink", "Digital Gate: Pink x1", true),
+        CampItem("gate_yellow", "Digital Gate: Yellow x1", true),
+        CampItem("gate_purple", "Digital Gate: Purple x1", true),
+        CampItem("gate_green", "Digital Gate: Green x1", true),
+        CampItem("battle_pass", "Battle Terminal Pass x1", false),
+        CampItem("grand_prix_pass", "D-1 Grand Prix Pass x1", false),
+        CampItem("acceleration_ticket", "Acceleration Ticket x5", false),
+        CampItem("digivice", "Digivice", false),
+        CampItem("d3", "D-3", false),
+        CampItem("d_ark", "D-Ark", false),
+        CampItem("d_scanner", "D-Scanner", false),
+        CampItem("digivice_ic", "Digivice iC", false),
+        CampItem("xros_loader", "Digimon Xros Loader", false),
+        CampItem("digivice_2", "Digivice: ... (the last card)", false),
+    )
 
     // The three pages' ad switches -- "Watch the free ads for tickets" on
     // Dungeons, "Watch the free ads first" on Summon, "Watch the free ads
@@ -424,6 +457,29 @@ object SkillSettings {
                 "window. It never starts by itself: tap \"Claim now\", add it to the fully automatic " +
                 "order, or open the Missions window yourself in semi-automatic mode (the Daily " +
                 "Missions tab is left to you). When it opened the window itself, it closes it again."),
+        // The Camp, since 2026-10-19 (PLAN_CAMP.md 3.4): a supporter's task
+        // with the button, the switch of question 3, and under a heading a
+        // box per item of the Camp Shop, the five Digital Gates ticked
+        // (question 1).
+        Page("camp", "Camp", "Checks in, supports the camp, buys in the Camp Shop and clears the two stations.",
+             listOf(
+                 RunNow(CampSkill.KEY, "Run now", note = PRESET_NEEDS),
+                 Toggle(Stored.CAMP_ATTEMPT_KEY, "Use Attempt instead of Auto Clear at the stations", false,
+                        "Off, Auto Clear spends each attempt at once, without a battle. It lights only once a " +
+                            "station has a record: where it is dim, the task plays one Attempt there first and " +
+                            "goes on with Auto Clear. On, every attempt is an Attempt, a battle that plays " +
+                            "itself for about 42 seconds."),
+             ) + CAMP_ITEMS.mapIndexed { i, it ->
+                 Toggle(Stored.campBuyKey(it.item), it.label, it.default, heading = if (i == 0) "Camp Shop" else "")
+             }, supporter = true,
+             note = "When switched on, the task goes through the Camp once a game day: Support and Check-In in " +
+                 "the Camp Tent, the items ticked above in the Camp Shop -- as many as today's limit allows and " +
+                 "the Camp Coins reach, and one Acceleration Ticket x5 a day --, the attempts left at Leomon's " +
+                 "Dojo and Piximon's Drill Site, and their Reward Boxes. Tap \"Run now\", add it to the fully " +
+                 "automatic order, or open the Camp yourself in semi-automatic mode, which leaves you on the " +
+                 "Camp screen. Each part is done once until the reset at 8:00. It never touches Camp Wars, " +
+                 "Ranking, Member List or Manage, never buys an item that is not ticked, and never buys at a " +
+                 "red price."),
         Page("chain", "Skill Chain", "The order of the fully automatic mode.", listOf(
             ChainSteps(),
             Toggle("chain_repeat", "Repeat the whole sequence until Stop", false,
@@ -432,6 +488,9 @@ object SkillSettings {
     )
 
     fun page(key: String): Page = PAGES.first { it.key == key }
+
+    /** An item's name as its card writes it, for the page and the log. */
+    fun campLabel(item: String): String = CAMP_ITEMS.firstOrNull { it.item == item }?.label ?: item
 
     /**
      * The ceiling of the two minutes fields on the Dungeons page. Not a

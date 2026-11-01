@@ -9,7 +9,8 @@ import kotlin.test.assertTrue
 
 /**
  * What a supporter code opens, the player's cut of 2026-10-02
- * (PLAN_ABSCHLUSS_1_3.md 3.4 and 0.4): four rows of the Tasks list, and
+ * (PLAN_ABSCHLUSS_1_3.md 3.4 and 0.4): four rows of the Tasks list -- five
+ * since the Camp came on 2026-10-19 (PLAN_CAMP.md 3.4) --, and
  * nothing about an ad since 2026-10-03 (3.6). The rows live in the app
  * (Skills.kt), so the list of them is read where SkillSettingsTest reads
  * it, and every row is asked what the list and the director ask --
@@ -27,7 +28,7 @@ class PaywallTest {
         .findAll(File(app, "Skills.kt").readText()).map { it.groupValues[1] }.toList()
 
     private val free = listOf("mini", "summon", "farm", "dungeon", "passive", "quest")
-    private val locked = listOf("runner", "skewer", "exmissions", "preset")
+    private val locked = listOf("runner", "skewer", "exmissions", "camp", "preset")
 
     @Test
     fun `the cut is the player's, row for row`() {

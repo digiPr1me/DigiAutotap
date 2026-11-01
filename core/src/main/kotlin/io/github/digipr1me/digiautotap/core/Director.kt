@@ -58,6 +58,11 @@ object Director {
     const val LOST_SECTOR = "lost_sector"         // the Crests page, its Enter pill to the Lost Sector Tower
     const val MISSIONS = "missions"               // the Missions window of the main screen, Collection or Daily lit
     const val EX_MISSIONS = "ex_missions"         // the same window with its EX Missions tab lit
+    const val CAMP = "camp"                       // the Camp screen: its map, nothing over it
+    const val CAMP_TENT = "camp_tent"             // the Camp Tent on Info, or its Camp Support window
+    const val CAMP_SHOP = "camp_shop"             // the Camp Shop, with or without its purchase dialog
+    const val CAMP_STATION = "camp_station"       // Leomon's Dojo or Piximon's Drill Site: Auto Clear beside Attempt
+    const val CAMP_BOXES = "camp_boxes"           // a station's Reward Boxes: Current Total, Claim Rewards
     const val SKEWER_MENU = "skewer_menu"         // Chef's Special's page: Ranking, Missions, Play Game, its X
     const val SKEWER_STAGE = "skewer_stage"       // the stage popup over it, Start
     const val SKEWER_PLAY = "skewer_play"         // a round of Chef's Special: the grill, no dialog over it
@@ -73,7 +78,8 @@ object Director {
     val SCREENS = listOf(MAIN, STAGE_FAILED, NO_TICKETS, EXIT_GAME, DOWNLOAD, PROMPT, NEWS, SALE, HELP, GEAR, CLAIM_REWARDS,
                          PARTNER_WINDOW, TITLE, DUNGEON_LIST, SUMMON, SUMMON_DIALOG,
                          EXPLORE_MENU, BOARD, FIELD, FIELD_DIALOG, PARTNER_PAGE, EVENT_PAGE,
-                         PRESET, LOST_SECTOR, MISSIONS, EX_MISSIONS, SKEWER_MENU, SKEWER_STAGE,
+                         PRESET, LOST_SECTOR, MISSIONS, EX_MISSIONS, CAMP, CAMP_TENT, CAMP_SHOP, CAMP_STATION, CAMP_BOXES,
+                         SKEWER_MENU, SKEWER_STAGE,
                          SKEWER_PLAY, SKEWER_PAUSE, SKEWER_OVER, DIALOG, UNKNOWN, AD)
 
     // The field. meat_field_screen counts the plots it can see, 0 to 6. An
@@ -238,6 +244,29 @@ object Director {
      *    six Missions frames of the Gekkomon Run event (runner/missions_*)
      *    are another window and stay what they were (notes/missions.md,
      *    "The Missions window has no X").
+     * 8b. The Camp screen, the Camp Tent with its Camp Support window, and
+     *    the Camp Shop with its purchase dialog (Camp.kt): added on
+     *    2026-10-19 for the Camp task (PLAN_CAMP.md C1), behind every
+     *    screen above and before DIALOG, which recognise answers on the
+     *    tent (its blue Support) and the dialog (its blue squares). The
+     *    screen by its title bar, the undimmed nav bar and the tent's roof;
+     *    each window by its own title plate at its own height and its
+     *    buttons. The two stations of the camp and their Reward Boxes are
+     *    C2's (CampStation.kt). Over the 1916 frames of the oracle before
+     *    them the three answer on no old frame (campProbe director,
+     *    2026-10-19).
+     * 8c. A Camp station's window (CampStation.window: its banner lit, a teal
+     *    Auto Clear beside a blue Attempt of a button's size) and its Reward
+     *    Boxes (CampStation.boxesWindow: the banner, the bright band of
+     *    "Current Total", Claim Rewards under it), added on 2026-10-19 for the
+     *    Camp task (PLAN_CAMP.md C2), behind every screen above and before
+     *    DIALOG. The station read `dialog` while its Attempt was lit and
+     *    `unknown` at 0/2, Reward Boxes `unknown`. Over the 1916 frames of
+     *    the oracle neither answers on any (`gradlew :core:campStationProbe
+     *    --args="sweep corpus"`: no teal-and-blue pair and no such band on
+     *    any of them). The Results window an Attempt ends in stays a dialog:
+     *    Apocalymon Wall's runs end in the same window, and the dungeon task
+     *    closes it from recognise.
      * 9. Whatever recognise still calls a dialog: the dungeon panel, the OK
      *    pop-ups, the device settings -- a dialog is
      *    open, and which one is the business of whoever opened it.
@@ -318,6 +347,13 @@ object Director {
             }
             return answer(MISSIONS, "missions_window", info)
         }
+        if (Camp.screen(img) != null) return answer(CAMP, "camp_screen", info)
+        if (Camp.tentWindow(img) != null) return answer(CAMP_TENT, "tent_window", info)
+        if (Camp.supportWindow(img) != null) return answer(CAMP_TENT, "support_window", info)
+        if (Camp.shopWindow(img) != null) return answer(CAMP_SHOP, "shop_window", info)
+        if (Camp.buyDialog(img) != null) return answer(CAMP_SHOP, "buy_dialog", info)
+        if (CampStation.window(img) != null) return answer(CAMP_STATION, "station_window", info)
+        if (CampStation.boxesWindow(img) != null) return answer(CAMP_BOXES, "boxes_window", info)
         if (info.state == Dungeon.DIALOG || info.state == Dungeon.DIALOG_PARTY ||
             info.state == Dungeon.DIALOG_AD) {
             return answer(DIALOG, "recognise", info)
@@ -2053,6 +2089,15 @@ class DirectorLoop(
                 // the way -- a park there would say otherwise.
                 Director.MISSIONS, Director.EX_MISSIONS ->
                     still("the Missions window; nothing to do here", screen, Director.BEAT_MAIN)
+                // The Camp screen and its windows with no task on them
+                // (PLAN_CAMP.md C1, C2): what the player opens on the Camp map,
+                // the Missions window's rule. Until they had a name
+                // (2026-10-19) the map, the shop and Reward Boxes read
+                // `unknown` and stood still, while the tent and a station read
+                // `dialog` and parked here with "Something is in the way".
+                Director.CAMP, Director.CAMP_TENT, Director.CAMP_SHOP,
+                Director.CAMP_STATION, Director.CAMP_BOXES ->
+                    still("the Camp; nothing to do here", screen, Director.BEAT_MAIN)
                 // The game's title, which the player opens with the game
                 // (PLAN_RELEASE_1_3.md B31): nothing of ours is in the way and
                 // nothing here is tapped -- "Touch To Start" is the player's,

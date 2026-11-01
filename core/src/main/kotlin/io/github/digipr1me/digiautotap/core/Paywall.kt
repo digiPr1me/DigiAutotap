@@ -1,8 +1,9 @@
 package io.github.digipr1me.digiautotap.core
 
 /**
- * What a supporter code opens, in one place: four rows of the Tasks list,
- * Gekkomon Run, Chef's Special, EX Missions and Presets. Everything else is
+ * What a supporter code opens, in one place: five rows of the Tasks list,
+ * Gekkomon Run, Chef's Special, EX Missions, the Camp (since 2026-10-19,
+ * PLAN_CAMP.md) and Presets. Everything else is
  * everybody's -- World Search, Summon, Meat Field, Dungeons with the daily
  * dungeon and the Lost Sector Tower, Bond token with the round through all
  * of the Digimon, the Quest Loop, and the free ads with the Ad Skip Pass
@@ -20,7 +21,7 @@ package io.github.digipr1me.digiautotap.core
 object Paywall {
 
     /** The rows of the Tasks list a code opens, by key, in the list's order. */
-    val TASKS = listOf("runner", "skewer", "exmissions", "preset")
+    val TASKS = listOf("runner", "skewer", "exmissions", "camp", "preset")
 
     fun needsCode(key: String): Boolean = key in TASKS
 

@@ -26,6 +26,9 @@ each one has its own switch:
 - **Quest Loop** -- works through the quest card on the main screen
 - **Gekkomon Run** -- plays the Gekkomon Run event, one run after another
 - **EX Missions** -- claims the rewards on the EX Missions tab
+- **Camp** -- once a game day: Support and Check-In at the Camp Tent, the items
+  you tick in the Camp Shop, Auto Clear at Leomon's Dojo and Piximon's Drill Site,
+  and their reward boxes
 - **Presets** -- switches your Digivice, Tactical Memory, Food Effects, Skill
   Cards, Support Digimon and Overdrive to a saved set of slots
 - **Chef's Special** -- plays the Chef's Special minigame in the Events window until
@@ -111,7 +114,7 @@ Android itself refuses an update signed with any other key.
 
 A supporter code from the **[Ko-fi shop](https://ko-fi.com/digipr1me/shop)** --
 pay what you want, from 3 € -- unlocks Gekkomon Run, Chef's Special, EX
-Missions and Presets. Everything else is free: World Search, Summon, Meat
+Missions, Presets and Camp. Everything else is free: World Search, Summon, Meat
 Field, Dungeons with the Daily Dungeon and the Lost Sector Tower, Bond token
 for all of your Digimon, the Quest Loop, and the free ads with the Ad Skip
 Pass (above).

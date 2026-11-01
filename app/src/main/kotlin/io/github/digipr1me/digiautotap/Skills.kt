@@ -14,7 +14,8 @@ import io.github.digipr1me.digiautotap.core.Stored
  * there is no second one to keep in step with it.
  *
  * Which rows need a supporter code is core's [Paywall], the player's cut of
- * 2026-10-02: Gekkomon Run, Chef's Special, EX Missions and Presets. Meat
+ * 2026-10-02: Gekkomon Run, Chef's Special, EX Missions and Presets, and the
+ * Camp since 2026-10-19. Meat
  * Field and Dungeons were a supporter's from 2026-09-23 to that day, and so
  * was the Bond token row's one box, collecting for all of the Digimon; all
  * three are everybody's since, as World Search, Summon, Bond token and the
@@ -148,6 +149,14 @@ object Skills {
                      "The Daily Missions tab is left to you. It does not open the window by " +
                      "itself -- \"Claim now\" on this page does, from the main screen, and closes " +
                      "it again afterwards."),
+        // The Camp, since 2026-10-19 (PLAN_CAMP.md 3.4): a supporter's task,
+        // once a game day per part -- the tent, the shop, the two stations --
+        // from its page's button, as a chain step, or on the Camp screen the
+        // player opens (question 5).
+        SkillRow("camp", "Camp", "camp",
+                 semi = "Works when the Camp screen or one of its windows is open: supports and checks in " +
+                     "at the tent, buys the ticked items in the Camp Shop, clears the two stations and " +
+                     "claims their reward boxes -- each once a game day -- and leaves you on the Camp screen."),
         // Presets, since 2026-09-25 (PLAN_PRESET_SWITCH.md). The one task that
         // never takes a screen by itself: a preset page the player opens is
         // theirs, and the page's "Switch now" is what runs it.
@@ -240,7 +249,7 @@ object Skills {
      * is visited again when it is due, and the chain says when.
      */
     fun dayHold(r: SkillRow, store: SettingsStore): String? {
-        if (r.key !in setOf("quest", "skewer", "runner", "dungeon")) return null
+        if (r.key !in setOf("quest", "skewer", "runner", "dungeon", "camp")) return null
         if (r.key == "dungeon" && Stored.dungeon(store).let { Chain.dungeonHasWork(it.budgets, it.dailyMinutes) }) {
             return null
         }

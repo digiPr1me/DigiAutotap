@@ -12,6 +12,8 @@ import android.content.pm.ServiceInfo
 import android.os.IBinder
 import android.os.SystemClock
 import io.github.digipr1me.digiautotap.core.BondTourSkill
+import io.github.digipr1me.digiautotap.core.CampIcons
+import io.github.digipr1me.digiautotap.core.CampSkill
 import io.github.digipr1me.digiautotap.core.Chain
 import io.github.digipr1me.digiautotap.core.Counted
 import io.github.digipr1me.digiautotap.core.DirectorLoop
@@ -390,6 +392,13 @@ class CoreService : Service() {
         // EX Missions (PLAN_EX_MISSIONS.md): no settings and no clock -- the
         // page's "Claim now", a chain step, or the Missions window open.
         val exMissions = ExMissionsSkill(svc, keep = ::keep)
+        // The Camp (PLAN_CAMP.md): the page and the day's stamps asked afresh
+        // at every question, each stamp and each station's one Attempt written
+        // the moment it is due, and the shop's templates out of the APK.
+        val camp = CampSkill(svc, CampIcons(ApkAssets(this)), { Stored.camp(store()) },
+                             stamp = { part -> Stored.stampCamp(store(), part) },
+                             attempted = { which -> Stored.campAttempted(store(), which) },
+                             keep = ::keep)
         val passive = PassiveSkill(svc, flag = { key, default -> store().bool(key, default) },
                                    keep = ::keep)
         // The quest loop, the last of the stand-ins to go. Its settings are
@@ -466,6 +475,8 @@ class CoreService : Service() {
             // Not a round: no clock (the player's answer to question 2). The
             // page's button, the chain, and the Missions window are its ways in.
             counted(exMissions) { exMissions.lastCounts },
+            // Not a round either: once a game day per part, by its stamps.
+            counted(camp) { camp.lastCounts },
         )
         // The order is the order of the evidence: the helper's round decides
         // whether there was a token, the tour reads that, and the quest loop

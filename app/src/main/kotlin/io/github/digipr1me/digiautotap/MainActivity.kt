@@ -1004,16 +1004,24 @@ class MainActivity : Activity() {
                     // without a code, the way a locked row is, and the
                     // setting left alone so a code redeemed later gives it
                     // back. The skill asks the code again for itself.
-                    is SkillSettings.Toggle -> if (f.supporter && unlocked != true) {
-                        val why = if (unlocked == null) "Checking the supporter code..."
-                        else "Needs a supporter code -- enter it under Settings."
-                        c.addView(ui.switchRow(f.label, listOf(f.note, why)
-                            .filter { it.isNotEmpty() }.joinToString(" "),
-                                               false, enabled = false) {})
-                    } else c.addView(ui.switchRow(
-                        f.label, f.note, store.bool(f.key, f.default)) { v ->
-                        store.put(f.key, v)
-                    })
+                    is SkillSettings.Toggle -> {
+                        // The first box of a block of its own: a rule, then its
+                        // heading, as a number's (the Camp page's "Camp Shop").
+                        if (f.heading.isNotEmpty()) {
+                            c.addView(rule(12))
+                            c.addView(ui.body(f.heading), marginTop(10))
+                        }
+                        if (f.supporter && unlocked != true) {
+                            val why = if (unlocked == null) "Checking the supporter code..."
+                            else "Needs a supporter code -- enter it under Settings."
+                            c.addView(ui.switchRow(f.label, listOf(f.note, why)
+                                .filter { it.isNotEmpty() }.joinToString(" "),
+                                                   false, enabled = false) {})
+                        } else c.addView(ui.switchRow(
+                            f.label, f.note, store.bool(f.key, f.default)) { v ->
+                            store.put(f.key, v)
+                        })
+                    }
                     is SkillSettings.Number -> {
                         // The first number of a block of its own: a rule, then
                         // its heading (the Dungeons page's minutes, 3.4).
